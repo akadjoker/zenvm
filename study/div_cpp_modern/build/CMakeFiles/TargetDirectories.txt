@@ -1,0 +1,3 @@
+/media/ctw04578/data/projects/zen/DIV/study/div_cpp_modern/build/CMakeFiles/div_modern.dir
+/media/ctw04578/data/projects/zen/DIV/study/div_cpp_modern/build/CMakeFiles/edit_cache.dir
+/media/ctw04578/data/projects/zen/DIV/study/div_cpp_modern/build/CMakeFiles/rebuild_cache.dir
