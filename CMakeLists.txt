@@ -105,12 +105,8 @@ target_link_libraries(zen_shared PUBLIC ${ZEN_VENDOR_LIBS} ${CMAKE_DL_LIBS})
 target_compile_definitions(zen_shared PUBLIC ${ZEN_DEFINITIONS})
 set_target_properties(zen_shared PROPERTIES OUTPUT_NAME zen)
 
-# --- zen CLI ---
-add_executable(zen src/zen_main.cpp)
-target_link_libraries(zen zen_static)
-if(NOT WIN32)
-    target_link_options(zen PRIVATE -rdynamic)
-endif()
+# --- CLI (zen executable) ---
+add_subdirectory(cli)
 
 # --- VM test harness (old handcoded bytecode tests) ---
 add_executable(zen_test_vm src/main.cpp)
@@ -121,12 +117,4 @@ add_executable(zen_test_edge src/test_edge_cases.cpp src/memory.cpp)
 target_include_directories(zen_test_edge PRIVATE include/zen)
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_definitions(zen_test_edge PRIVATE ASAN_OPTIONS=detect_leaks=0)
-endif()
-
-# --- Debug trace build ---
-add_executable(zen_debug src/zen_main.cpp)
-target_link_libraries(zen_debug zen_static)
-target_compile_definitions(zen_debug PRIVATE ZEN_DEBUG_TRACE_EXEC)
-if(NOT WIN32)
-    target_link_options(zen_debug PRIVATE -rdynamic)
 endif()
