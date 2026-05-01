@@ -3,3 +3,7 @@
 /zen
 /zen_bench
 /study
+# Build artifacts
+*.o
+*.so
+*.a

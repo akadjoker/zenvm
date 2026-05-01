@@ -8,6 +8,67 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Common warnings
 add_compile_options(-Wall -Wextra -Wno-unused-parameter)
 
+# --- Optional modules (disable with -DZEN_ENABLE_*=OFF) ---
+option(ZEN_ENABLE_REGEX  "Enable regex module (requires PCRE2)" ON)
+option(ZEN_ENABLE_ZIP    "Enable zip module (requires miniz)" ON)
+option(ZEN_ENABLE_NET    "Enable net module (POSIX sockets)" ON)
+option(ZEN_ENABLE_HTTP   "Enable http module (POSIX sockets)" ON)
+option(ZEN_ENABLE_CRYPTO "Enable crypto module (pure C)" ON)
+option(ZEN_ENABLE_NN     "Enable nn module (pure C math)" ON)
+option(ZEN_ENABLE_JSON   "Enable json module (pure C)" ON)
+option(ZEN_ENABLE_UTF8   "Enable utf8 module (pure C)" ON)
+
+# --- Vendor libraries (conditional) ---
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(ZEN_VENDOR_LIBS "")
+set(ZEN_VENDOR_INCLUDES "")
+set(ZEN_DEFINITIONS "")
+
+if(ZEN_ENABLE_REGEX)
+    set(PCRE2_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(PCRE2_BUILD_PCRE2GREP OFF CACHE BOOL "" FORCE)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(PCRE2_SUPPORT_UNICODE ON CACHE BOOL "" FORCE)
+    add_subdirectory(vendor/pcre2 vendor/pcre2/build EXCLUDE_FROM_ALL)
+    list(APPEND ZEN_VENDOR_LIBS pcre2-8-static)
+    list(APPEND ZEN_VENDOR_INCLUDES ${CMAKE_BINARY_DIR}/vendor/pcre2)
+    list(APPEND ZEN_DEFINITIONS PCRE2_STATIC ZEN_ENABLE_REGEX)
+else()
+    list(APPEND ZEN_DEFINITIONS ZEN_NO_REGEX)
+endif()
+
+if(ZEN_ENABLE_ZIP)
+    add_subdirectory(vendor/miniz vendor/miniz/build EXCLUDE_FROM_ALL)
+    list(APPEND ZEN_VENDOR_LIBS miniz)
+    list(APPEND ZEN_DEFINITIONS ZEN_ENABLE_ZIP)
+else()
+    list(APPEND ZEN_DEFINITIONS ZEN_NO_ZIP)
+endif()
+
+if(ZEN_ENABLE_NET)
+    list(APPEND ZEN_DEFINITIONS ZEN_ENABLE_NET)
+endif()
+
+if(ZEN_ENABLE_HTTP)
+    list(APPEND ZEN_DEFINITIONS ZEN_ENABLE_HTTP)
+endif()
+
+if(ZEN_ENABLE_CRYPTO)
+    list(APPEND ZEN_DEFINITIONS ZEN_ENABLE_CRYPTO)
+endif()
+
+if(ZEN_ENABLE_NN)
+    list(APPEND ZEN_DEFINITIONS ZEN_ENABLE_NN)
+endif()
+
+if(ZEN_ENABLE_JSON)
+    list(APPEND ZEN_DEFINITIONS ZEN_ENABLE_JSON)
+endif()
+
+if(ZEN_ENABLE_UTF8)
+    list(APPEND ZEN_DEFINITIONS ZEN_ENABLE_UTF8)
+endif()
+
 # --- Build types ---
 # Debug (default): sanitizers + no optimization
 # Release: -O2, no sanitizers
@@ -30,22 +91,42 @@ list(FILTER CORE_SRCS EXCLUDE REGEX "src/main\\.cpp$")
 list(FILTER CORE_SRCS EXCLUDE REGEX "src/zen_main\\.cpp$")
 list(FILTER CORE_SRCS EXCLUDE REGEX "src/test_.*\\.cpp$")
 
+# --- libzen (static library) ---
+add_library(zen_static STATIC ${CORE_SRCS})
+target_include_directories(zen_static PUBLIC include/zen PRIVATE src ${ZEN_VENDOR_INCLUDES})
+target_link_libraries(zen_static PUBLIC ${ZEN_VENDOR_LIBS} ${CMAKE_DL_LIBS})
+target_compile_definitions(zen_static PUBLIC ${ZEN_DEFINITIONS})
+set_target_properties(zen_static PROPERTIES OUTPUT_NAME zen POSITION_INDEPENDENT_CODE ON)
+
+# --- libzen (shared library) ---
+add_library(zen_shared SHARED ${CORE_SRCS})
+target_include_directories(zen_shared PUBLIC include/zen PRIVATE src ${ZEN_VENDOR_INCLUDES})
+target_link_libraries(zen_shared PUBLIC ${ZEN_VENDOR_LIBS} ${CMAKE_DL_LIBS})
+target_compile_definitions(zen_shared PUBLIC ${ZEN_DEFINITIONS})
+set_target_properties(zen_shared PROPERTIES OUTPUT_NAME zen)
+
 # --- zen CLI ---
-add_executable(zen src/zen_main.cpp ${CORE_SRCS})
-target_include_directories(zen PRIVATE src)
+add_executable(zen src/zen_main.cpp)
+target_link_libraries(zen zen_static)
+if(NOT WIN32)
+    target_link_options(zen PRIVATE -rdynamic)
+endif()
 
 # --- VM test harness (old handcoded bytecode tests) ---
-add_executable(zen_test_vm src/main.cpp ${CORE_SRCS})
-target_include_directories(zen_test_vm PRIVATE src)
+add_executable(zen_test_vm src/main.cpp)
+target_link_libraries(zen_test_vm zen_static)
 
 # --- Edge case tests ---
 add_executable(zen_test_edge src/test_edge_cases.cpp src/memory.cpp)
-target_include_directories(zen_test_edge PRIVATE src)
+target_include_directories(zen_test_edge PRIVATE include/zen)
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_definitions(zen_test_edge PRIVATE ASAN_OPTIONS=detect_leaks=0)
 endif()
 
 # --- Debug trace build ---
-add_executable(zen_debug src/zen_main.cpp ${CORE_SRCS})
-target_include_directories(zen_debug PRIVATE src)
+add_executable(zen_debug src/zen_main.cpp)
+target_link_libraries(zen_debug zen_static)
 target_compile_definitions(zen_debug PRIVATE ZEN_DEBUG_TRACE_EXEC)
+if(NOT WIN32)
+    target_link_options(zen_debug PRIVATE -rdynamic)
+endif()
