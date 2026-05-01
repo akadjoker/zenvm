@@ -137,6 +137,11 @@ namespace zen
         /* Main fiber (script top-level corre aqui) */
         ObjFiber *main_fiber_;
         ObjFiber *current_fiber_; /* fiber actualmente a executar */
+        int fiber_depth_;         /* current nested execute() depth */
+        bool had_error_;          /* runtime error occurred */
+
+    public:
+        bool had_error() const { return had_error_; }
     };
 
 } /* namespace zen */

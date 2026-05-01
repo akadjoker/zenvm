@@ -8,7 +8,7 @@ namespace zen {
 ** Construtor / Destrutor
 ** ========================================================= */
 
-VM::VM() : num_globals_(0), main_fiber_(nullptr), current_fiber_(nullptr) {
+VM::VM() : num_globals_(0), main_fiber_(nullptr), current_fiber_(nullptr), fiber_depth_(0), had_error_(false) {
     gc_init(&gc_);
     memset(globals_, 0, sizeof(globals_));
     memset(global_names_, 0, sizeof(global_names_));
@@ -56,6 +56,7 @@ ObjFiber* VM::new_fiber(ObjClosure* closure, int stack_size) {
     fiber->open_upvalues = nullptr;
     fiber->caller = nullptr;
     fiber->transfer_value = val_nil();
+    fiber->yield_dest = -1;
     fiber->frame_speed = 100;
     fiber->frame_accumulator = 0;
     fiber->error = nullptr;
@@ -345,6 +346,7 @@ Value VM::resume_fiber(ObjFiber* fiber, Value val) {
 ** ========================================================= */
 
 void VM::runtime_error(const char* fmt, ...) {
+    had_error_ = true;
     va_list args;
     va_start(args, fmt);
     fprintf(stderr, "[zen runtime error] ");

@@ -2,8 +2,7 @@
 #define ZEN_COMMON_H
 
 /*
-** common.h — Tipos base e configuração.
-** Zero dependências STL. Só <cstdint>, <cstddef>, <cstdio>, <cstring>.
+** common.h — Base types and VM configuration.
 */
 
 #include <cstdint>
@@ -15,12 +14,13 @@
 namespace zen
 {
 
-    /* Configuração — pode ajustar */
-    constexpr int kMaxRegs = 250;                   /* registos por frame (Lua usa 249) */
-    constexpr int kMaxFrames = 128;                 /* profundidade de calls */
-    constexpr int kMaxConstants = 65536;            /* pool de constantes por função */
-    constexpr int MAX_GLOBALS = 512;                /* globals máximos */
-    constexpr size_t kGCInitThreshold = 1024 * 256; /* 256KB antes do 1º GC */
+    /* VM limits */
+    constexpr int kMaxRegs = 250;                   /* registers per call frame */
+    constexpr int kMaxFrames = 256;                 /* max call depth */
+    constexpr int kMaxFiberDepth = 64;              /* max nested fiber resumes (C stack) */
+    constexpr int kMaxConstants = 65536;            /* constant pool per function */
+    constexpr int MAX_GLOBALS = 1024;               /* global variable slots */
+    constexpr size_t kGCInitThreshold = 1024 * 256; /* first GC at 256 KB */
     constexpr float kGCGrowFactor = 2.0f;
 
     /* Forward declarations */

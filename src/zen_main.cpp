@@ -50,6 +50,9 @@ static char *read_file(const char *path)
 ** Run source code (compile + execute)
 ** ========================================================= */
 
+static bool g_disassemble = false;
+static bool g_dis_only = false;
+
 static int run_source(const char *source, const char *filename)
 {
     VM vm;
@@ -63,14 +66,27 @@ static int run_source(const char *source, const char *filename)
         return 1;
     }
 
-    /* Optional: disassemble in debug mode */
-#ifdef ZEN_DEBUG_TRACE_EXEC
-    disassemble(fn, filename);
-    printf("--- execution ---\n");
-#endif
+    if (g_disassemble)
+    {
+        disassemble_func(fn, filename);
+        /* Also disassemble nested functions found in constants */
+        for (int i = 0; i < fn->const_count; i++)
+        {
+            Value v = fn->constants[i];
+            if (v.type == VAL_OBJ && v.as.obj && v.as.obj->type == OBJ_FUNC)
+            {
+                ObjFunc *nested = (ObjFunc *)v.as.obj;
+                const char *n = nested->name ? nested->name->chars : "<anon>";
+                disassemble_func(nested, n);
+            }
+        }
+        printf("--- execution ---\n");
+    }
+
+    if (g_dis_only) return 0;
 
     vm.run(fn);
-    return 0;
+    return vm.had_error() ? 1 : 0;
 }
 
 /* =========================================================
@@ -130,19 +146,51 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    if (argc == 3 && strcmp(argv[1], "-e") == 0)
+    /* Parse flags */
+    const char *source_code = nullptr;
+    const char *file_path = nullptr;
+
+    for (int i = 1; i < argc; i++)
     {
-        /* Inline code */
-        return run_source(argv[2], "<cmdline>");
+        if (strcmp(argv[i], "--dis") == 0 || strcmp(argv[i], "-d") == 0)
+        {
+            g_disassemble = true;
+        }
+        else if (strcmp(argv[i], "--dis-only") == 0)
+        {
+            g_disassemble = true;
+            g_dis_only = true;
+        }
+        else if (strcmp(argv[i], "-e") == 0 && i + 1 < argc)
+        {
+            source_code = argv[++i];
+        }
+        else if (argv[i][0] != '-')
+        {
+            file_path = argv[i];
+        }
+        else
+        {
+            fprintf(stderr, "zen: unknown option '%s'\n", argv[i]);
+            return 1;
+        }
     }
 
-    /* File argument */
-    const char *path = argv[1];
-    char *source = read_file(path);
-    if (!source)
-        return 1;
+    if (source_code)
+    {
+        return run_source(source_code, "<cmdline>");
+    }
 
-    int result = run_source(source, path);
-    free(source);
-    return result;
+    if (file_path)
+    {
+        char *source = read_file(file_path);
+        if (!source)
+            return 1;
+        int result = run_source(source, file_path);
+        free(source);
+        return result;
+    }
+
+    fprintf(stderr, "zen: no input specified\n");
+    return 1;
 }

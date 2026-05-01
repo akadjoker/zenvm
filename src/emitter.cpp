@@ -145,6 +145,9 @@ namespace zen
 
     int Emitter::add_escaped_string_constant(const char *str, int len)
     {
+        /* Clear any previous escape error */
+        escape_error_[0] = '\0';
+
         /* Worst case: each char stays as-is. UTF-8 can expand \uHHHH → 3 bytes
            but the escape itself is 6 chars, so output is always <= input. */
         char *buf = (char *)malloc(len + 1);
@@ -194,9 +197,10 @@ namespace zen
                             break;
                         }
                     }
-                    /* Invalid hex — emit literal */
-                    buf[out++] = '\\';
-                    buf[out++] = 'x';
+                    /* Invalid hex escape */
+                    snprintf(escape_error_, sizeof(escape_error_),
+                             "Invalid \\x escape: expected 2 hex digits.");
+                    buf[out++] = '?';
                     break;
                 }
                 case 'u':
@@ -214,13 +218,22 @@ namespace zen
                         }
                         if (valid)
                         {
-                            out += encode_utf8(cp, buf + out);
+                            /* Reject surrogate codepoints (invalid in UTF-8) */
+                            if (cp >= 0xD800 && cp <= 0xDFFF)
+                            {
+                                out += encode_utf8(0xFFFD, buf + out);
+                            }
+                            else
+                            {
+                                out += encode_utf8(cp, buf + out);
+                            }
                             i += 4;
                             break;
                         }
                     }
-                    buf[out++] = '\\';
-                    buf[out++] = 'u';
+                    snprintf(escape_error_, sizeof(escape_error_),
+                             "Invalid \\u escape: expected 4 hex digits.");
+                    buf[out++] = '?';
                     break;
                 }
                 case 'U':
@@ -243,14 +256,15 @@ namespace zen
                             break;
                         }
                     }
-                    buf[out++] = '\\';
-                    buf[out++] = 'U';
+                    snprintf(escape_error_, sizeof(escape_error_),
+                             "Invalid \\U escape: expected 8 hex digits.");
+                    buf[out++] = '?';
                     break;
                 }
                 default:
-                    /* Unknown escape — emit literal backslash + char */
-                    buf[out++] = '\\';
-                    buf[out++] = str[i];
+                    snprintf(escape_error_, sizeof(escape_error_),
+                             "Unknown escape sequence '\\%c'.", str[i]);
+                    buf[out++] = '?';
                     break;
             }
         }

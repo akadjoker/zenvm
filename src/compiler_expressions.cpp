@@ -79,6 +79,29 @@ namespace zen
         case TOK_LPAREN:
         case TOK_LBRACKET:
         case TOK_LBRACE:
+        /* Math builtins */
+        case TOK_SIN:
+        case TOK_COS:
+        case TOK_TAN:
+        case TOK_ASIN:
+        case TOK_ACOS:
+        case TOK_ATAN:
+        case TOK_ATAN2:
+        case TOK_SQRT:
+        case TOK_POW:
+        case TOK_LOG:
+        case TOK_ABS:
+        case TOK_FLOOR:
+        case TOK_CEIL:
+        case TOK_DEG:
+        case TOK_RAD:
+        case TOK_EXP:
+        case TOK_CLOCK:
+        case TOK_LEN:
+        case TOK_SPAWN:
+        case TOK_RESUME:
+        case TOK_YIELD:
+        case TOK_DEF:
             return true;
         default:
             return false;
@@ -163,6 +186,34 @@ namespace zen
             return array_literal(dest);
         case TOK_LBRACE:
             return map_literal(dest);
+        /* Math builtins */
+        case TOK_SIN:
+        case TOK_COS:
+        case TOK_TAN:
+        case TOK_ASIN:
+        case TOK_ACOS:
+        case TOK_ATAN:
+        case TOK_ATAN2:
+        case TOK_SQRT:
+        case TOK_POW:
+        case TOK_LOG:
+        case TOK_ABS:
+        case TOK_FLOOR:
+        case TOK_CEIL:
+        case TOK_DEG:
+        case TOK_RAD:
+        case TOK_EXP:
+        case TOK_CLOCK:
+        case TOK_LEN:
+            return math_builtin(token, dest);
+        case TOK_SPAWN:
+            return spawn_expression(dest);
+        case TOK_RESUME:
+            return resume_expression(dest);
+        case TOK_YIELD:
+            return yield_expression(dest);
+        case TOK_DEF:
+            return anonymous_function(dest);
         default:
             error("Expected expression.");
             return dest >= 0 ? dest : alloc_reg();
@@ -232,18 +283,18 @@ namespace zen
         if (token.type == TOK_INT)
         {
             /* Try small int (fits in sBx = -32768..32767) */
-            long val;
+            long long val;
             if (token.length > 2 && token.start[0] == '0' && (token.start[1] == 'x' || token.start[1] == 'X'))
             {
-                val = strtol(token.start, nullptr, 16);
+                val = strtoll(token.start, nullptr, 16);
             }
             else
             {
-                val = strtol(token.start, nullptr, 10);
+                val = strtoll(token.start, nullptr, 10);
             }
             if (val >= -32768 && val <= 32767)
             {
-                state_->emitter.emit_asbx(OP_LOADI, reg, (int)val, token.line);
+                state_->emitter.emit_asbx(OP_LOADI, reg, (int)(int32_t)val, token.line);
             }
             else
             {
@@ -266,7 +317,11 @@ namespace zen
     {
         int reg = dest >= 0 ? dest : alloc_reg();
         /* Skip quotes: token.start+1, token.length-2 */
+        state_->emitter.clear_escape_error();
         int ki = state_->emitter.add_escaped_string_constant(token.start + 1, token.length - 2);
+        if (state_->emitter.has_escape_error()) {
+            error(state_->emitter.escape_error());
+        }
         state_->emitter.emit_abx(OP_LOADK, reg, ki, token.line);
         return reg;
     }
@@ -406,7 +461,18 @@ namespace zen
                 /* Simple assignment: var = expr */
                 if (local_reg != -1)
                 {
-                    expression(local_reg);
+                    /* Compile RHS to a temp, then move to local.
+                       Cannot pass local_reg as dest because the RHS might
+                       reference this same local (e.g. b = a % b). */
+                    int save_reg = state_->next_reg;
+                    int rhs = expression(-1);
+                    if (rhs != local_reg) {
+                        emit_move(local_reg, rhs);
+                    }
+                    /* Restore next_reg — we don't want to permanently consume
+                       a temp register (if rhs was a temp) or accidentally free
+                       a local (if rhs was a local). */
+                    state_->next_reg = save_reg;
                     return local_reg;
                 }
                 int val_reg = alloc_reg();
@@ -419,8 +485,14 @@ namespace zen
                 {
                     state_->emitter.emit_abx(OP_SETGLOBAL, val_reg, gidx, token.line);
                 }
-                free_reg(val_reg);
-                return dest >= 0 ? dest : alloc_reg();
+                if (dest >= 0 && dest != val_reg)
+                {
+                    emit_move(dest, val_reg);
+                    free_reg(val_reg);
+                    return dest;
+                }
+                /* val_reg holds the assigned value — return it as result */
+                return val_reg;
             }
             else
             {
@@ -464,7 +536,17 @@ namespace zen
                     op = OP_ADD;
                     break;
                 }
-                state_->emitter.emit_abc(op, cur_reg, cur_reg, rhs_reg, token.line);
+                /* When dest == left operand and it's a local, use OP_STRADD
+                   for += to enable in-place string append optimization.
+                   OP_STRADD falls back to numeric ADD if not strings. */
+                if (assign_op == TOK_PLUS_EQ && local_reg != -1)
+                {
+                    state_->emitter.emit_abc(OP_STRADD, cur_reg, rhs_reg, 0, token.line);
+                }
+                else
+                {
+                    state_->emitter.emit_abc(op, cur_reg, cur_reg, rhs_reg, token.line);
+                }
                 free_reg(rhs_reg);
 
                 /* Store back if not local */
@@ -565,13 +647,7 @@ namespace zen
             do
             {
                 int val_reg = expression(-1);
-                /* SETINDEX arr, count, val — but we use a push approach */
-                /* For simplicity: emit SETINDEX with incrementing index */
-                /* Actually, let's just emit sequential SETINDEX calls */
-                /* Better: we don't have OP_PUSH. Use SETINDEX with LOADI for index */
-                /* Simplest approach for now: build via temp registers */
-                state_->emitter.emit_abc(OP_SETINDEX, reg, reg, val_reg, previous_.line);
-                /* TODO: proper array literal with SETINDEX idx semantics */
+                state_->emitter.emit_abc(OP_APPEND, reg, val_reg, 0, previous_.line);
                 free_reg(val_reg);
             } while (match(TOK_COMMA));
         }
@@ -610,7 +686,8 @@ namespace zen
 
     int Compiler::binary(Token op, int left, int dest)
     {
-        int reg = dest >= 0 ? dest : left;
+        /* NEVER reuse left as dest — it may be a local/parameter that's needed later */
+        int reg = dest >= 0 ? dest : alloc_reg();
 
         /* Parse right operand at one higher precedence (left-associative) */
         Precedence prec = (Precedence)(get_precedence(op.type) + 1);
@@ -751,12 +828,26 @@ namespace zen
 
     int Compiler::call_expr(int func_reg, int dest)
     {
-        /* Arguments go in consecutive registers after func_reg */
-        int base = func_reg;
+        /* If func_reg is a local variable register, copy to temp to avoid
+           OP_CALL overwriting the local with the return value */
+        int base;
+        int save_next = state_->next_reg;
+
+        if (is_local_reg(func_reg))
+        {
+            if (state_->next_reg <= func_reg)
+                state_->next_reg = func_reg + 1;
+            base = alloc_reg();
+            emit_move(base, func_reg);
+        }
+        else
+        {
+            base = func_reg;
+        }
+
+        /* Arguments go in consecutive registers after base */
         int arg_count = 0;
 
-        /* Ensure args are in registers base+1, base+2, ... */
-        int save_next = state_->next_reg;
         if (state_->next_reg <= base)
             state_->next_reg = base + 1;
 
@@ -923,6 +1014,191 @@ namespace zen
         state_->emitter.emit_abc(OP_GETFIELD, reg, obj_reg, name_ki, previous_.line);
         if (obj_reg != reg)
             free_reg(obj_reg);
+        return reg;
+    }
+
+    /* =========================================================
+    ** Math builtins — keyword-level, compiled to opcodes
+    ** ========================================================= */
+
+    int Compiler::math_builtin(Token token, int dest)
+    {
+        int reg = dest >= 0 ? dest : alloc_reg();
+
+        /* clock() takes no args */
+        if (token.type == TOK_CLOCK)
+        {
+            consume(TOK_LPAREN, "Expected '(' after 'clock'.");
+            consume(TOK_RPAREN, "Expected ')' after 'clock('.");
+            state_->emitter.emit_abc(OP_CLOCK, reg, 0, 0, token.line);
+            return reg;
+        }
+
+        /* Two-arg builtins: atan2(y, x), pow(base, exp) */
+        if (token.type == TOK_ATAN2 || token.type == TOK_POW)
+        {
+            consume(TOK_LPAREN, "Expected '(' after builtin.");
+            int arg1 = alloc_reg();
+            expression(arg1);
+            consume(TOK_COMMA, "Expected ',' between arguments.");
+            int arg2 = alloc_reg();
+            expression(arg2);
+            consume(TOK_RPAREN, "Expected ')' after arguments.");
+
+            OpCode op = (token.type == TOK_ATAN2) ? OP_ATAN2 : OP_POW;
+            state_->emitter.emit_abc(op, reg, arg1, arg2, token.line);
+            free_reg(arg2);
+            free_reg(arg1);
+            return reg;
+        }
+
+        /* Single-arg builtins: sin(x), cos(x), etc. */
+        consume(TOK_LPAREN, "Expected '(' after builtin.");
+        int arg = alloc_reg();
+        expression(arg);
+        consume(TOK_RPAREN, "Expected ')' after argument.");
+
+        OpCode op;
+        switch (token.type)
+        {
+        case TOK_SIN:   op = OP_SIN;   break;
+        case TOK_COS:   op = OP_COS;   break;
+        case TOK_TAN:   op = OP_TAN;   break;
+        case TOK_ASIN:  op = OP_ASIN;  break;
+        case TOK_ACOS:  op = OP_ACOS;  break;
+        case TOK_ATAN:  op = OP_ATAN;  break;
+        case TOK_SQRT:  op = OP_SQRT;  break;
+        case TOK_LOG:   op = OP_LOG;   break;
+        case TOK_ABS:   op = OP_ABS;   break;
+        case TOK_FLOOR: op = OP_FLOOR; break;
+        case TOK_CEIL:  op = OP_CEIL;  break;
+        case TOK_DEG:   op = OP_DEG;   break;
+        case TOK_RAD:   op = OP_RAD;   break;
+        case TOK_EXP:   op = OP_EXP;   break;
+        case TOK_LEN:   op = OP_LEN;   break;
+        default:        op = OP_SIN;   break; /* unreachable */
+        }
+        state_->emitter.emit_abc(op, reg, arg, 0, token.line);
+        free_reg(arg);
+        return reg;
+    }
+
+    /* =========================================================
+    ** spawn expr  → OP_NEWFIBER  R[A] = Fiber.new(R[B])
+    ** ========================================================= */
+    int Compiler::spawn_expression(int dest) {
+        int reg = (dest >= 0) ? dest : alloc_reg();
+        int closure_reg = expression(-1);
+        state_->emitter.emit_abc(OP_NEWFIBER, reg, closure_reg, 0, previous_.line);
+        if (closure_reg != reg) free_reg(closure_reg);
+        return reg;
+    }
+
+    /* =========================================================
+    ** resume(fiber, val)  → OP_RESUME  R[A] = R[B].resume(R[C])
+    ** resume(fiber)       → resume with nil
+    ** ========================================================= */
+    int Compiler::resume_expression(int dest) {
+        int reg = (dest >= 0) ? dest : alloc_reg();
+        consume(TOK_LPAREN, "Expected '(' after 'resume'.");
+        int fiber_reg = expression(-1);
+        int val_reg;
+        if (match(TOK_COMMA)) {
+            val_reg = expression(-1);
+        } else {
+            val_reg = alloc_reg();
+            state_->emitter.emit_abc(OP_LOADNIL, val_reg, 0, 0, previous_.line);
+        }
+        consume(TOK_RPAREN, "Expected ')' after resume arguments.");
+        state_->emitter.emit_abc(OP_RESUME, reg, fiber_reg, val_reg, previous_.line);
+        free_reg(val_reg);
+        free_reg(fiber_reg);
+        return reg;
+    }
+
+    /* =========================================================
+    ** yield expr  → OP_YIELD A, B
+    **   Yields R[B] to caller. On resume, R[A] = value sent by caller.
+    **   yield;  → yield nil
+    ** ========================================================= */
+    int Compiler::yield_expression(int dest) {
+        int reg = (dest >= 0) ? dest : alloc_reg();
+        int val_reg;
+        /* Check if there's an expression to yield or just semicolon */
+        if (check(TOK_SEMICOLON) || check(TOK_EOF)) {
+            val_reg = alloc_reg();
+            state_->emitter.emit_abc(OP_LOADNIL, val_reg, 0, 0, previous_.line);
+        } else {
+            val_reg = expression(-1);
+        }
+        state_->emitter.emit_abc(OP_YIELD, reg, val_reg, 0, previous_.line);
+        if (val_reg != reg) free_reg(val_reg);
+        return reg;
+    }
+
+    /* =========================================================
+    ** def(params) { body } — anonymous function expression
+    ** ========================================================= */
+    int Compiler::anonymous_function(int dest) {
+        int reg = (dest >= 0) ? dest : alloc_reg();
+
+        CompilerState fn_state;
+        fn_state.parent       = state_;
+        fn_state.function     = new_func(gc_);
+        fn_state.emitter      = Emitter(gc_);
+        fn_state.local_count  = 0;
+        fn_state.scope_depth  = 0;
+        fn_state.next_reg     = 0;
+        fn_state.max_reg      = 0;
+        fn_state.upvalue_count = 0;
+        fn_state.loop_depth   = 0;
+        fn_state.is_method    = false;
+
+        fn_state.emitter.begin("<anon>", 0, "<anon>");
+
+        CompilerState* enclosing = state_;
+        state_ = &fn_state;
+
+        begin_scope();
+
+        /* Parameters */
+        consume(TOK_LPAREN, "Expected '(' after 'def'.");
+        int arity = 0;
+        if (!check(TOK_RPAREN)) {
+            do {
+                consume(TOK_IDENTIFIER, "Expected parameter name.");
+                add_local(previous_);
+                arity++;
+            } while (match(TOK_COMMA));
+        }
+        consume(TOK_RPAREN, "Expected ')' after parameters.");
+
+        /* Body */
+        consume(TOK_LBRACE, "Expected '{' before function body.");
+        block();
+
+        /* Implicit return nil */
+        state_->emitter.emit_abc(OP_LOADNIL, 0, 0, 0, previous_.line);
+        state_->emitter.emit_abc(OP_RETURN, 0, 1, 0, previous_.line);
+
+        ObjFunc* fn = state_->emitter.end(state_->max_reg);
+        fn->arity = arity;
+
+        /* Copy upvalue descriptors */
+        int nuv = state_->upvalue_count;
+        fn->upvalue_count = nuv;
+        if (nuv > 0) {
+            fn->upval_descs = (UpvalDesc*)zen_alloc(gc_, nuv * sizeof(UpvalDesc));
+            for (int i = 0; i < nuv; i++) {
+                fn->upval_descs[i].index = (uint8_t)state_->upvalues[i].index;
+                fn->upval_descs[i].is_local = state_->upvalues[i].is_local ? 1 : 0;
+            }
+        }
+
+        state_ = enclosing;
+
+        int ki = state_->emitter.add_constant(val_obj((Obj*)fn));
+        state_->emitter.emit_abx(OP_CLOSURE, reg, ki, previous_.line);
         return reg;
     }
 

@@ -119,22 +119,30 @@ namespace zen
     /* Comparação de igualdade — fast path for int (most common in tables) */
     inline bool values_equal(Value a, Value b)
     {
-        if (a.type != b.type)
+        if (a.type == b.type) {
+            if (__builtin_expect(a.type == VAL_INT, 1))
+                return a.as.integer == b.as.integer;
+            switch (a.type)
+            {
+            case VAL_NIL:
+                return true;
+            case VAL_BOOL:
+                return a.as.boolean == b.as.boolean;
+            case VAL_INT:
+                __builtin_unreachable();
+            case VAL_FLOAT:
+                return a.as.number == b.as.number;
+            case VAL_OBJ:
+                return a.as.obj == b.as.obj;
+            }
             return false;
-        if (__builtin_expect(a.type == VAL_INT, 1))
-            return a.as.integer == b.as.integer;
-        switch (a.type)
-        {
-        case VAL_NIL:
-            return true;
-        case VAL_BOOL:
-            return a.as.boolean == b.as.boolean;
-        case VAL_INT:
-            __builtin_unreachable();
-        case VAL_FLOAT:
-            return a.as.number == b.as.number;
-        case VAL_OBJ:
-            return a.as.obj == b.as.obj;
+        }
+        /* Mixed int/float: compare numerically (like Lua) */
+        if (a.type == VAL_INT && b.type == VAL_FLOAT) {
+            return (double)a.as.integer == b.as.number;
+        }
+        if (a.type == VAL_FLOAT && b.type == VAL_INT) {
+            return a.as.number == (double)b.as.integer;
         }
         return false;
     }

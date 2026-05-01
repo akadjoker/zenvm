@@ -74,6 +74,11 @@ namespace zen
         int current_offset() const { return func_->code_count; }
         int last_line() const { return last_line_; }
 
+        /* Error from escape processing */
+        bool has_escape_error() const { return escape_error_[0] != '\0'; }
+        const char *escape_error() const { return escape_error_; }
+        void clear_escape_error() { escape_error_[0] = '\0'; }
+
     private:
         void grow_code();
         void grow_constants();
@@ -81,6 +86,7 @@ namespace zen
         GC *gc_;
         ObjFunc *func_; /* func em construção */
         int last_line_;
+        char escape_error_[128] = {};
     };
 
 } /* namespace zen */

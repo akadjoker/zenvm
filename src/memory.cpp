@@ -48,6 +48,7 @@ namespace zen
         gc->string_capacity = 64;
         gc->string_count = 0;
         gc->strings = (ObjString **)calloc(gc->string_capacity, sizeof(ObjString *));
+        gc->bytes_allocated += sizeof(ObjString *) * gc->string_capacity;
     }
 
     /* =========================================================
@@ -59,6 +60,7 @@ namespace zen
         Obj *obj = (Obj *)zen_alloc(gc, size);
         obj->type = type;
         obj->color = GC_WHITE;
+        obj->interned = 0;
         obj->hash = 0;
         obj->gc_next = gc->objects;
         gc->objects = obj;
@@ -92,7 +94,10 @@ namespace zen
     static void intern_table_grow(GC *gc)
     {
         int new_cap = gc->string_capacity * 2;
+        size_t old_bytes = sizeof(ObjString *) * gc->string_capacity;
+        size_t new_bytes = sizeof(ObjString *) * new_cap;
         ObjString **new_table = (ObjString **)calloc(new_cap, sizeof(ObjString *));
+        gc->bytes_allocated += new_bytes;
 
         /* re-hash tudo */
         for (int i = 0; i < gc->string_capacity; i++)
@@ -106,6 +111,7 @@ namespace zen
             new_table[idx] = s;
         }
 
+        gc->bytes_allocated -= old_bytes;
         free(gc->strings);
         gc->strings = new_table;
         gc->string_capacity = new_cap;
@@ -128,9 +134,11 @@ namespace zen
         size_t total = sizeof(ObjString) + length + 1;
         ObjString *str = (ObjString *)alloc_obj(gc, total, OBJ_STRING);
         str->length = length;
+        str->capacity = 0; /* tight — no extra space */
         memcpy(str->chars, chars, length);
         str->chars[length] = '\0';
         str->obj.hash = hash;
+        str->obj.interned = 1;
 
         /* Insere na tabela */
         uint32_t idx = hash & (gc->string_capacity - 1);
@@ -150,17 +158,87 @@ namespace zen
 
     ObjString *new_string_concat(GC *gc, ObjString *a, ObjString *b)
     {
-        int length = a->length + b->length;
-        /* buffer temporário no stack para strings pequenas */
-        char buf[256];
-        char *tmp = (length < 256) ? buf : (char *)malloc(length + 1);
-        memcpy(tmp, a->chars, a->length);
-        memcpy(tmp + a->length, b->chars, b->length);
-        tmp[length] = '\0';
+        /* Empty string optimization — zero alloc */
+        if (a->length == 0) return b;
+        if (b->length == 0) return a;
 
-        ObjString *result = new_string(gc, tmp, length);
-        if (tmp != buf)
-            free(tmp);
+        int length = a->length + b->length;
+
+        if (length <= 40) {
+            /* Short path: stack buffer → intern (dedup, like Lua MAXSHORTLEN) */
+            char buf[40];
+            memcpy(buf, a->chars, a->length);
+            memcpy(buf + a->length, b->chars, b->length);
+            uint32_t hash = hash_string(buf, length);
+            ObjString *existing = find_interned(gc, buf, length, hash);
+            if (existing) return existing;
+            return intern_string(gc, buf, length, hash);
+        }
+
+        /* Long path: allocate final ObjString directly, skip interning
+           (like Lua's long strings — hash table lookup not worth the cost) */
+        size_t total = sizeof(ObjString) + length + 1;
+        ObjString *str = (ObjString *)alloc_obj(gc, total, OBJ_STRING);
+        str->length = length;
+        str->capacity = length + 1; /* tight alloc */
+        memcpy(str->chars, a->chars, a->length);
+        memcpy(str->chars + a->length, b->chars, b->length);
+        str->chars[length] = '\0';
+        str->obj.hash = 0; /* lazy — computed on demand */
+        return str;
+    }
+
+    ObjString *string_append_inplace(GC *gc, ObjString *a, ObjString *b)
+    {
+        /* Can we realloc in-place? Only if NOT interned */
+        if (a->obj.interned || a->length == 0)
+            return new_string_concat(gc, a, b);
+        if (b->length == 0)
+            return a;
+
+        int new_len = a->length + b->length;
+        int needed = new_len + 1;
+
+        if (a->capacity >= needed)
+        {
+            /* Enough room — just append */
+            memcpy(a->chars + a->length, b->chars, b->length);
+            a->length = new_len;
+            a->chars[new_len] = '\0';
+            a->obj.hash = 0; /* invalidate hash */
+            return a;
+        }
+
+        /* Grow with geometric strategy (1.5x or needed, whichever is larger) */
+        int new_cap = a->capacity + (a->capacity >> 1);
+        if (new_cap < needed) new_cap = needed;
+        /* Round up to 8-byte boundary */
+        new_cap = (new_cap + 7) & ~7;
+
+        size_t old_size = sizeof(ObjString) + a->capacity;
+        size_t new_size = sizeof(ObjString) + new_cap;
+
+        /* Must fix gc_next linked list if realloc moves the pointer */
+        ObjString *result = (ObjString *)zen_realloc(gc, a, old_size, new_size);
+        if (result != a)
+        {
+            /* Pointer moved — patch GC linked list */
+            Obj **pp = &gc->objects;
+            while (*pp)
+            {
+                if (*pp == (Obj *)a)
+                {
+                    *pp = (Obj *)result;
+                    break;
+                }
+                pp = &(*pp)->gc_next;
+            }
+        }
+        memcpy(result->chars + result->length, b->chars, b->length);
+        result->length = new_len;
+        result->capacity = new_cap;
+        result->chars[new_len] = '\0';
+        result->obj.hash = 0;
         return result;
     }
 
@@ -177,9 +255,11 @@ namespace zen
         fn->code_capacity = 0;
         fn->const_count = 0;
         fn->const_capacity = 0;
+        fn->upvalue_count = 0;
         fn->code = nullptr;
         fn->lines = nullptr;
         fn->constants = nullptr;
+        fn->upval_descs = nullptr;
         fn->name = nullptr;
         fn->source = nullptr;
         return fn;
@@ -1135,7 +1215,11 @@ namespace zen
         switch (obj->type)
         {
         case OBJ_STRING:
-            return sizeof(ObjString) + ((ObjString *)obj)->length + 1;
+        {
+            ObjString *s = (ObjString *)obj;
+            int32_t cap = s->capacity > 0 ? s->capacity : s->length + 1;
+            return sizeof(ObjString) + cap;
+        }
         case OBJ_FUNC:
             return sizeof(ObjFunc);
         case OBJ_NATIVE:

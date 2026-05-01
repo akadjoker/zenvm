@@ -44,8 +44,11 @@ namespace zen
         "NEWFIBER",
         "RESUME",
         "YIELD",
+        "FRAME",
+        "FRAME_N",
         "NEWARRAY",
         "NEWMAP",
+        "APPEND",
         "GETFIELD",
         "SETFIELD",
         "GETINDEX",
@@ -54,10 +57,31 @@ namespace zen
         "NEWINSTANCE",
         "GETMETHOD",
         "CONCAT",
+        "STRADD",
+        "TOSTRING",
         "LEN",
         "PRINT",
+        "SIN",
+        "COS",
+        "TAN",
+        "ASIN",
+        "ACOS",
+        "ATAN",
+        "ATAN2",
+        "SQRT",
+        "POW",
+        "LOG",
+        "ABS",
+        "FLOOR",
+        "CEIL",
+        "DEG",
+        "RAD",
+        "EXP",
+        "CLOCK",
         "LTJMPIFNOT",
         "LEJMPIFNOT",
+        "FORPREP",
+        "FORLOOP",
         "HALT",
     };
 
@@ -174,6 +198,8 @@ namespace zen
         case OP_JMPIF:
         case OP_JMPIFNOT:
         case OP_LOADI:
+        case OP_FORPREP:
+        case OP_FORLOOP:
             return FMT_ASBX;
         default:
             return FMT_ABC;
@@ -256,7 +282,8 @@ namespace zen
             printf("  A=%-3d sBx=%-5d", a, sbx);
 
             /* Extra: show jump target */
-            if (op == OP_JMP || op == OP_JMPIF || op == OP_JMPIFNOT)
+            if (op == OP_JMP || op == OP_JMPIF || op == OP_JMPIFNOT ||
+                op == OP_FORPREP || op == OP_FORLOOP)
             {
                 printf("  ; -> %04d", offset + 1 + sbx);
             }
@@ -282,19 +309,9 @@ namespace zen
     /* --- Disassemble full function --- */
     void disassemble_func(ObjFunc *func, const char *label)
     {
-        if (label)
-        {
-            printf("=== %s ===\n", label);
-        }
-        else if (func->name)
-        {
-            printf("=== fn %s (arity=%d, regs=%d) ===\n",
-                   func->name->chars, func->arity, func->num_regs);
-        }
-        else
-        {
-            printf("=== <script> (regs=%d) ===\n", func->num_regs);
-        }
+        const char *name = label ? label : (func->name ? func->name->chars : "<script>");
+        printf("=== %s (arity=%d, regs=%d, code=%d) ===\n",
+               name, func->arity, func->num_regs, func->code_count);
 
         int offset = 0;
         while (offset < func->code_count)

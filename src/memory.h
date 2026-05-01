@@ -52,6 +52,7 @@ namespace zen
     /* Criação de objectos (aloca + regista no GC) */
     ObjString *new_string(GC *gc, const char *chars, int length);
     ObjString *new_string_concat(GC *gc, ObjString *a, ObjString *b);
+    ObjString *string_append_inplace(GC *gc, ObjString *a, ObjString *b);
     ObjFunc *new_func(GC *gc);
     ObjNative *new_native(GC *gc, NativeFn fn, int arity, ObjString *name);
     ObjArray *new_array(GC *gc);

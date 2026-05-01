@@ -307,8 +307,8 @@ namespace zen
 
     void Compiler::free_reg(int reg)
     {
-        /* Only free if it's the top temp (above all locals) */
-        if (reg == state_->next_reg - 1)
+        /* Only free if it's a temp register above all locals */
+        if (reg == state_->next_reg - 1 && reg >= state_->local_count)
         {
             state_->next_reg--;
         }
@@ -317,6 +317,16 @@ namespace zen
     void Compiler::set_next_reg(int reg)
     {
         state_->next_reg = reg;
+    }
+
+    bool Compiler::is_local_reg(int reg)
+    {
+        for (int i = 0; i < state_->local_count; i++)
+        {
+            if (state_->locals[i].reg == reg)
+                return true;
+        }
+        return false;
     }
 
     /* =========================================================

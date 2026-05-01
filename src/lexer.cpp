@@ -10,6 +10,7 @@ void Lexer::init(const char* source) {
     has_peeked_ = false;
     in_interp_    = false;
     interp_depth_ = 0;
+    pending_error_ = nullptr;
 }
 
 /* =========================================================
@@ -90,6 +91,8 @@ void Lexer::skip_whitespace() {
                             advance();
                         }
                     }
+                    if (depth > 0)
+                        pending_error_ = "Unterminated block comment.";
                 } else {
                     return;
                 }
@@ -260,6 +263,8 @@ Token Lexer::number_token() {
     /* Hex */
     if (start_[0] == '0' && (peek() == 'x' || peek() == 'X')) {
         advance(); /* x */
+        if (!(is_digit(peek()) || (peek() >= 'a' && peek() <= 'f') || (peek() >= 'A' && peek() <= 'F')))
+            return error_token("Invalid hex literal: expected hex digits after '0x'.");
         while (is_digit(peek()) || (peek() >= 'a' && peek() <= 'f') || (peek() >= 'A' && peek() <= 'F'))
             advance();
         return make_token(TOK_INT);
@@ -306,14 +311,34 @@ TokenType Lexer::check_keyword(int start, int length, const char* rest, TokenTyp
 TokenType Lexer::identifier_type() {
     /* Trie-style keyword check (like Crafting Interpreters) */
     switch (start_[0]) {
-        case 'a': return check_keyword(1, 2, "nd", TOK_AND);
+        case 'a':
+            if (current_ - start_ > 1) {
+                switch (start_[1]) {
+                    case 'b': return check_keyword(2, 1, "s", TOK_ABS);
+                    case 'c': return check_keyword(2, 2, "os", TOK_ACOS);
+                    case 'n': return check_keyword(2, 1, "d", TOK_AND);
+                    case 's': return check_keyword(2, 2, "in", TOK_ASIN);
+                    case 't':
+                        if (current_ - start_ > 4 && start_[4] == '2')
+                            return check_keyword(2, 3, "an2", TOK_ATAN2);
+                        return check_keyword(2, 2, "an", TOK_ATAN);
+                }
+            }
+            break;
         case 'b': return check_keyword(1, 4, "reak", TOK_BREAK);
         case 'c':
             if (current_ - start_ > 1) {
                 switch (start_[1]) {
                     case 'a': return check_keyword(2, 2, "se", TOK_CASE);
-                    case 'l': return check_keyword(2, 3, "ass", TOK_CLASS);
-                    case 'o': return check_keyword(2, 6, "ntinue", TOK_CONTINUE);
+                    case 'e': return check_keyword(2, 2, "il", TOK_CEIL);
+                    case 'l':
+                        if (current_ - start_ > 2 && start_[2] == 'o')
+                            return check_keyword(2, 3, "ock", TOK_CLOCK);
+                        return check_keyword(2, 3, "ass", TOK_CLASS);
+                    case 'o':
+                        if (current_ - start_ == 3 && start_[2] == 's')
+                            return TOK_COS;
+                        return check_keyword(2, 6, "ntinue", TOK_CONTINUE);
                 }
             }
             break;
@@ -321,11 +346,10 @@ TokenType Lexer::identifier_type() {
             if (current_ - start_ > 1) {
                 switch (start_[1]) {
                     case 'e':
-                        if (current_ - start_ > 2) {
-                            if (start_[2] == 'f') return check_keyword(3, 4, "ault", TOK_DEFAULT);
-                            /* "def" is 3 chars */
-                            if (current_ - start_ == 3) return TOK_DEF;
-                        }
+                        if (current_ - start_ == 3 && start_[2] == 'f') return TOK_DEF;
+                        if (current_ - start_ == 3 && start_[2] == 'g') return TOK_DEG;
+                        if (current_ - start_ > 3 && start_[2] == 'f')
+                            return check_keyword(3, 4, "ault", TOK_DEFAULT);
                         break;
                     case 'o': if (current_ - start_ == 2) return TOK_DO;
                               break;
@@ -339,6 +363,7 @@ TokenType Lexer::identifier_type() {
                         if (current_ - start_ == 4 && start_[2] == 'i' && start_[3] == 'f')
                             return TOK_ELIF;
                         return check_keyword(2, 2, "se", TOK_ELSE);
+                    case 'x': return check_keyword(2, 1, "p", TOK_EXP);
                 }
             }
             break;
@@ -346,6 +371,7 @@ TokenType Lexer::identifier_type() {
             if (current_ - start_ > 1) {
                 switch (start_[1]) {
                     case 'a': return check_keyword(2, 3, "lse", TOK_FALSE);
+                    case 'l': return check_keyword(2, 3, "oor", TOK_FLOOR);
                     case 'o':
                         if (current_ - start_ > 3 && start_[2] == 'r' && start_[3] == 'e')
                             return check_keyword(4, 3, "ach", TOK_FOREACH);
@@ -364,7 +390,16 @@ TokenType Lexer::identifier_type() {
                 }
             }
             break;
-        case 'l': return check_keyword(1, 3, "oop", TOK_LOOP);
+        case 'l':
+            if (current_ - start_ > 1) {
+                switch (start_[1]) {
+                    case 'e': return check_keyword(2, 1, "n", TOK_LEN);
+                    case 'o':
+                        if (current_ - start_ == 3 && start_[2] == 'g') return TOK_LOG;
+                        return check_keyword(2, 2, "op", TOK_LOOP);
+                }
+            }
+            break;
         case 'n':
             if (current_ - start_ > 1) {
                 switch (start_[1]) {
@@ -374,19 +409,49 @@ TokenType Lexer::identifier_type() {
             }
             break;
         case 'o': return check_keyword(1, 1, "r", TOK_OR);
-        case 'p': return check_keyword(1, 4, "rint", TOK_PRINT);
-        case 'r': return check_keyword(1, 5, "eturn", TOK_RETURN);
+        case 'p':
+            if (current_ - start_ > 1) {
+                switch (start_[1]) {
+                    case 'o': return check_keyword(2, 1, "w", TOK_POW);
+                    case 'r': return check_keyword(2, 3, "int", TOK_PRINT);
+                }
+            }
+            break;
+        case 'r':
+            if (current_ - start_ > 1) {
+                switch (start_[1]) {
+                    case 'a': return check_keyword(2, 1, "d", TOK_RAD);
+                    case 'e':
+                        if (current_ - start_ > 2) {
+                            switch (start_[2]) {
+                                case 't': return check_keyword(3, 3, "urn", TOK_RETURN);
+                                case 's': return check_keyword(3, 3, "ume", TOK_RESUME);
+                            }
+                        }
+                        break;
+                }
+            }
+            break;
         case 's':
             if (current_ - start_ > 1) {
                 switch (start_[1]) {
                     case 'e': return check_keyword(2, 2, "lf", TOK_SELF);
+                    case 'i': return check_keyword(2, 1, "n", TOK_SIN);
                     case 'p': return check_keyword(2, 3, "awn", TOK_SPAWN);
+                    case 'q': return check_keyword(2, 2, "rt", TOK_SQRT);
                     case 't': return check_keyword(2, 4, "ruct", TOK_STRUCT);
                     case 'w': return check_keyword(2, 4, "itch", TOK_SWITCH);
                 }
             }
             break;
-        case 't': return check_keyword(1, 3, "rue", TOK_TRUE);
+        case 't':
+            if (current_ - start_ > 1) {
+                switch (start_[1]) {
+                    case 'a': return check_keyword(2, 1, "n", TOK_TAN);
+                    case 'r': return check_keyword(2, 2, "ue", TOK_TRUE);
+                }
+            }
+            break;
         case 'v': return check_keyword(1, 2, "ar", TOK_VAR);
         case 'w': return check_keyword(1, 4, "hile", TOK_WHILE);
         case 'y': return check_keyword(1, 4, "ield", TOK_YIELD);
@@ -415,6 +480,12 @@ Token Lexer::next_token() {
 
     skip_whitespace();
     start_ = current_;
+
+    if (pending_error_) {
+        const char *err = pending_error_;
+        pending_error_ = nullptr;
+        return error_token(err);
+    }
 
     if (is_at_end()) return make_token(TOK_EOF);
 

@@ -61,10 +61,13 @@ namespace zen
     /* Loop context for break/continue */
     struct LoopCtx
     {
-        int start;       /* offset of loop start (for continue) */
-        int scope_depth; /* scope depth at loop start */
-        int breaks[64];  /* break jump offsets to patch */
+        int start;            /* offset of loop start (for back-jump) */
+        int continue_target;  /* where continue jumps (-1 = patch later) */
+        int scope_depth;      /* scope depth at loop start */
+        int breaks[64];       /* break jump offsets to patch */
         int break_count;
+        int continues[64];    /* continue jump offsets to patch (do-while) */
+        int continue_count;
     };
 
     /* Compiler state — one per function being compiled */
@@ -123,6 +126,7 @@ namespace zen
         void if_statement();
         void while_statement();
         void for_statement();
+        bool try_numeric_for(); /* optimized numeric for with FORPREP/FORLOOP */
         void foreach_statement();
         void loop_statement();
         void do_while_statement();
@@ -161,6 +165,13 @@ namespace zen
         int and_expr(int left, int dest);
         int or_expr(int left, int dest);
 
+        /* Builtin handlers */
+        int math_builtin(Token token, int dest);
+        int spawn_expression(int dest);
+        int resume_expression(int dest);
+        int yield_expression(int dest);
+        int anonymous_function(int dest);
+
         /* --- Helpers --- */
         Precedence get_precedence(TokenType type);
         bool is_prefix(TokenType type);
@@ -178,6 +189,7 @@ namespace zen
         int alloc_reg();
         void free_reg(int reg);
         void set_next_reg(int reg); /* reset temp reg to a specific point */
+        bool is_local_reg(int reg);
 
         /* --- Code emission shortcuts --- */
         void emit_move(int dst, int src);

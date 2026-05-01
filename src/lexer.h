@@ -89,10 +89,33 @@ namespace zen
         TOK_STRUCT,
         TOK_YIELD,
         TOK_SPAWN,
+        TOK_RESUME,
         TOK_SELF,
 
         /* Special */
         TOK_UNDERSCORE, /* _ (discard) */
+
+        /* Keyword-builtins */
+        TOK_LEN,
+        TOK_SIN,
+        TOK_COS,
+        TOK_TAN,
+        TOK_ASIN,
+        TOK_ACOS,
+        TOK_ATAN,
+        TOK_ATAN2,
+        TOK_SQRT,
+        TOK_POW,
+        TOK_LOG,
+        TOK_ABS,
+        TOK_FLOOR,
+        TOK_CEIL,
+        TOK_DEG,
+        TOK_RAD,
+        TOK_EXP,
+        TOK_CLOCK,
+
+        /* Special */
         TOK_ERROR,
         TOK_EOF,
     };
@@ -105,6 +128,17 @@ namespace zen
         int line;
     };
 
+    struct LexerState
+    {
+        const char *start;
+        const char *current;
+        int line;
+        Token peeked;
+        bool has_peeked;
+        bool in_interp;
+        int interp_depth;
+    };
+
     class Lexer
     {
     public:
@@ -114,6 +148,21 @@ namespace zen
         Token peek_token(); /* lookahead without consuming */
 
         int current_line() const { return line_; }
+
+        LexerState save_state() const
+        {
+            return {start_, current_, line_, peeked_, has_peeked_, in_interp_, interp_depth_};
+        }
+        void restore_state(const LexerState &s)
+        {
+            start_ = s.start;
+            current_ = s.current;
+            line_ = s.line;
+            peeked_ = s.peeked;
+            has_peeked_ = s.has_peeked;
+            in_interp_ = s.in_interp;
+            interp_depth_ = s.interp_depth;
+        }
 
     private:
         void skip_whitespace();
@@ -145,6 +194,9 @@ namespace zen
         /* String interpolation state */
         int interp_depth_; /* nesting depth of { } inside interpolation */
         bool in_interp_;   /* currently lexing inside {expr} */
+
+        /* Pending error from skip_whitespace (e.g. unterminated block comment) */
+        const char *pending_error_;
     };
 
 } /* namespace zen */

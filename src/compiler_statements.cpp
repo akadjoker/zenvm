@@ -100,13 +100,21 @@ void Compiler::var_declaration() {
     Token name = previous_;
 
     if (state_->scope_depth > 0) {
-        /* Local variable */
-        int reg = add_local(name);
+        /* Local variable — like Lua, the variable only becomes visible
+           AFTER the RHS is compiled (so `var x = x` captures outer x). */
+        int reg = alloc_reg();
         if (match(TOK_EQ)) {
             expression(reg);
         } else {
             state_->emitter.emit_abc(OP_LOADNIL, reg, 0, 0, name.line);
         }
+        /* Now register it as a local (becomes visible to subsequent code) */
+        declare_local(name);
+        Local &local = state_->locals[state_->local_count++];
+        local.name = name;
+        local.depth = state_->scope_depth;
+        local.reg = reg;
+        local.captured = false;
     } else {
         /* Global variable */
         char buf[256];
@@ -186,6 +194,17 @@ void Compiler::fun_declaration() {
     ObjFunc* fn = state_->emitter.end(state_->max_reg);
     fn->arity = arity;
 
+    /* Copy upvalue descriptors to ObjFunc */
+    int nuv = state_->upvalue_count;
+    fn->upvalue_count = nuv;
+    if (nuv > 0) {
+        fn->upval_descs = (UpvalDesc*)zen_alloc(gc_, nuv * sizeof(UpvalDesc));
+        for (int i = 0; i < nuv; i++) {
+            fn->upval_descs[i].index = (uint8_t)state_->upvalues[i].index;
+            fn->upval_descs[i].is_local = state_->upvalues[i].is_local ? 1 : 0;
+        }
+    }
+
     /* Restore enclosing state */
     state_ = enclosing;
 
@@ -195,21 +214,13 @@ void Compiler::fun_declaration() {
     if (state_->scope_depth > 0) {
         /* Local function */
         int reg = add_local(name);
-        if (fn_state.upvalue_count > 0) {
-            state_->emitter.emit_abx(OP_CLOSURE, reg, ki, name.line);
-        } else {
-            state_->emitter.emit_abx(OP_LOADK, reg, ki, name.line);
-        }
+        state_->emitter.emit_abx(OP_CLOSURE, reg, ki, name.line);
     } else {
         /* Global function */
         int gidx = vm_->find_global(name_buf);
         if (gidx < 0) gidx = vm_->def_global(name_buf, val_nil());
         int reg = alloc_reg();
-        if (fn_state.upvalue_count > 0) {
-            state_->emitter.emit_abx(OP_CLOSURE, reg, ki, name.line);
-        } else {
-            state_->emitter.emit_abx(OP_LOADK, reg, ki, name.line);
-        }
+        state_->emitter.emit_abx(OP_CLOSURE, reg, ki, name.line);
         state_->emitter.emit_abx(OP_SETGLOBAL, reg, gidx, name.line);
         free_reg(reg);
     }
@@ -367,8 +378,10 @@ void Compiler::while_statement() {
     /* Push loop context */
     LoopCtx& loop = state_->loops[state_->loop_depth++];
     loop.start = loop_start;
+    loop.continue_target = loop_start;
     loop.scope_depth = state_->scope_depth;
     loop.break_count = 0;
+    loop.continue_count = 0;
 
     consume(TOK_LPAREN, "Expected '(' after 'while'.");
     int cond_reg = expression(-1);
@@ -393,12 +406,260 @@ void Compiler::while_statement() {
 }
 
 /* =========================================================
+** Numeric for — optimized path with FORPREP/FORLOOP.
+** Detects: for (var i = <int>; i < <expr>; i = i + <int>)
+** Also: i += <int>, i <= <expr>, step can be negative.
+** Returns true if pattern matched and code was emitted.
+** ========================================================= */
+
+bool Compiler::try_numeric_for() {
+    /* We need: var IDENT = INT ; IDENT <|<= EXPR ; IDENT = IDENT + INT|IDENT += INT ) */
+    /* Save state for rollback */
+    LexerState saved_lex = lexer_.save_state();
+    Token saved_current = current_;
+    Token saved_previous = previous_;
+    int saved_next_reg = state_->next_reg;
+    int saved_local_count = state_->local_count;
+
+    /* --- Phase 1: Pattern matching (can rollback) --- */
+    Token loop_var;
+    int32_t init_val = 0;
+    bool use_le = false;
+
+    /* Step 1: check for 'var IDENT = INT ;' */
+    if (!check(TOK_VAR)) return false;
+    advance(); /* consume 'var' */
+
+    if (!check(TOK_IDENTIFIER)) {
+        lexer_.restore_state(saved_lex);
+        current_ = saved_current; previous_ = saved_previous;
+        state_->next_reg = saved_next_reg; state_->local_count = saved_local_count;
+        return false;
+    }
+    advance(); /* consume IDENT */
+    loop_var = previous_;
+
+    if (!match(TOK_EQ)) {
+        lexer_.restore_state(saved_lex);
+        current_ = saved_current; previous_ = saved_previous;
+        state_->next_reg = saved_next_reg; state_->local_count = saved_local_count;
+        return false;
+    }
+
+    /* Must be an integer literal (or negative: -INT) */
+    {
+        bool neg_init = false;
+        if (check(TOK_MINUS)) { advance(); neg_init = true; }
+        if (!check(TOK_INT)) {
+            lexer_.restore_state(saved_lex);
+            current_ = saved_current; previous_ = saved_previous;
+            state_->next_reg = saved_next_reg; state_->local_count = saved_local_count;
+            return false;
+        }
+        advance();
+        init_val = (int32_t)strtol(previous_.start, nullptr, 10);
+        if (neg_init) init_val = -init_val;
+    }
+
+    if (!match(TOK_SEMICOLON)) {
+        lexer_.restore_state(saved_lex);
+        current_ = saved_current; previous_ = saved_previous;
+        state_->next_reg = saved_next_reg; state_->local_count = saved_local_count;
+        return false;
+    }
+
+    /* Step 2: check condition — IDENT < EXPR or IDENT <= EXPR */
+    if (!check(TOK_IDENTIFIER) ||
+        current_.length != loop_var.length ||
+        memcmp(current_.start, loop_var.start, loop_var.length) != 0) {
+        lexer_.restore_state(saved_lex);
+        current_ = saved_current; previous_ = saved_previous;
+        state_->next_reg = saved_next_reg; state_->local_count = saved_local_count;
+        return false;
+    }
+    advance(); /* consume loop var in condition */
+
+    if (check(TOK_LT)) { advance(); use_le = false; }
+    else if (check(TOK_LT_EQ)) { advance(); use_le = true; }
+    else {
+        lexer_.restore_state(saved_lex);
+        current_ = saved_current; previous_ = saved_previous;
+        state_->next_reg = saved_next_reg; state_->local_count = saved_local_count;
+        return false;
+    }
+
+    /* --- Phase 2: Committed — emit optimized for loop --- */
+
+    /* Allocate 3 consecutive registers: counter, limit, step.
+       All must be declared as locals so inner scopes don't reclaim them. */
+    int base_reg = state_->next_reg; /* R[A] = counter = loop var */
+    
+    /* Declare loop var as local at base_reg */
+    declare_local(loop_var);
+    Local &local_i = state_->locals[state_->local_count++];
+    local_i.name = loop_var;
+    local_i.depth = state_->scope_depth;
+    local_i.reg = base_reg;
+    local_i.captured = false;
+    state_->next_reg++; /* reserve R[A] */
+
+    /* Hidden locals for limit and step (names can't collide with user code) */
+    static const char hidden_limit[] = "(limit)";
+    static const char hidden_step[] = "(step)";
+    Token limit_tok = {TOK_IDENTIFIER, hidden_limit, 7, loop_var.line};
+    Token step_tok = {TOK_IDENTIFIER, hidden_step, 6, loop_var.line};
+
+    int limit_reg = state_->next_reg;
+    Local &local_lim = state_->locals[state_->local_count++];
+    local_lim.name = limit_tok;
+    local_lim.depth = state_->scope_depth;
+    local_lim.reg = limit_reg;
+    local_lim.captured = false;
+    state_->next_reg++;
+
+    int step_reg = state_->next_reg;
+    Local &local_stp = state_->locals[state_->local_count++];
+    local_stp.name = step_tok;
+    local_stp.depth = state_->scope_depth;
+    local_stp.reg = step_reg;
+    local_stp.captured = false;
+    state_->next_reg++;
+
+    /* Emit init value into counter reg */
+    state_->emitter.emit_asbx(OP_LOADI, base_reg, init_val, loop_var.line);
+
+    /* Parse limit expression into limit_reg */
+    expression(limit_reg);
+    
+    if (!match(TOK_SEMICOLON)) {
+        error_at_current("Expected ';' after for condition in numeric for.");
+        return true;
+    }
+
+    /* Step 3: check step — IDENT = IDENT + INT or IDENT += INT */
+    int32_t step_val = 1;
+    
+    if (!check(TOK_IDENTIFIER) ||
+        current_.length != loop_var.length ||
+        memcmp(current_.start, loop_var.start, loop_var.length) != 0) {
+        error_at_current("Expected loop variable in for step.");
+        return true;
+    }
+    advance(); /* consume loop var */
+
+    if (match(TOK_PLUS_EQ)) {
+        /* i += INT */
+        bool neg_step = false;
+        if (check(TOK_MINUS)) { advance(); neg_step = true; }
+        if (!check(TOK_INT)) {
+            error_at_current("Numeric for step must be integer literal.");
+            return true;
+        }
+        advance();
+        step_val = (int32_t)strtol(previous_.start, nullptr, 10);
+        if (neg_step) step_val = -step_val;
+    } else if (match(TOK_EQ)) {
+        /* i = i + INT or i = i - INT */
+        if (!check(TOK_IDENTIFIER) ||
+            current_.length != loop_var.length ||
+            memcmp(current_.start, loop_var.start, loop_var.length) != 0) {
+            error_at_current("Expected loop variable in for step.");
+            return true;
+        }
+        advance(); /* consume 'i' on RHS */
+
+        if (match(TOK_PLUS)) {
+            bool neg_step = false;
+            if (check(TOK_MINUS)) { advance(); neg_step = true; }
+            if (!check(TOK_INT)) {
+                error_at_current("Numeric for step must be integer literal.");
+                return true;
+            }
+            advance();
+            step_val = (int32_t)strtol(previous_.start, nullptr, 10);
+            if (neg_step) step_val = -step_val;
+        } else if (match(TOK_MINUS)) {
+            if (!check(TOK_INT)) {
+                error_at_current("Numeric for step must be integer literal.");
+                return true;
+            }
+            advance();
+            step_val = -(int32_t)strtol(previous_.start, nullptr, 10);
+        } else {
+            error_at_current("Expected '+' or '-' in for step.");
+            return true;
+        }
+    } else {
+        error_at_current("Expected '+=' or '=' in for step.");
+        return true;
+    }
+
+    consume(TOK_RPAREN, "Expected ')' after for clauses.");
+
+    /* Emit step value */
+    state_->emitter.emit_asbx(OP_LOADI, step_reg, step_val, previous_.line);
+
+    /* If using <=, adjust: add 1 to limit for < comparison in FORLOOP
+       (FORLOOP checks counter < limit, so for <= we need limit+1) */
+    if (use_le) {
+        state_->emitter.emit_abc(OP_ADDI, limit_reg, limit_reg, 1, previous_.line);
+    }
+
+    /* FORPREP: R[A] -= step; jump to FORLOOP */
+    int forprep = state_->emitter.emit_jump(OP_FORPREP, base_reg, previous_.line);
+
+    /* Loop context for break/continue */
+    LoopCtx& loop = state_->loops[state_->loop_depth++];
+    loop.scope_depth = state_->scope_depth;
+    loop.break_count = 0;
+    loop.continue_count = 0;
+    loop.continue_target = -1; /* patch later — FORLOOP not yet emitted */
+
+    int body_start = state_->emitter.current_offset();
+    loop.start = body_start;
+
+    /* Body */
+    consume(TOK_LBRACE, "Expected '{' after for clauses.");
+    begin_scope();
+    block();
+    end_scope();
+
+    /* FORLOOP: R[A] += step; if R[A] < R[A+1]: jump to body_start */
+    int forloop_offset = state_->emitter.current_offset();
+
+    int loop_back = body_start - (forloop_offset + 1);
+    state_->emitter.emit_asbx(OP_FORLOOP, base_reg, loop_back, previous_.line);
+
+    /* Patch FORPREP to jump to FORLOOP */
+    state_->emitter.patch_jump_to(forprep, forloop_offset);
+
+    /* Patch breaks to after FORLOOP */
+    for (int i = 0; i < loop.break_count; i++)
+        state_->emitter.patch_jump(loop.breaks[i]);
+
+    /* Patch continues to FORLOOP */
+    for (int i = 0; i < loop.continue_count; i++)
+        state_->emitter.patch_jump_to(loop.continues[i], forloop_offset);
+
+    state_->loop_depth--;
+    return true;
+}
+
+/* =========================================================
 ** for (init; cond; step) { body }
 ** ========================================================= */
 
 void Compiler::for_statement() {
     begin_scope();
     consume(TOK_LPAREN, "Expected '(' after 'for'.");
+
+    /* Try optimized numeric for path first */
+    if (try_numeric_for()) {
+        end_scope();
+        return;
+    }
+
+    /* --- General for (fallback) --- */
 
     /* Initializer */
     if (match(TOK_SEMICOLON)) {
@@ -415,8 +676,10 @@ void Compiler::for_statement() {
     /* Push loop context */
     LoopCtx& loop = state_->loops[state_->loop_depth++];
     loop.start = loop_start;
+    loop.continue_target = loop_start;
     loop.scope_depth = state_->scope_depth;
     loop.break_count = 0;
+    loop.continue_count = 0;
 
     /* Condition */
     int exit_jump = -1;
@@ -433,10 +696,17 @@ void Compiler::for_statement() {
     if (!check(TOK_RPAREN)) {
         body_jump = state_->emitter.emit_jump(OP_JMP, 0, previous_.line);
         step_start = state_->emitter.current_offset();
+
+        /* Save next_reg before step — step may return a local reg
+           that we must NOT free (e.g. i += 1 returns local i) */
+        int save_reg = state_->next_reg;
         int step_reg = expression(-1);
-        free_reg(step_reg);
+        (void)step_reg;
+        state_->next_reg = save_reg; /* restore — don't clobber loop locals */
+
         state_->emitter.emit_loop(loop_start, 0, previous_.line);
         loop.start = step_start; /* continue goes to step */
+        loop.continue_target = step_start;
     }
     consume(TOK_RPAREN, "Expected ')' after for clauses.");
 
@@ -497,8 +767,10 @@ void Compiler::foreach_statement() {
 
     LoopCtx& loop = state_->loops[state_->loop_depth++];
     loop.start = loop_start;
+    loop.continue_target = loop_start;
     loop.scope_depth = state_->scope_depth;
     loop.break_count = 0;
+    loop.continue_count = 0;
 
     /* Condition: idx < len */
     int cond_reg = alloc_reg();
@@ -542,8 +814,10 @@ void Compiler::loop_statement() {
 
     LoopCtx& loop = state_->loops[state_->loop_depth++];
     loop.start = loop_start;
+    loop.continue_target = loop_start;
     loop.scope_depth = state_->scope_depth;
     loop.break_count = 0;
+    loop.continue_count = 0;
 
     consume(TOK_LBRACE, "Expected '{' after 'loop'.");
     begin_scope();
@@ -567,13 +841,19 @@ void Compiler::do_while_statement() {
 
     LoopCtx& loop = state_->loops[state_->loop_depth++];
     loop.start = loop_start;
+    loop.continue_target = -1; /* patch later — condition comes after body */
     loop.scope_depth = state_->scope_depth;
     loop.break_count = 0;
+    loop.continue_count = 0;
 
     consume(TOK_LBRACE, "Expected '{' after 'do'.");
     begin_scope();
     block();
     end_scope();
+
+    /* Patch continue jumps to here (the condition) */
+    for (int i = 0; i < loop.continue_count; i++)
+        state_->emitter.patch_jump(loop.continues[i]);
 
     consume(TOK_WHILE, "Expected 'while' after do block.");
     consume(TOK_LPAREN, "Expected '(' after 'while'.");
@@ -582,7 +862,6 @@ void Compiler::do_while_statement() {
     consume(TOK_SEMICOLON, "Expected ';' after do-while.");
 
     /* If condition is true, jump back to loop_start */
-    /* emit_loop uses OP_JMP (unconditional). We emit JMPIF manually with negative offset. */
     int offset = loop_start - (state_->emitter.current_offset() + 1);
     state_->emitter.emit(ZEN_ENCODE_SBX(OP_JMPIF, cond_reg, offset), previous_.line);
     free_reg(cond_reg);
@@ -604,10 +883,16 @@ void Compiler::switch_statement() {
     consume(TOK_RPAREN, "Expected ')' after switch expression.");
     consume(TOK_LBRACE, "Expected '{' after switch.");
 
+    /* Protect the switch expression register throughout */
+    int base_reg = expr_reg + 1;
+
     int end_jumps[64];
     int end_count = 0;
 
     while (match(TOK_CASE)) {
+        /* Ensure expr_reg is protected */
+        state_->next_reg = base_reg;
+
         /* case value: { body } */
         int case_val_reg = expression(-1);
         consume(TOK_COLON, "Expected ':' after case value.");
@@ -616,8 +901,9 @@ void Compiler::switch_statement() {
         int cmp_reg = alloc_reg();
         state_->emitter.emit_abc(OP_EQ, cmp_reg, expr_reg, case_val_reg, previous_.line);
         int skip_jump = state_->emitter.emit_jump(OP_JMPIFNOT, cmp_reg, previous_.line);
-        free_reg(cmp_reg);
-        free_reg(case_val_reg);
+
+        /* Reset temps for body */
+        state_->next_reg = base_reg;
 
         /* Body */
         consume(TOK_LBRACE, "Expected '{' after case.");
@@ -634,6 +920,7 @@ void Compiler::switch_statement() {
 
     /* default */
     if (match(TOK_DEFAULT)) {
+        state_->next_reg = base_reg;
         consume(TOK_COLON, "Expected ':' after 'default'.");
         consume(TOK_LBRACE, "Expected '{' after default.");
         begin_scope();
@@ -647,7 +934,8 @@ void Compiler::switch_statement() {
     for (int i = 0; i < end_count; i++)
         state_->emitter.patch_jump(end_jumps[i]);
 
-    free_reg(expr_reg);
+    /* Release switch expression register */
+    state_->next_reg = expr_reg;
 }
 
 /* =========================================================
@@ -706,7 +994,14 @@ void Compiler::continue_statement() {
     consume(TOK_SEMICOLON, "Expected ';' after 'continue'.");
 
     LoopCtx& loop = state_->loops[state_->loop_depth - 1];
-    state_->emitter.emit_loop(loop.start, 0, previous_.line);
+    if (loop.continue_target >= 0) {
+        /* Target known (while, for) — emit backward jump */
+        state_->emitter.emit_loop(loop.continue_target, 0, previous_.line);
+    } else {
+        /* Target not yet known (do-while) — emit forward jump, patch later */
+        loop.continues[loop.continue_count++] =
+            state_->emitter.emit_jump(OP_JMP, 0, previous_.line);
+    }
 }
 
 /* =========================================================
@@ -719,39 +1014,33 @@ void Compiler::frame_statement() {
 }
 
 /* =========================================================
-** print(a, b, c);  or  print a;
+** print(a, b, c);
 ** Emits OP_PRINT for each arg. Multiple args separated by space.
 ** B=1 means "print newline after", B=0 means "no newline (more coming)".
 ** ========================================================= */
 
 void Compiler::print_statement() {
-    bool has_paren = match(TOK_LPAREN);
+    consume(TOK_LPAREN, "Expected '(' after 'print'.");
 
-    if (has_paren && check(TOK_RPAREN)) {
+    if (check(TOK_RPAREN)) {
         /* print() — just newline */
         advance();
         consume(TOK_SEMICOLON, "Expected ';' after print.");
-        /* Emit a nil print with newline flag */
         int reg = alloc_reg();
-        state_->emitter.emit_abc(OP_LOADNIL, reg, 0, 0, previous_.line);
-        state_->emitter.emit_abc(OP_PRINT, reg, 1, 0, previous_.line);
+        state_->emitter.emit_abc(OP_PRINT, reg, 1, 1, previous_.line); /* C=1: no value */
         free_reg(reg);
         return;
     }
 
     /* Collect args */
-    int count = 0;
     do {
         int reg = expression(-1);
-        count++;
-        /* Peek: is there another arg? */
-        bool last = has_paren ? (check(TOK_RPAREN)) : (!check(TOK_COMMA));
-        /* B=1: print newline (last arg), B=0: print space (not last) */
+        bool last = check(TOK_RPAREN);
         state_->emitter.emit_abc(OP_PRINT, reg, last ? 1 : 0, 0, previous_.line);
         free_reg(reg);
     } while (match(TOK_COMMA));
 
-    if (has_paren) consume(TOK_RPAREN, "Expected ')' after print arguments.");
+    consume(TOK_RPAREN, "Expected ')' after print arguments.");
     consume(TOK_SEMICOLON, "Expected ';' after print.");
 }
 

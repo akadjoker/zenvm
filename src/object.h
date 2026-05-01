@@ -50,7 +50,8 @@ namespace zen
     {
         ObjType type;
         GCColor color;
-        uint8_t _pad[2];
+        uint8_t interned; /* 1 = in intern table (immutable) */
+        uint8_t _pad;
         uint32_t hash; /* hash para strings; 0 para outros */
         Obj *gc_next;  /* linked list de todos os objectos */
     };
@@ -77,7 +78,8 @@ namespace zen
     {
         Obj obj;
         int32_t length;
-        char chars[]; /* flexible array member — C99/C++11 */
+        int32_t capacity; /* allocated size of chars[] (0 = tight, length+1) */
+        char chars[];     /* flexible array member — C99/C++11 */
     };
 
     inline bool is_string(Value v) { return is_obj_type(v, OBJ_STRING); }
@@ -105,6 +107,13 @@ namespace zen
 
     typedef uint32_t Instruction;
 
+    /* Upvalue descriptor (stored on ObjFunc for OP_CLOSURE) */
+    struct UpvalDesc
+    {
+        uint8_t index;    /* local reg in parent, or upvalue index in parent */
+        uint8_t is_local; /* 1 = from parent's locals, 0 = from parent's upvalues */
+    };
+
     struct ObjFunc
     {
         Obj obj;
@@ -114,9 +123,11 @@ namespace zen
         int32_t code_capacity;
         int32_t const_count; /* número de constantes */
         int32_t const_capacity;
+        int32_t upvalue_count; /* número de upvalues que o closure captura */
         Instruction *code; /* bytecode array (fixo após compilação) */
         int32_t *lines;    /* lines[i] = source line da instrução i */
         Value *constants;  /* pool de constantes (ints, floats, strings) */
+        UpvalDesc *upval_descs; /* upvalue descriptors (NULL se 0) */
         ObjString *name;   /* nome da função (debug) */
         ObjString *source; /* ficheiro fonte (debug) */
     };
@@ -237,6 +248,7 @@ namespace zen
 
         /* Valor passado via yield/resume */
         Value transfer_value;
+        int32_t yield_dest; /* register to receive value on resume */
 
         /* Frame speed (processo DIV-style):
         **   100 = normal (1x por tick)

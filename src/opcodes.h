@@ -76,13 +76,14 @@ namespace zen
         /* --- Fibers --- */
         OP_NEWFIBER, /* R[A] = Fiber.new(R[B])  (B=closure)     */
         OP_RESUME,   /* R[A] = R[B].resume(R[C])                 */
-        OP_YIELD,    /* yield R[A] → suspende fiber actual       */
+        OP_YIELD,    /* R[A] = yield R[B] (yield B, receive into A) */
         OP_FRAME,    /* frame; → yield com speed=100 (default)   */
         OP_FRAME_N,  /* frame(R[A]); → yield com speed=R[A]      */
 
         /* --- Objects --- */
         OP_NEWARRAY, /* R[A] = []                               */
         OP_NEWMAP,   /* R[A] = {}                               */
+        OP_APPEND,   /* R[A].push(R[B])                         */
         OP_GETFIELD, /* R[A] = R[B].constants[C]  (field name)  */
         OP_SETFIELD, /* R[A].constants[B] = R[C]                */
         OP_GETINDEX, /* R[A] = R[B][R[C]]                       */
@@ -95,13 +96,37 @@ namespace zen
 
         /* --- Misc --- */
         OP_CONCAT,   /* R[A] = R[B] .. R[C]  (string concat)   */
+        OP_STRADD,   /* R[A] = R[A] + R[B]  (in-place append)  */
         OP_TOSTRING, /* R[A] = tostring(R[B])                   */
         OP_LEN,      /* R[A] = #R[B]                            */
-        OP_PRINT,    /* print R[A] (debug/dev, remove em prod)  */
+        OP_PRINT,    /* print R[A]; B=1 → newline               */
 
-        /* --- Superinstruções fused (comparação + salto) --- */
-        OP_LTJMPIFNOT, /* if !(R[B] < R[C]): pc += sBx(next_word)  — 2 words */
-        OP_LEJMPIFNOT, /* if !(R[B] <= R[C]): pc += sBx(next_word) — 2 words */
+        /* --- Math builtins (keyword-level, no call overhead) --- */
+        OP_SIN,   /* R[A] = sin(R[B])                        */
+        OP_COS,   /* R[A] = cos(R[B])                        */
+        OP_TAN,   /* R[A] = tan(R[B])                        */
+        OP_ASIN,  /* R[A] = asin(R[B])                       */
+        OP_ACOS,  /* R[A] = acos(R[B])                       */
+        OP_ATAN,  /* R[A] = atan(R[B])                       */
+        OP_ATAN2, /* R[A] = atan2(R[B], R[C])                */
+        OP_SQRT,  /* R[A] = sqrt(R[B])                       */
+        OP_POW,   /* R[A] = pow(R[B], R[C])                  */
+        OP_LOG,   /* R[A] = log(R[B])                        */
+        OP_ABS,   /* R[A] = abs(R[B])                        */
+        OP_FLOOR, /* R[A] = floor(R[B])                      */
+        OP_CEIL,  /* R[A] = ceil(R[B])                       */
+        OP_DEG,   /* R[A] = R[B] * (180/PI)                  */
+        OP_RAD,   /* R[A] = R[B] * (PI/180)                  */
+        OP_EXP,   /* R[A] = exp(R[B])                        */
+        OP_CLOCK, /* R[A] = high-res clock (seconds)         */
+
+        /* --- Fused comparison + jump (2-word) --- */
+        OP_LTJMPIFNOT, /* if !(R[B] < R[C]): pc += sBx(next_word)  */
+        OP_LEJMPIFNOT, /* if !(R[B] <= R[C]): pc += sBx(next_word) */
+
+        /* --- Numeric for loop (superinstruction) --- */
+        OP_FORPREP, /* R[A]-=R[A+2]; if R[A]>=R[A+1]: pc+=sBx (skip) */
+        OP_FORLOOP, /* R[A]+=R[A+2]; if R[A]<R[A+1]: pc+=sBx (loop)  */
 
         OP_HALT,
     };
