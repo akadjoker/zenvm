@@ -95,6 +95,12 @@ namespace zen
     void set_clear(GC *gc, ObjSet *set);
     int32_t set_count(ObjSet *set);
 
+    /* Buffer operations */
+    ObjBuffer *new_buffer(GC *gc, BufferType btype, int32_t count);
+    void buffer_set(ObjBuffer *buf, int32_t index, double val);
+    double buffer_get(ObjBuffer *buf, int32_t index);
+    void buffer_fill(ObjBuffer *buf, double val);
+
     /* GC control */
     void gc_init(GC *gc);
     void gc_collect(VM *vm);

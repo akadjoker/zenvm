@@ -157,6 +157,8 @@ namespace zen
         int array_literal(int dest);
         int map_literal(int dest);
         int set_literal(int dest);
+        int match_buffer_type(Token token);
+        int buffer_constructor(BufferType btype, int dest);
 
         /* Infix handlers */
         int binary(Token op, int left, int dest);

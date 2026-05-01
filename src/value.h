@@ -37,7 +37,7 @@ namespace zen
         union
         {
             bool boolean;
-            int32_t integer;
+            int64_t integer;
             double number;
             Obj *obj;
         } as;
@@ -57,7 +57,7 @@ namespace zen
         v.as.boolean = b;
         return v;
     }
-    inline Value val_int(int32_t i)
+    inline Value val_int(int64_t i)
     {
         Value v;
         v.type = VAL_INT;

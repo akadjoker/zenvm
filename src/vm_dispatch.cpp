@@ -17,17 +17,17 @@
 namespace zen
 {
 
-    /* Fast int→string (replaces snprintf "%d" — ~10-30x faster) */
-    static inline int int_to_cstr(int32_t n, char *buf)
+    /* Fast int→string (replaces snprintf "%lld" — ~10-30x faster) */
+    static inline int int_to_cstr(int64_t n, char *buf)
     {
         bool neg = n < 0;
-        uint32_t u = neg ? -(uint32_t)n : (uint32_t)n;
-        char tmp[12];
-        int i = 11;
+        uint64_t u = neg ? -(uint64_t)n : (uint64_t)n;
+        char tmp[21];
+        int i = 20;
         tmp[i] = '\0';
-        do { tmp[--i] = '0' + (u % 10); u /= 10; } while (u);
+        do { tmp[--i] = '0' + (char)(u % 10); u /= 10; } while (u);
         if (neg) tmp[--i] = '-';
-        int len = 11 - i;
+        int len = 20 - i;
         memcpy(buf, tmp + i, (size_t)len + 1);
         return len;
     }
@@ -51,14 +51,14 @@ namespace zen
 
 #define SAVE_IP() frame->ip = ip
 
-/* Aritmética helpers — use int32_t wrapping via unsigned cast to avoid UB */
+/* Aritmética helpers — use int64_t wrapping via unsigned cast to avoid UB */
 #define NUM_BINOP(op)                                                         \
     do                                                                        \
     {                                                                         \
         Value vb = R[ZEN_B(i)], vc = R[ZEN_C(i)];                             \
         if (vb.type == VAL_INT && vc.type == VAL_INT)                         \
-            R[ZEN_A(i)] = val_int((int32_t)((uint32_t)vb.as.integer           \
-                                                op(uint32_t) vc.as.integer)); \
+            R[ZEN_A(i)] = val_int((int64_t)((uint64_t)vb.as.integer           \
+                                                op(uint64_t) vc.as.integer)); \
         else                                                                  \
             R[ZEN_A(i)] = val_float(to_number(vb) op to_number(vc));          \
     } while (0)
@@ -114,6 +114,7 @@ namespace zen
             &&lbl_OP_NEWARRAY,
             &&lbl_OP_NEWMAP,
             &&lbl_OP_NEWSET,
+            &&lbl_OP_NEWBUFFER,
             &&lbl_OP_APPEND,
             &&lbl_OP_SETADD,
             &&lbl_OP_GETFIELD,
@@ -328,7 +329,7 @@ namespace zen
             uint32_t i = *ip;
             Value v = R[ZEN_B(i)];
             if (v.type == VAL_INT)
-                R[ZEN_A(i)] = val_int((int32_t)(-(uint32_t)v.as.integer));
+                R[ZEN_A(i)] = val_int((int64_t)(-(uint64_t)v.as.integer));
             else
                 R[ZEN_A(i)] = val_float(-to_number(v));
             NEXT();
@@ -341,7 +342,7 @@ namespace zen
             Value vb = R[ZEN_B(i)];
             int8_t imm = (int8_t)ZEN_C(i);
             if (vb.type == VAL_INT)
-                R[ZEN_A(i)] = val_int((int32_t)((uint32_t)vb.as.integer + (uint32_t)(int32_t)imm));
+                R[ZEN_A(i)] = val_int((int64_t)((uint64_t)vb.as.integer + (int64_t)imm));
             else
                 R[ZEN_A(i)] = val_float(to_number(vb) + imm);
             NEXT();
@@ -352,7 +353,7 @@ namespace zen
             Value vb = R[ZEN_B(i)];
             int8_t imm = (int8_t)ZEN_C(i);
             if (vb.type == VAL_INT)
-                R[ZEN_A(i)] = val_int((int32_t)((uint32_t)vb.as.integer - (uint32_t)(int32_t)imm));
+                R[ZEN_A(i)] = val_int((int64_t)((uint64_t)vb.as.integer - (int64_t)imm));
             else
                 R[ZEN_A(i)] = val_float(to_number(vb) - imm);
             NEXT();
@@ -386,19 +387,19 @@ namespace zen
         CASE(OP_SHL)
         {
             uint32_t i = *ip;
-            int32_t val = to_integer(R[ZEN_B(i)]);
-            int32_t shift = to_integer(R[ZEN_C(i)]) & 31;
-            R[ZEN_A(i)] = val_int((int32_t)((uint32_t)val << shift));
+            int64_t val = to_integer(R[ZEN_B(i)]);
+            int shift = (int)(to_integer(R[ZEN_C(i)]) & 63);
+            R[ZEN_A(i)] = val_int((int64_t)((uint64_t)val << shift));
             NEXT();
         }
         CASE(OP_SHR)
         {
             uint32_t i = *ip;
-            int32_t val = to_integer(R[ZEN_B(i)]);
-            int32_t shift = to_integer(R[ZEN_C(i)]) & 31;
+            int64_t val = to_integer(R[ZEN_B(i)]);
+            int shift = (int)(to_integer(R[ZEN_C(i)]) & 63);
             /* Arithmetic right shift (sign-preserving) — portable implementation */
-            R[ZEN_A(i)] = val_int((int32_t)(
-                ((uint32_t)val >> shift) | (val < 0 ? ~(~0u >> shift) : 0)));
+            R[ZEN_A(i)] = val_int((int64_t)(
+                ((uint64_t)val >> shift) | (val < 0 ? ~(~(uint64_t)0 >> shift) : 0)));
             NEXT();
         }
 
@@ -806,6 +807,36 @@ namespace zen
             NEXT();
         }
 
+        CASE(OP_NEWBUFFER)
+        {
+            uint32_t i = *ip;
+            int a = ZEN_A(i);
+            int b = ZEN_B(i);
+            BufferType btype = (BufferType)ZEN_C(i);
+            Value arg = R[b];
+            if (is_int(arg)) {
+                int32_t count = arg.as.integer;
+                if (count < 0) { runtime_error("buffer size must be non-negative"); return; }
+                ObjBuffer *buf = new_buffer(&gc_, btype, count);
+                R[a] = val_obj((Obj *)buf);
+            } else if (is_array(arg)) {
+                ObjArray *src = as_array(arg);
+                int32_t count = arr_count(src);
+                ObjBuffer *buf = new_buffer(&gc_, btype, count);
+                for (int32_t idx = 0; idx < count; idx++) {
+                    double v = 0;
+                    if (is_int(src->data[idx])) v = (double)src->data[idx].as.integer;
+                    else if (is_float(src->data[idx])) v = src->data[idx].as.number;
+                    buffer_set(buf, idx, v);
+                }
+                R[a] = val_obj((Obj *)buf);
+            } else {
+                runtime_error("buffer constructor expects int or array");
+                return;
+            }
+            NEXT();
+        }
+
         CASE(OP_APPEND)
         {
             uint32_t i = *ip;
@@ -845,6 +876,17 @@ namespace zen
                 bool found;
                 R[ZEN_A(i)] = map_get(as_map(container), key, &found);
                 if (!found) R[ZEN_A(i)] = val_nil();
+            } else if (is_buffer(container)) {
+                if (!is_int(key)) { runtime_error("buffer index must be integer"); return; }
+                ObjBuffer *buf = as_buffer(container);
+                int32_t idx = (int32_t)key.as.integer;
+                if ((uint32_t)idx >= (uint32_t)buf->count) { runtime_error("buffer index out of bounds"); return; }
+                double v = buffer_get(buf, idx);
+                /* Float types return float, integer types return int64 */
+                if (buf->btype >= BUF_FLOAT32)
+                    R[ZEN_A(i)] = val_float(v);
+                else
+                    R[ZEN_A(i)] = val_int((int64_t)v);
             } else {
                 runtime_error("cannot index value");
                 return;
@@ -869,6 +911,16 @@ namespace zen
                 }
             } else if (is_map(container)) {
                 map_set(&gc_, as_map(container), key, val);
+            } else if (is_buffer(container)) {
+                if (!is_int(key)) { runtime_error("buffer index must be integer"); return; }
+                ObjBuffer *buf = as_buffer(container);
+                int32_t idx = key.as.integer;
+                if ((uint32_t)idx >= (uint32_t)buf->count) { runtime_error("buffer index out of bounds"); return; }
+                double v = 0;
+                if (is_int(val)) v = (double)val.as.integer;
+                else if (is_float(val)) v = val.as.number;
+                else { runtime_error("buffer only accepts numbers"); return; }
+                buffer_set(buf, idx, v);
             } else {
                 runtime_error("cannot index value");
                 return;
@@ -906,6 +958,10 @@ namespace zen
             else if (is_set(receiver))
             {
                 #include "invoke_set.inl"
+            }
+            else if (is_buffer(receiver))
+            {
+                #include "invoke_buffer.inl"
             }
             else
             {
@@ -1074,6 +1130,8 @@ namespace zen
                 R[ZEN_A(i)] = val_int(as_map(v)->count);
             else if (is_set(v))
                 R[ZEN_A(i)] = val_int(as_set(v)->count);
+            else if (is_buffer(v))
+                R[ZEN_A(i)] = val_int(as_buffer(v)->count);
             else
                 R[ZEN_A(i)] = val_int(0);
             NEXT();
@@ -1095,7 +1153,7 @@ namespace zen
                     break;
                 case VAL_INT:
                 {
-                    char ibuf[12];
+                    char ibuf[21];
                     int ilen = int_to_cstr(v.as.integer, ibuf);
                     fwrite(ibuf, 1, (size_t)ilen, stdout);
                     break;

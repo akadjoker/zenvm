@@ -531,17 +531,17 @@ run_test "variable 'class_name' (starts with 'class')" \
 echo ""
 echo "--- Integer overflow/wrapping ---"
 
-run_test "INT_MAX + 1 wraps" \
-    'print(2147483647 + 1);' "-2147483648"
+run_test "INT_MAX32 + 1 no wrap (int64)" \
+    'print(2147483647 + 1);' "2147483648"
 
-run_test "INT_MIN - 1 wraps" \
-    'print(-2147483648 - 1);' "2147483647"
+run_test "INT_MIN32 - 1 no wrap (int64)" \
+    'print(-2147483648 - 1);' "-2147483649"
 
-run_test "negate INT_MIN wraps" \
-    'print(-(-2147483648));' "-2147483648"
+run_test "negate INT_MIN32 no wrap (int64)" \
+    'print(-(-2147483648));' "2147483648"
 
-run_test "INT_MAX * 2 wraps" \
-    'print(2147483647 * 2);' "-2"
+run_test "INT_MAX32 * 2 no wrap (int64)" \
+    'print(2147483647 * 2);' "4294967294"
 
 # =========================================================
 # Modulo by zero (should not crash)
@@ -564,14 +564,14 @@ run_test "-5 % 0 = 0" \
 echo ""
 echo "--- Shift edge cases ---"
 
-run_test "1 << 31 = INT_MIN" \
-    'print(1 << 31);' "-2147483648"
+run_test "1 << 31 (int64)" \
+    'print(1 << 31);' "2147483648"
 
-run_test "1 << 32 wraps to << 0" \
-    'print(1 << 32);' "1"
+run_test "1 << 32 (int64)" \
+    'print(1 << 32);' "4294967296"
 
-run_test "1 << -1 masked to << 31" \
-    'print(1 << -1);' "-2147483648"
+run_test "1 << -1 masked to << 63" \
+    'print(1 << -1);' "-9223372036854775808"
 
 run_test "-1 >> 1 arithmetic shift" \
     'print(-1 >> 1);' "-1"

@@ -110,7 +110,7 @@ true"
 # --- Integer overflow (wrapping) ---
 run_test "integer arithmetic wrapping" \
     'var x = 2147483647; print(x + 1);' \
-    "-2147483648"
+    "2147483648"
 
 # --- Modulo ---
 run_test "modulo operator" \

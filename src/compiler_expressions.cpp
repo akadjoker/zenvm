@@ -297,11 +297,11 @@ namespace zen
             }
             if (val >= -32768 && val <= 32767)
             {
-                state_->emitter.emit_asbx(OP_LOADI, reg, (int)(int32_t)val, token.line);
+                state_->emitter.emit_asbx(OP_LOADI, reg, (int)val, token.line);
             }
             else
             {
-                int ki = state_->emitter.add_constant(val_int((int32_t)val));
+                int ki = state_->emitter.add_constant(val_int((int64_t)val));
                 state_->emitter.emit_abx(OP_LOADK, reg, ki, token.line);
             }
         }
@@ -435,6 +435,14 @@ namespace zen
 
     int Compiler::variable(Token token, int dest, bool canAssign)
     {
+        /* Check for typed buffer constructors: Int32Array(n) etc. */
+        if (token.type == TOK_IDENTIFIER && check(TOK_LPAREN))
+        {
+            int btype = match_buffer_type(token);
+            if (btype >= 0)
+                return buffer_constructor((BufferType)btype, dest);
+        }
+
         /* Resolve where the variable lives */
         int local_reg = resolve_local(state_, &token);
         int upval = (local_reg == -1) ? resolve_upvalue(state_, &token) : -1;
@@ -702,6 +710,42 @@ namespace zen
             } while (match(TOK_COMMA));
         }
         consume(TOK_RBRACE, "Expected '}' after set literal.");
+        return reg;
+    }
+
+    /* =========================================================
+    ** Buffer constructors: Int32Array(n) / Float64Array([1,2,3])
+    ** ========================================================= */
+
+    int Compiler::match_buffer_type(Token token)
+    {
+        struct { const char *name; int len; BufferType type; } types[] = {
+            {"Int8Array",    9, BUF_INT8},
+            {"Int16Array",  10, BUF_INT16},
+            {"Int32Array",  10, BUF_INT32},
+            {"Uint8Array",  10, BUF_UINT8},
+            {"Uint16Array", 11, BUF_UINT16},
+            {"Uint32Array", 11, BUF_UINT32},
+            {"Float32Array",12, BUF_FLOAT32},
+            {"Float64Array",12, BUF_FLOAT64},
+        };
+        for (int i = 0; i < 8; i++) {
+            if (token.length == types[i].len &&
+                memcmp(token.start, types[i].name, types[i].len) == 0)
+                return (int)types[i].type;
+        }
+        return -1;
+    }
+
+    int Compiler::buffer_constructor(BufferType btype, int dest)
+    {
+        /* Already checked that next is '(' */
+        advance(); /* consume '(' */
+        int arg_reg = expression(-1);
+        consume(TOK_RPAREN, "Expected ')' after buffer constructor argument.");
+        int reg = dest >= 0 ? dest : alloc_reg();
+        state_->emitter.emit_abc(OP_NEWBUFFER, reg, arg_reg, (int)btype, previous_.line);
+        if (arg_reg != reg) free_reg(arg_reg);
         return reg;
     }
 

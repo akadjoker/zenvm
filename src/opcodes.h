@@ -81,11 +81,12 @@ namespace zen
         OP_FRAME_N,  /* frame(R[A]); → yield com speed=R[A]      */
 
         /* --- Objects --- */
-        OP_NEWARRAY, /* R[A] = []                               */
-        OP_NEWMAP,   /* R[A] = {}                               */
-        OP_NEWSET,   /* R[A] = set()                            */
-        OP_APPEND,   /* R[A].push(R[B])                         */
-        OP_SETADD,   /* R[A].add(R[B])  (set add)               */
+        OP_NEWARRAY,  /* R[A] = []                               */
+        OP_NEWMAP,    /* R[A] = {}                               */
+        OP_NEWSET,    /* R[A] = set()                            */
+        OP_NEWBUFFER, /* R[A] = TypedArray(R[B]); C=BufferType   */
+        OP_APPEND,    /* R[A].push(R[B])                         */
+        OP_SETADD,    /* R[A].add(R[B])  (set add)               */
         OP_GETFIELD, /* R[A] = R[B].constants[C]  (field name)  */
         OP_SETFIELD, /* R[A].constants[B] = R[C]                */
         OP_GETINDEX, /* R[A] = R[B][R[C]]                       */

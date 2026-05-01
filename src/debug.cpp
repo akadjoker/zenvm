@@ -49,6 +49,7 @@ namespace zen
         "NEWARRAY",
         "NEWMAP",
         "NEWSET",
+        "NEWBUFFER",
         "APPEND",
         "SETADD",
         "GETFIELD",
@@ -157,6 +158,13 @@ namespace zen
             case OBJ_SET:
                 printf("<set[%d]>", ((ObjSet *)obj)->count);
                 break;
+            case OBJ_BUFFER:
+            {
+                ObjBuffer *b = (ObjBuffer *)obj;
+                static const char *bnames[] = {"Int8Array","Int16Array","Int32Array","Uint8Array","Uint16Array","Uint32Array","Float32Array","Float64Array"};
+                printf("<%s[%d]>", bnames[b->btype], b->count);
+                break;
+            }
             case OBJ_STRUCT:
                 printf("<struct>");
                 break;

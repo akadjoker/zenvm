@@ -1059,6 +1059,60 @@ namespace zen
 
     int32_t set_count(ObjSet *set) { return set->count; }
 
+    /* =========================================================
+    ** ObjBuffer — Typed buffer operations
+    ** ========================================================= */
+
+    ObjBuffer *new_buffer(GC *gc, BufferType btype, int32_t count)
+    {
+        ObjBuffer *buf = (ObjBuffer *)alloc_obj(gc, sizeof(ObjBuffer), OBJ_BUFFER);
+        buf->btype = btype;
+        buf->count = count;
+        buf->capacity = count;
+        int elem_sz = buffer_elem_size[btype];
+        size_t bytes = (size_t)count * elem_sz;
+        buf->data = (uint8_t *)zen_alloc(gc, bytes);
+        memset(buf->data, 0, bytes);
+        return buf;
+    }
+
+    void buffer_set(ObjBuffer *buf, int32_t index, double val)
+    {
+        uint8_t *p = buf->data + (size_t)index * buffer_elem_size[buf->btype];
+        switch (buf->btype) {
+            case BUF_INT8:    *(int8_t *)p   = (int8_t)val;   break;
+            case BUF_INT16:   *(int16_t *)p  = (int16_t)val;  break;
+            case BUF_INT32:   *(int32_t *)p  = (int32_t)val;  break;
+            case BUF_UINT8:   *(uint8_t *)p  = (uint8_t)val;  break;
+            case BUF_UINT16:  *(uint16_t *)p = (uint16_t)val; break;
+            case BUF_UINT32:  *(uint32_t *)p = (uint32_t)val; break;
+            case BUF_FLOAT32: *(float *)p    = (float)val;    break;
+            case BUF_FLOAT64: *(double *)p   = val;           break;
+        }
+    }
+
+    double buffer_get(ObjBuffer *buf, int32_t index)
+    {
+        uint8_t *p = buf->data + (size_t)index * buffer_elem_size[buf->btype];
+        switch (buf->btype) {
+            case BUF_INT8:    return (double)*(int8_t *)p;
+            case BUF_INT16:   return (double)*(int16_t *)p;
+            case BUF_INT32:   return (double)*(int32_t *)p;
+            case BUF_UINT8:   return (double)*(uint8_t *)p;
+            case BUF_UINT16:  return (double)*(uint16_t *)p;
+            case BUF_UINT32:  return (double)*(uint32_t *)p;
+            case BUF_FLOAT32: return (double)*(float *)p;
+            case BUF_FLOAT64: return *(double *)p;
+        }
+        return 0.0;
+    }
+
+    void buffer_fill(ObjBuffer *buf, double val)
+    {
+        for (int32_t i = 0; i < buf->count; i++)
+            buffer_set(buf, i, val);
+    }
+
     ObjClass *new_class(GC *gc, ObjString *name, ObjClass *parent)
     {
         ObjClass *cls = (ObjClass *)alloc_obj(gc, sizeof(ObjClass), OBJ_CLASS);
@@ -1178,6 +1232,10 @@ namespace zen
             break;
         }
 
+        case OBJ_BUFFER:
+            /* No GC references in raw byte data */
+            break;
+
         case OBJ_CLASS:
         {
             ObjClass *cls = (ObjClass *)obj;
@@ -1230,6 +1288,8 @@ namespace zen
             return sizeof(ObjMap);
         case OBJ_SET:
             return sizeof(ObjSet);
+        case OBJ_BUFFER:
+            return sizeof(ObjBuffer);
         case OBJ_CLASS:
             return sizeof(ObjClass);
         case OBJ_INSTANCE:
@@ -1292,6 +1352,13 @@ namespace zen
                 gc->bytes_allocated -= sizeof(SetNode) * set->capacity;
                 free(set->nodes);
             }
+            break;
+        }
+        case OBJ_BUFFER:
+        {
+            ObjBuffer *buf = (ObjBuffer *)obj;
+            if (buf->data)
+                zen_free(gc, buf->data, (size_t)buf->capacity * buffer_elem_size[buf->btype]);
             break;
         }
         case OBJ_CLASS:
