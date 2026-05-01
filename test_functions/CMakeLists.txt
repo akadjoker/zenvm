@@ -9,6 +9,14 @@ if(NOT WIN32)
     target_link_options(test_script_component PRIVATE -rdynamic)
 endif()
 
+# Teste struct O(1)
+add_executable(test_struct test_struct.cpp)
+target_include_directories(test_struct PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_struct zen_static)
+if(NOT WIN32)
+    target_link_options(test_struct PRIVATE -rdynamic)
+endif()
+
 # Copiar scripts .zen para build dir
 file(GLOB ZEN_SCRIPTS "${CMAKE_CURRENT_SOURCE_DIR}/*.zen")
 foreach(script ${ZEN_SCRIPTS})

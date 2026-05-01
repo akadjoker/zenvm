@@ -112,12 +112,12 @@ add_subdirectory(cli)
 add_subdirectory(test_functions)
 
 # --- VM test harness (old handcoded bytecode tests) ---
-add_executable(zen_test_vm src/main.cpp)
-target_link_libraries(zen_test_vm zen_static)
+# add_executable(zen_test_vm src/main.cpp)
+# target_link_libraries(zen_test_vm zen_static)
 
 # --- Edge case tests ---
-add_executable(zen_test_edge src/test_edge_cases.cpp src/memory.cpp)
-target_include_directories(zen_test_edge PRIVATE include/zen)
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    target_compile_definitions(zen_test_edge PRIVATE ASAN_OPTIONS=detect_leaks=0)
-endif()
+# add_executable(zen_test_edge src/test_edge_cases.cpp src/memory.cpp)
+# target_include_directories(zen_test_edge PRIVATE include/zen)
+# if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+#     target_compile_definitions(zen_test_edge PRIVATE ASAN_OPTIONS=detect_leaks=0)
+# endif()

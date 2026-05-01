@@ -50,6 +50,7 @@ namespace zen
         int depth;     /* scope depth (0 = global scope) */
         int reg;       /* register index */
         bool captured; /* captured by a closure? */
+        ObjStructDef *struct_type; /* non-null if known to be a struct instance */
     };
 
     /* Upvalue descriptor (compile-time) */
@@ -197,6 +198,7 @@ namespace zen
         void free_reg(int reg);
         void set_next_reg(int reg); /* reset temp reg to a specific point */
         bool is_local_reg(int reg);
+        Local *find_local_by_reg(int reg); /* find local owning a register */
 
         /* --- Code emission shortcuts --- */
         void emit_move(int dst, int src);
@@ -231,6 +233,9 @@ namespace zen
         static const int MAX_IMPORTS = 16;
         ImportedMod imports_[MAX_IMPORTS];
         int num_imports_;
+
+        /* Struct type inference: set by call_expr when callee is a struct def */
+        ObjStructDef *last_call_struct_def_;
     };
 
 } /* namespace zen */

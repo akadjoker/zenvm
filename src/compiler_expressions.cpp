@@ -711,6 +711,14 @@ namespace zen
         if (reg < 0)
             reg = alloc_reg();
         state_->emitter.emit_abx(OP_GETGLOBAL, reg, gidx, token.line);
+
+        /* Track struct def for type inference (used by var_declaration) */
+        Value gval = vm_->get_global(gidx);
+        if (is_struct_def(gval))
+            last_call_struct_def_ = as_struct_def(gval);
+        else
+            last_call_struct_def_ = nullptr;
+
         return reg;
     }
 
@@ -1023,6 +1031,9 @@ namespace zen
         int base;
         int save_next = state_->next_reg;
 
+        /* Save struct def hint — argument expressions must not clobber it */
+        ObjStructDef *saved_struct_def = last_call_struct_def_;
+
         if (is_local_reg(func_reg))
         {
             if (state_->next_reg <= func_reg)
@@ -1059,6 +1070,9 @@ namespace zen
 
         /* Restore register allocation */
         state_->next_reg = save_next > base + 1 ? save_next : base + 1;
+
+        /* Restore struct def hint (argument expressions may have clobbered it) */
+        last_call_struct_def_ = saved_struct_def;
 
         if (result_reg != base)
         {
@@ -1150,7 +1164,25 @@ namespace zen
             advance();
         else
             error_at_current("Expected field/method name after '.'.");
-        int name_ki = state_->emitter.add_string_constant(previous_.start, previous_.length);
+        Token field_tok = previous_;
+        int name_ki = state_->emitter.add_string_constant(field_tok.start, field_tok.length);
+
+        /* Try to resolve struct field index at compile time */
+        int field_idx = -1;
+        Local *loc = find_local_by_reg(obj_reg);
+        if (loc && loc->struct_type)
+        {
+            ObjStructDef *def = loc->struct_type;
+            for (int i = 0; i < def->num_fields; i++)
+            {
+                if (def->field_names[i]->length == field_tok.length &&
+                    memcmp(def->field_names[i]->chars, field_tok.start, field_tok.length) == 0)
+                {
+                    field_idx = i;
+                    break;
+                }
+            }
+        }
 
         /* Check for assignment: a.b = expr or a.b += expr */
         if (canAssign && (check(TOK_EQ) || check(TOK_PLUS_EQ) ||
@@ -1165,14 +1197,20 @@ namespace zen
                 /* a.b = expr */
                 int val_reg = alloc_reg();
                 expression(val_reg);
-                state_->emitter.emit_abc(OP_SETFIELD, obj_reg, name_ki, val_reg, previous_.line);
+                if (field_idx >= 0)
+                    state_->emitter.emit_abc(OP_SETFIELD_IDX, obj_reg, field_idx, val_reg, previous_.line);
+                else
+                    state_->emitter.emit_abc(OP_SETFIELD, obj_reg, name_ki, val_reg, previous_.line);
                 free_reg(val_reg);
             }
             else
             {
                 /* a.b += expr */
                 int cur_reg = alloc_reg();
-                state_->emitter.emit_abc(OP_GETFIELD, cur_reg, obj_reg, name_ki, previous_.line);
+                if (field_idx >= 0)
+                    state_->emitter.emit_abc(OP_GETFIELD_IDX, cur_reg, obj_reg, field_idx, previous_.line);
+                else
+                    state_->emitter.emit_abc(OP_GETFIELD, cur_reg, obj_reg, name_ki, previous_.line);
                 int rhs_reg = alloc_reg();
                 expression(rhs_reg);
                 OpCode op;
@@ -1196,7 +1234,10 @@ namespace zen
                 }
                 state_->emitter.emit_abc(op, cur_reg, cur_reg, rhs_reg, previous_.line);
                 free_reg(rhs_reg);
-                state_->emitter.emit_abc(OP_SETFIELD, obj_reg, name_ki, cur_reg, previous_.line);
+                if (field_idx >= 0)
+                    state_->emitter.emit_abc(OP_SETFIELD_IDX, obj_reg, field_idx, cur_reg, previous_.line);
+                else
+                    state_->emitter.emit_abc(OP_SETFIELD, obj_reg, name_ki, cur_reg, previous_.line);
                 free_reg(cur_reg);
             }
             if (obj_reg != dest)
@@ -1245,9 +1286,12 @@ namespace zen
             return result_reg;
         }
 
-        /* Not assignment, not call — emit GETFIELD */
+        /* Not assignment, not call — emit GETFIELD or GETFIELD_IDX */
         int reg = dest >= 0 ? dest : alloc_reg();
-        state_->emitter.emit_abc(OP_GETFIELD, reg, obj_reg, name_ki, previous_.line);
+        if (field_idx >= 0)
+            state_->emitter.emit_abc(OP_GETFIELD_IDX, reg, obj_reg, field_idx, previous_.line);
+        else
+            state_->emitter.emit_abc(OP_GETFIELD, reg, obj_reg, name_ki, previous_.line);
         if (obj_reg != reg)
             free_reg(obj_reg);
         return reg;

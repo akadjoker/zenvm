@@ -165,6 +165,7 @@ namespace zen
             /* Local variable — like Lua, the variable only becomes visible
                AFTER the RHS is compiled (so `var x = x` captures outer x). */
             int reg = alloc_reg();
+            last_call_struct_def_ = nullptr;
             if (match(TOK_EQ))
             {
                 expression(reg);
@@ -180,6 +181,8 @@ namespace zen
             local.depth = state_->scope_depth;
             local.reg = reg;
             local.captured = false;
+            local.struct_type = last_call_struct_def_;
+            last_call_struct_def_ = nullptr;
         }
         else
         {
@@ -332,13 +335,38 @@ namespace zen
     void Compiler::struct_declaration()
     {
         consume(TOK_IDENTIFIER, "Expected struct name.");
+        Token name_tok = previous_;
+
+        char name_buf[128];
+        int nlen = name_tok.length < 127 ? name_tok.length : 127;
+        memcpy(name_buf, name_tok.start, nlen);
+        name_buf[nlen] = '\0';
+
         consume(TOK_LBRACE, "Expected '{' before struct body.");
+
+        /* Collect field names */
+        char fields[64][64];
+        int field_count = 0;
+
         while (!check(TOK_RBRACE) && !check(TOK_EOF))
         {
-            advance();
+            consume(TOK_IDENTIFIER, "Expected field name.");
+            int flen = previous_.length < 63 ? previous_.length : 63;
+            memcpy(fields[field_count], previous_.start, flen);
+            fields[field_count][flen] = '\0';
+            field_count++;
+
+            if (!match(TOK_COMMA))
+                break;
         }
+
         consume(TOK_RBRACE, "Expected '}' after struct body.");
-        error("Struct declarations not yet implemented.");
+
+        /* Create the struct def in the VM (registers as global) */
+        VM::StructBuilder builder = vm_->def_struct(name_buf);
+        for (int i = 0; i < field_count; i++)
+            builder.field(fields[i]);
+        builder.end();
     }
 
     /* =========================================================

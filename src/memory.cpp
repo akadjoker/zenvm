@@ -1308,8 +1308,25 @@ namespace zen
             break;
         }
 
+        case OBJ_STRUCT_DEF:
+            /* Struct definition — field names are interned strings (no GC refs) */
+            break;
+
         case OBJ_STRUCT:
-            /* Struct definition — field names are interned strings */
+        {
+            /* Struct instance — mark field values */
+            ObjStruct *s = (ObjStruct *)obj;
+            for (int32_t i = 0; i < s->def->num_fields; i++)
+                gc_mark_value(gc, s->fields[i]);
+            break;
+        }
+
+        case OBJ_NATIVE_STRUCT_DEF:
+            /* Native struct def — no GC refs (field defs are static) */
+            break;
+
+        case OBJ_NATIVE_STRUCT:
+            /* Native struct instance — raw buffer, no Value refs to mark */
             break;
 
         case OBJ_PROCESS:
@@ -1357,8 +1374,14 @@ namespace zen
             return sizeof(ObjSet);
         case OBJ_BUFFER:
             return sizeof(ObjBuffer);
-        case OBJ_STRUCT:
+        case OBJ_STRUCT_DEF:
             return sizeof(ObjStructDef);
+        case OBJ_STRUCT:
+            return sizeof(ObjStruct);
+        case OBJ_NATIVE_STRUCT_DEF:
+            return sizeof(NativeStructDef);
+        case OBJ_NATIVE_STRUCT:
+            return sizeof(ObjNativeStruct);
         case OBJ_CLASS:
             return sizeof(ObjClass);
         case OBJ_INSTANCE:
@@ -1469,11 +1492,34 @@ namespace zen
                 zen_free(gc, fiber->frames, sizeof(CallFrame) * fiber->frame_capacity);
             break;
         }
-        case OBJ_STRUCT:
+        case OBJ_STRUCT_DEF:
         {
             ObjStructDef *def = (ObjStructDef *)obj;
             if (def->field_names)
                 zen_free(gc, def->field_names, sizeof(ObjString *) * def->num_fields);
+            break;
+        }
+        case OBJ_STRUCT:
+        {
+            ObjStruct *s = (ObjStruct *)obj;
+            if (s->fields)
+                zen_free(gc, s->fields, sizeof(Value) * s->def->num_fields);
+            break;
+        }
+        case OBJ_NATIVE_STRUCT_DEF:
+        {
+            NativeStructDef *def = (NativeStructDef *)obj;
+            if (def->fields)
+                zen_free(gc, def->fields, sizeof(NativeFieldDef) * def->num_fields);
+            break;
+        }
+        case OBJ_NATIVE_STRUCT:
+        {
+            ObjNativeStruct *ns = (ObjNativeStruct *)obj;
+            if (ns->def && ns->def->dtor)
+                ns->def->dtor(nullptr, ns->data);
+            if (ns->data)
+                zen_free(gc, ns->data, ns->def->struct_size);
             break;
         }
         case OBJ_PROCESS:

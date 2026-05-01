@@ -54,6 +54,8 @@ namespace zen
         "SETADD",
         "GETFIELD",
         "SETFIELD",
+        "GETFIELD_IDX",
+        "SETFIELD_IDX",
         "GETINDEX",
         "SETINDEX",
         "NEWCLASS",
@@ -165,8 +167,11 @@ namespace zen
                 printf("<%s[%d]>", bnames[b->btype], b->count);
                 break;
             }
+            case OBJ_STRUCT_DEF:
+                printf("<struct_def %s>", ((ObjStructDef *)obj)->name->chars);
+                break;
             case OBJ_STRUCT:
-                printf("<struct>");
+                printf("<struct %s>", ((ObjStruct *)obj)->def->name->chars);
                 break;
             case OBJ_CLASS:
                 printf("<class %s>", ((ObjClass *)obj)->name->chars);

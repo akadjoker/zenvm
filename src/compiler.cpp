@@ -20,7 +20,8 @@ namespace zen
 
     Compiler::Compiler()
         : gc_(nullptr), vm_(nullptr), state_(nullptr),
-          had_error_(false), panic_mode_(false), current_file_(nullptr), include_count_(0), include_depth_(0), num_imports_(0)
+          had_error_(false), panic_mode_(false), current_file_(nullptr), include_count_(0), include_depth_(0), num_imports_(0),
+          last_call_struct_def_(nullptr)
     {
         current_.type = TOK_EOF;
         previous_.type = TOK_EOF;
@@ -296,6 +297,7 @@ namespace zen
         local.depth = state_->scope_depth;
         local.reg = reg;
         local.captured = false;
+        local.struct_type = nullptr;
         return reg;
     }
 
@@ -337,6 +339,16 @@ namespace zen
                 return true;
         }
         return false;
+    }
+
+    Local *Compiler::find_local_by_reg(int reg)
+    {
+        for (int i = state_->local_count - 1; i >= 0; i--)
+        {
+            if (state_->locals[i].reg == reg)
+                return &state_->locals[i];
+        }
+        return nullptr;
     }
 
     /* =========================================================

@@ -120,6 +120,8 @@ namespace zen
             &&lbl_OP_SETADD,
             &&lbl_OP_GETFIELD,
             &&lbl_OP_SETFIELD,
+            &&lbl_OP_GETFIELD_IDX,
+            &&lbl_OP_SETFIELD_IDX,
             &&lbl_OP_GETINDEX,
             &&lbl_OP_SETINDEX,
             &&lbl_OP_INVOKE,
@@ -506,6 +508,43 @@ namespace zen
                     R[a] = val_nil();
                 DISPATCH();
             }
+            if (is_struct_def(callee))
+            {
+                ObjStructDef *def = as_struct_def(callee);
+                ObjStruct *s = (ObjStruct *)zen_alloc(&gc_, sizeof(ObjStruct));
+                s->obj.type = OBJ_STRUCT;
+                s->obj.color = GC_BLACK;
+                s->obj.hash = 0;
+                s->obj.interned = 0;
+                s->obj._pad = 0;
+                s->obj.gc_next = gc_.objects;
+                gc_.objects = (Obj *)s;
+                s->def = def;
+                s->fields = (Value *)zen_alloc(&gc_, sizeof(Value) * def->num_fields);
+                for (int32_t fi = 0; fi < def->num_fields; fi++)
+                    s->fields[fi] = (fi < nargs) ? R[a + 1 + fi] : val_nil();
+                R[a] = val_obj((Obj *)s);
+                DISPATCH();
+            }
+            if (is_native_struct_def(callee))
+            {
+                NativeStructDef *def = as_native_struct_def(callee);
+                ObjNativeStruct *ns = (ObjNativeStruct *)zen_alloc(&gc_, sizeof(ObjNativeStruct));
+                ns->obj.type = OBJ_NATIVE_STRUCT;
+                ns->obj.color = GC_BLACK;
+                ns->obj.hash = 0;
+                ns->obj.interned = 0;
+                ns->obj._pad = 0;
+                ns->obj.gc_next = gc_.objects;
+                gc_.objects = (Obj *)ns;
+                ns->def = def;
+                ns->data = zen_alloc(&gc_, def->struct_size);
+                memset(ns->data, 0, def->struct_size);
+                if (def->ctor)
+                    def->ctor(this, ns->data, nargs, &R[a + 1]);
+                R[a] = val_obj((Obj *)ns);
+                DISPATCH();
+            }
             runtime_error("attempt to call non-function");
             return;
         }
@@ -857,13 +896,127 @@ namespace zen
         /* --- Field/Index access --- */
         CASE(OP_GETFIELD)
         {
-            runtime_error("field access not yet implemented");
+            /* R[A] = R[B].field_by_name(constants[C]) — pointer compare fallback */
+            uint32_t i = *ip;
+            Value receiver = R[ZEN_B(i)];
+            ObjString *name = as_string(K[ZEN_C(i)]);
+            if (is_struct(receiver))
+            {
+                ObjStruct *s = as_struct(receiver);
+                ObjStructDef *def = s->def;
+                for (int32_t fi = 0; fi < def->num_fields; fi++)
+                {
+                    if (def->field_names[fi] == name) /* pointer compare (interned) */
+                    {
+                        R[ZEN_A(i)] = s->fields[fi];
+                        goto getfield_done;
+                    }
+                }
+                runtime_error("struct '%s' has no field '%s'", def->name->chars, name->chars);
+                return;
+            }
+            if (is_native_struct(receiver))
+            {
+                ObjNativeStruct *ns = as_native_struct(receiver);
+                NativeStructDef *def = ns->def;
+                for (int16_t fi = 0; fi < def->num_fields; fi++)
+                {
+                    if (def->fields[fi].name == name) /* pointer compare (interned) */
+                    {
+                        uint8_t *ptr = (uint8_t *)ns->data + def->fields[fi].offset;
+                        switch (def->fields[fi].type)
+                        {
+                        case FIELD_BYTE:    R[ZEN_A(i)] = val_int(*(uint8_t *)ptr); break;
+                        case FIELD_INT:     R[ZEN_A(i)] = val_int(*(int32_t *)ptr); break;
+                        case FIELD_UINT:    R[ZEN_A(i)] = val_int((int64_t)*(uint32_t *)ptr); break;
+                        case FIELD_FLOAT:   R[ZEN_A(i)] = val_float(*(float *)ptr); break;
+                        case FIELD_DOUBLE:  R[ZEN_A(i)] = val_float(*(double *)ptr); break;
+                        case FIELD_BOOL:    R[ZEN_A(i)] = val_bool(*(bool *)ptr); break;
+                        case FIELD_POINTER: R[ZEN_A(i)] = val_ptr(*(void **)ptr); break;
+                        }
+                        goto getfield_done;
+                    }
+                }
+                runtime_error("native struct '%s' has no field '%s'", def->name->chars, name->chars);
+                return;
+            }
+            runtime_error("cannot access field '%s' on this type", name->chars);
             return;
+            getfield_done:
+            NEXT();
         }
         CASE(OP_SETFIELD)
         {
-            runtime_error("field assignment not yet implemented");
+            /* R[A].field_by_name(constants[B]) = R[C] — pointer compare fallback */
+            uint32_t i = *ip;
+            Value receiver = R[ZEN_A(i)];
+            ObjString *name = as_string(K[ZEN_B(i)]);
+            Value val = R[ZEN_C(i)];
+            if (is_struct(receiver))
+            {
+                ObjStruct *s = as_struct(receiver);
+                ObjStructDef *def = s->def;
+                for (int32_t fi = 0; fi < def->num_fields; fi++)
+                {
+                    if (def->field_names[fi] == name) /* pointer compare (interned) */
+                    {
+                        s->fields[fi] = val;
+                        goto setfield_done;
+                    }
+                }
+                runtime_error("struct '%s' has no field '%s'", def->name->chars, name->chars);
+                return;
+            }
+            if (is_native_struct(receiver))
+            {
+                ObjNativeStruct *ns = as_native_struct(receiver);
+                NativeStructDef *def = ns->def;
+                for (int16_t fi = 0; fi < def->num_fields; fi++)
+                {
+                    if (def->fields[fi].name == name) /* pointer compare (interned) */
+                    {
+                        if (def->fields[fi].read_only)
+                        {
+                            runtime_error("field '%s' is read-only", name->chars);
+                            return;
+                        }
+                        uint8_t *ptr = (uint8_t *)ns->data + def->fields[fi].offset;
+                        switch (def->fields[fi].type)
+                        {
+                        case FIELD_BYTE:    *(uint8_t *)ptr = (uint8_t)to_integer(val); break;
+                        case FIELD_INT:     *(int32_t *)ptr = (int32_t)to_integer(val); break;
+                        case FIELD_UINT:    *(uint32_t *)ptr = (uint32_t)to_integer(val); break;
+                        case FIELD_FLOAT:   *(float *)ptr = (float)to_number(val); break;
+                        case FIELD_DOUBLE:  *(double *)ptr = to_number(val); break;
+                        case FIELD_BOOL:    *(bool *)ptr = is_truthy(val); break;
+                        case FIELD_POINTER: *(void **)ptr = val.as.pointer; break;
+                        }
+                        goto setfield_done;
+                    }
+                }
+                runtime_error("native struct '%s' has no field '%s'", def->name->chars, name->chars);
+                return;
+            }
+            runtime_error("cannot set field '%s' on this type", name->chars);
             return;
+            setfield_done:
+            NEXT();
+        }
+        CASE(OP_GETFIELD_IDX)
+        {
+            /* R[A] = R[B].fields[C] — O(1) direct index */
+            uint32_t i = *ip;
+            ObjStruct *s = as_struct(R[ZEN_B(i)]);
+            R[ZEN_A(i)] = s->fields[ZEN_C(i)];
+            NEXT();
+        }
+        CASE(OP_SETFIELD_IDX)
+        {
+            /* R[A].fields[B] = R[C] — O(1) direct index */
+            uint32_t i = *ip;
+            ObjStruct *s = as_struct(R[ZEN_A(i)]);
+            s->fields[ZEN_B(i)] = R[ZEN_C(i)];
+            NEXT();
         }
         CASE(OP_GETINDEX)
         {

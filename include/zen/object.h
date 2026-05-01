@@ -35,7 +35,10 @@ namespace zen
         OBJ_MAP,
         OBJ_SET,
         OBJ_BUFFER,
+        OBJ_STRUCT_DEF,
         OBJ_STRUCT,
+        OBJ_NATIVE_STRUCT_DEF,
+        OBJ_NATIVE_STRUCT,
         OBJ_CLASS,
         OBJ_INSTANCE,
     };
@@ -410,10 +413,99 @@ namespace zen
         Value *fields;     /* array de num_fields Values */
     };
 
-    inline bool is_struct_def(Value v) { return is_obj_type(v, OBJ_STRUCT) && ((ObjStruct *)v.as.obj)->def == nullptr; }
+    inline bool is_struct_def(Value v) { return is_obj_type(v, OBJ_STRUCT_DEF); }
     inline bool is_struct(Value v) { return is_obj_type(v, OBJ_STRUCT); }
     inline ObjStruct *as_struct(Value v) { return (ObjStruct *)v.as.obj; }
     inline ObjStructDef *as_struct_def(Value v) { return (ObjStructDef *)v.as.obj; }
+
+    /* =========================================================
+    ** NativeStructDef + ObjNativeStruct — Zero-copy C++ struct binding.
+    **
+    ** C++ struct vive diretamente num buffer raw. O script acede aos
+    ** campos por offset + tipo (como BuLang). Nenhum Value intermediário.
+    **
+    **   auto *def = vm.register_native_struct("Color", sizeof(Color), ctor, dtor);
+    **   vm.add_native_field(def, "r", offsetof(Color, r), FIELD_BYTE);
+    **   vm.add_native_field(def, "g", offsetof(Color, g), FIELD_BYTE);
+    **
+    ** Script: var c = Color(255, 0, 128, 255); print(c.r);
+    ** → lê diretamente o byte no offset do buffer. O(1), zero cópia.
+    ** ========================================================= */
+
+    enum NativeFieldType : uint8_t
+    {
+        FIELD_BYTE,    /* uint8_t */
+        FIELD_INT,     /* int32_t */
+        FIELD_UINT,    /* uint32_t */
+        FIELD_FLOAT,   /* float */
+        FIELD_DOUBLE,  /* double */
+        FIELD_BOOL,    /* bool */
+        FIELD_POINTER, /* void* */
+    };
+
+    struct NativeFieldDef
+    {
+        ObjString *name;
+        uint16_t offset;    /* offsetof(Struct, field) */
+        NativeFieldType type;
+        bool read_only;
+    };
+
+    /* Callbacks for native struct lifecycle */
+    typedef void (*NativeStructCtor)(VM *vm, void *buffer, int argc, Value *args);
+    typedef void (*NativeStructDtor)(VM *vm, void *buffer);
+
+    struct NativeStructDef
+    {
+        Obj obj;             /* OBJ_NATIVE_STRUCT_DEF */
+        ObjString *name;
+        uint16_t struct_size; /* sizeof(CppStruct) */
+        int16_t num_fields;
+        NativeFieldDef *fields;  /* array of field descriptors */
+        NativeStructCtor ctor;   /* nullable — called on construction */
+        NativeStructDtor dtor;   /* nullable — called on GC free */
+    };
+
+    struct ObjNativeStruct
+    {
+        Obj obj;              /* OBJ_NATIVE_STRUCT */
+        NativeStructDef *def; /* shared definition */
+        void *data;           /* raw buffer of def->struct_size bytes */
+    };
+
+    inline bool is_native_struct_def(Value v) { return is_obj_type(v, OBJ_NATIVE_STRUCT_DEF); }
+    inline bool is_native_struct(Value v) { return is_obj_type(v, OBJ_NATIVE_STRUCT); }
+    inline NativeStructDef *as_native_struct_def(Value v) { return (NativeStructDef *)v.as.obj; }
+    inline ObjNativeStruct *as_native_struct(Value v) { return (ObjNativeStruct *)v.as.obj; }
+
+    /* ---- Native struct helpers for NativeFn implementations ---- */
+
+    /* Get raw C++ pointer from a Value that is a native struct.
+    ** Usage: Color *c = zen_struct_ptr(args[2], Color);
+    */
+    #define zen_struct_ptr(val, T) ((T *)as_native_struct(val)->data)
+
+    /* Check if a Value is a native struct (safe: checks VAL_OBJ + OBJ_NATIVE_STRUCT) */
+    inline bool val_is_native_struct(Value v)
+    {
+        return is_obj(v) && is_native_struct(v);
+    }
+
+    /* Check if a Value is a native struct of a specific def name */
+    inline bool val_is_struct_type(Value v, const char *name)
+    {
+        if (!val_is_native_struct(v)) return false;
+        ObjNativeStruct *ns = as_native_struct(v);
+        return ns->def && ns->def->name && strcmp(ns->def->name->chars, name) == 0;
+    }
+
+    /* Get raw pointer with type check — returns nullptr if wrong type */
+    template <typename T>
+    inline T *zen_struct_cast(Value v, const char *expected_name)
+    {
+        if (!val_is_struct_type(v, expected_name)) return nullptr;
+        return (T *)as_native_struct(v)->data;
+    }
 
     /* =========================================================
     ** ObjClass + ObjInstance — Classes com herança 1 nível.

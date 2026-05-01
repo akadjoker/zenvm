@@ -97,6 +97,23 @@ namespace zen
         };
         StructBuilder def_struct(const char *name);
 
+        /* --- Native Struct binding (zero-copy C++ struct access) --- */
+        struct NativeStructBuilder
+        {
+            NativeStructBuilder(VM *vm, const char *name, uint16_t size,
+                                NativeStructCtor ctor, NativeStructDtor dtor);
+            NativeStructBuilder &field(const char *name, uint16_t offset,
+                                       NativeFieldType type, bool read_only = false);
+            NativeStructDef *end();
+
+        private:
+            VM *vm_;
+            NativeStructDef *def_;
+        };
+        NativeStructBuilder register_native_struct(const char *name, uint16_t size,
+                                                   NativeStructCtor ctor = nullptr,
+                                                   NativeStructDtor dtor = nullptr);
+
         /* --- Fiber API --- */
         ObjFiber *new_fiber(ObjClosure *closure, int stack_size = 256);
         Value resume_fiber(ObjFiber *fiber, Value val);

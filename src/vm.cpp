@@ -660,7 +660,7 @@ namespace zen
     VM::StructBuilder::StructBuilder(VM *vm, const char *name) : vm_(vm)
     {
         def_ = (ObjStructDef *)zen_alloc(&vm->gc_, sizeof(ObjStructDef));
-        def_->obj.type = OBJ_STRUCT;
+        def_->obj.type = OBJ_STRUCT_DEF;
         def_->obj.color = GC_BLACK;
         def_->obj.hash = 0;
         def_->obj.gc_next = vm->gc_.objects;
@@ -673,12 +673,69 @@ namespace zen
 
     VM::StructBuilder &VM::StructBuilder::field(const char *name)
     {
-        (void)name; /* TODO: grow field_names array */
-        def_->num_fields++;
+        int idx = def_->num_fields++;
+        /* Grow field_names array */
+        def_->field_names = (ObjString **)zen_realloc(
+            &vm_->gc_, def_->field_names,
+            sizeof(ObjString *) * (idx),
+            sizeof(ObjString *) * (idx + 1));
+        def_->field_names[idx] = intern_string(&vm_->gc_, name, (int)strlen(name),
+                                               hash_string(name, (int)strlen(name)));
         return *this;
     }
 
     ObjStructDef *VM::StructBuilder::end()
+    {
+        vm_->def_global(def_->name->chars, val_obj((Obj *)def_));
+        return def_;
+    }
+
+    /* =========================================================
+    ** NativeStructBuilder — zero-copy C++ struct binding
+    ** ========================================================= */
+
+    VM::NativeStructBuilder VM::register_native_struct(const char *name, uint16_t size,
+                                                       NativeStructCtor ctor, NativeStructDtor dtor)
+    {
+        return NativeStructBuilder(this, name, size, ctor, dtor);
+    }
+
+    VM::NativeStructBuilder::NativeStructBuilder(VM *vm, const char *name, uint16_t size,
+                                                  NativeStructCtor ctor, NativeStructDtor dtor)
+        : vm_(vm)
+    {
+        def_ = (NativeStructDef *)zen_alloc(&vm->gc_, sizeof(NativeStructDef));
+        def_->obj.type = OBJ_NATIVE_STRUCT_DEF;
+        def_->obj.color = GC_BLACK;
+        def_->obj.hash = 0;
+        def_->obj.gc_next = vm->gc_.objects;
+        vm->gc_.objects = (Obj *)def_;
+        def_->name = intern_string(&vm->gc_, name, (int)strlen(name),
+                                   hash_string(name, (int)strlen(name)));
+        def_->struct_size = size;
+        def_->num_fields = 0;
+        def_->fields = nullptr;
+        def_->ctor = ctor;
+        def_->dtor = dtor;
+    }
+
+    VM::NativeStructBuilder &VM::NativeStructBuilder::field(const char *name, uint16_t offset,
+                                                             NativeFieldType type, bool read_only)
+    {
+        int idx = def_->num_fields++;
+        def_->fields = (NativeFieldDef *)zen_realloc(
+            &vm_->gc_, def_->fields,
+            sizeof(NativeFieldDef) * idx,
+            sizeof(NativeFieldDef) * (idx + 1));
+        def_->fields[idx].name = intern_string(&vm_->gc_, name, (int)strlen(name),
+                                               hash_string(name, (int)strlen(name)));
+        def_->fields[idx].offset = offset;
+        def_->fields[idx].type = type;
+        def_->fields[idx].read_only = read_only;
+        return *this;
+    }
+
+    NativeStructDef *VM::NativeStructBuilder::end()
     {
         vm_->def_global(def_->name->chars, val_obj((Obj *)def_));
         return def_;

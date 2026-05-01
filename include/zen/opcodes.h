@@ -89,6 +89,8 @@ namespace zen
         OP_SETADD,    /* R[A].add(R[B])  (set add)               */
         OP_GETFIELD, /* R[A] = R[B].constants[C]  (field name)  */
         OP_SETFIELD, /* R[A].constants[B] = R[C]                */
+        OP_GETFIELD_IDX, /* R[A] = R[B].fields[C]  (direct index, O(1)) */
+        OP_SETFIELD_IDX, /* R[A].fields[B] = R[C]  (direct index, O(1)) */
         OP_GETINDEX, /* R[A] = R[B][R[C]]                       */
         OP_SETINDEX, /* R[A][R[B]] = R[C]                       */
         OP_INVOKE,   /* R[A].method(R[A+1]..R[A+B]) → R[A]; C=name_idx (2-word: word2=name_ki) */
