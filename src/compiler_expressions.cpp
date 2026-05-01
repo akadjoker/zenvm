@@ -79,6 +79,7 @@ namespace zen
         case TOK_LPAREN:
         case TOK_LBRACKET:
         case TOK_LBRACE:
+        case TOK_SET_LBRACE:
         /* Math builtins */
         case TOK_SIN:
         case TOK_COS:
@@ -186,6 +187,8 @@ namespace zen
             return array_literal(dest);
         case TOK_LBRACE:
             return map_literal(dest);
+        case TOK_SET_LBRACE:
+            return set_literal(dest);
         /* Math builtins */
         case TOK_SIN:
         case TOK_COS:
@@ -681,6 +684,28 @@ namespace zen
     }
 
     /* =========================================================
+    ** Prefix handlers — Set literal: #{a, b, c}
+    ** ========================================================= */
+
+    int Compiler::set_literal(int dest)
+    {
+        int reg = dest >= 0 ? dest : alloc_reg();
+        state_->emitter.emit_abc(OP_NEWSET, reg, 0, 0, previous_.line);
+
+        if (!check(TOK_RBRACE))
+        {
+            do
+            {
+                int val_reg = expression(-1);
+                state_->emitter.emit_abc(OP_SETADD, reg, val_reg, 0, previous_.line);
+                free_reg(val_reg);
+            } while (match(TOK_COMMA));
+        }
+        consume(TOK_RBRACE, "Expected '}' after set literal.");
+        return reg;
+    }
+
+    /* =========================================================
     ** Infix handlers — Binary operators
     ** ========================================================= */
 
@@ -954,7 +979,12 @@ namespace zen
 
     int Compiler::dot_expr(int obj_reg, int dest, bool canAssign)
     {
-        consume(TOK_IDENTIFIER, "Expected field name after '.'.");
+        /* After '.', any identifier or keyword is valid as a method/field name */
+        if (current_.type == TOK_IDENTIFIER ||
+            (current_.type >= TOK_VAR && current_.type <= TOK_CLOCK))
+            advance();
+        else
+            error_at_current("Expected field/method name after '.'.");
         int name_ki = state_->emitter.add_string_constant(previous_.start, previous_.length);
 
         /* Check for assignment: a.b = expr or a.b += expr */
@@ -1009,7 +1039,48 @@ namespace zen
             return dest >= 0 ? dest : alloc_reg();
         }
 
-        /* Not assignment — emit GETFIELD */
+        /* Not assignment — check for method call: a.b(args) */
+        if (check(TOK_LPAREN))
+        {
+            /* Method invocation — emit OP_INVOKE (2-word) */
+            advance(); /* consume '(' */
+
+            /* Put receiver at base register */
+            int base = alloc_reg();
+            emit_move(base, obj_reg);
+            if (obj_reg != base)
+                free_reg(obj_reg);
+
+            /* Parse arguments into consecutive registers after base */
+            int arg_count = 0;
+            int save_next = state_->next_reg;
+            if (state_->next_reg <= base)
+                state_->next_reg = base + 1;
+
+            if (!check(TOK_RPAREN))
+            {
+                do
+                {
+                    int arg_reg = alloc_reg();
+                    expression(arg_reg);
+                    arg_count++;
+                } while (match(TOK_COMMA));
+            }
+            consume(TOK_RPAREN, "Expected ')' after arguments.");
+
+            /* Emit 2-word OP_INVOKE: word1=[OP_INVOKE|base|argcount|0], word2=name_ki */
+            state_->emitter.emit_abc(OP_INVOKE, base, arg_count, 0, previous_.line);
+            state_->emitter.emit((uint32_t)name_ki, previous_.line);
+
+            /* Result is in R[base] */
+            state_->next_reg = save_next > base + 1 ? save_next : base + 1;
+            int result_reg = dest >= 0 ? dest : base;
+            if (result_reg != base)
+                emit_move(result_reg, base);
+            return result_reg;
+        }
+
+        /* Not assignment, not call — emit GETFIELD */
         int reg = dest >= 0 ? dest : alloc_reg();
         state_->emitter.emit_abc(OP_GETFIELD, reg, obj_reg, name_ki, previous_.line);
         if (obj_reg != reg)

@@ -156,6 +156,7 @@ namespace zen
         int grouping(int dest);
         int array_literal(int dest);
         int map_literal(int dest);
+        int set_literal(int dest);
 
         /* Infix handlers */
         int binary(Token op, int left, int dest);

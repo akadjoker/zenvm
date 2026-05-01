@@ -113,11 +113,14 @@ namespace zen
             &&lbl_OP_FRAME_N,
             &&lbl_OP_NEWARRAY,
             &&lbl_OP_NEWMAP,
+            &&lbl_OP_NEWSET,
             &&lbl_OP_APPEND,
+            &&lbl_OP_SETADD,
             &&lbl_OP_GETFIELD,
             &&lbl_OP_SETFIELD,
             &&lbl_OP_GETINDEX,
             &&lbl_OP_SETINDEX,
+            &&lbl_OP_INVOKE,
             &&lbl_OP_NEWCLASS,
             &&lbl_OP_NEWINSTANCE,
             &&lbl_OP_GETMETHOD,
@@ -795,11 +798,27 @@ namespace zen
             NEXT();
         }
 
+        CASE(OP_NEWSET)
+        {
+            uint32_t i = *ip;
+            ObjSet *set = new_set(&gc_);
+            R[ZEN_A(i)] = val_obj((Obj *)set);
+            NEXT();
+        }
+
         CASE(OP_APPEND)
         {
             uint32_t i = *ip;
             ObjArray *arr = as_array(R[ZEN_A(i)]);
             array_push(&gc_, arr, R[ZEN_B(i)]);
+            NEXT();
+        }
+
+        CASE(OP_SETADD)
+        {
+            uint32_t i = *ip;
+            ObjSet *set = as_set(R[ZEN_A(i)]);
+            set_add(&gc_, set, R[ZEN_B(i)]);
             NEXT();
         }
 
@@ -852,6 +871,45 @@ namespace zen
                 map_set(&gc_, as_map(container), key, val);
             } else {
                 runtime_error("cannot index value");
+                return;
+            }
+            NEXT();
+        }
+
+        /* --- OP_INVOKE: method dispatch by receiver type --- */
+        /* 2-word instruction: word1=[OP_INVOKE|A|B|C], word2=name_ki */
+        /* A=base (receiver at R[A], args at R[A+1]..R[A+B]), result → R[A] */
+        CASE(OP_INVOKE)
+        {
+            uint32_t i = *ip;
+            uint8_t base = ZEN_A(i);
+            uint8_t arg_count = ZEN_B(i);
+            uint32_t name_ki = *(++ip); /* second word: method name constant index */
+            Value receiver = R[base];
+            ObjString *method = as_string(K[name_ki]);
+            const char *mname = method->chars;
+            int mlen = method->length;
+            Value *args = &R[base + 1];
+
+            if (is_array(receiver))
+            {
+                #include "invoke_array.inl"
+            }
+            else if (is_string(receiver))
+            {
+                #include "invoke_string.inl"
+            }
+            else if (is_map(receiver))
+            {
+                #include "invoke_map.inl"
+            }
+            else if (is_set(receiver))
+            {
+                #include "invoke_set.inl"
+            }
+            else
+            {
+                runtime_error("cannot invoke method '%s' on this type", mname);
                 return;
             }
             NEXT();

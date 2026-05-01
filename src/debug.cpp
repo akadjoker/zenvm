@@ -48,7 +48,9 @@ namespace zen
         "FRAME_N",
         "NEWARRAY",
         "NEWMAP",
+        "NEWSET",
         "APPEND",
+        "SETADD",
         "GETFIELD",
         "SETFIELD",
         "GETINDEX",
@@ -298,8 +300,20 @@ namespace zen
         printf("\n");
 
         /* 2-word superinstructions: skip the operand word */
-        if (op == OP_LTJMPIFNOT || op == OP_LEJMPIFNOT || op == OP_CALLGLOBAL)
+        if (op == OP_LTJMPIFNOT || op == OP_LEJMPIFNOT || op == OP_CALLGLOBAL ||
+            op == OP_INVOKE)
         {
+            uint32_t word2 = func->code[offset + 1];
+            if (op == OP_INVOKE)
+            {
+                printf("      %04d  (name_ki=%d", offset + 1, word2);
+                if ((int)word2 < func->const_count)
+                {
+                    printf(" = ");
+                    print_value(func->constants[word2]);
+                }
+                printf(")\n");
+            }
             return offset + 2;
         }
 

@@ -95,6 +95,9 @@ namespace zen
         /* Special */
         TOK_UNDERSCORE, /* _ (discard) */
 
+        /* Set literal */
+        TOK_SET_LBRACE, /* #{ */
+
         /* Keyword-builtins */
         TOK_LEN,
         TOK_SIN,

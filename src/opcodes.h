@@ -83,11 +83,14 @@ namespace zen
         /* --- Objects --- */
         OP_NEWARRAY, /* R[A] = []                               */
         OP_NEWMAP,   /* R[A] = {}                               */
+        OP_NEWSET,   /* R[A] = set()                            */
         OP_APPEND,   /* R[A].push(R[B])                         */
+        OP_SETADD,   /* R[A].add(R[B])  (set add)               */
         OP_GETFIELD, /* R[A] = R[B].constants[C]  (field name)  */
         OP_SETFIELD, /* R[A].constants[B] = R[C]                */
         OP_GETINDEX, /* R[A] = R[B][R[C]]                       */
         OP_SETINDEX, /* R[A][R[B]] = R[C]                       */
+        OP_INVOKE,   /* R[A].method(R[A+1]..R[A+B]) → R[A]; C=name_idx (2-word: word2=name_ki) */
 
         /* --- Classes --- */
         OP_NEWCLASS,    /* R[A] = new class (nome em constants[B]) */

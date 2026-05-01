@@ -552,6 +552,10 @@ Token Lexer::next_token() {
 
         case '"': case '\'': return string_token();
 
+        case '#':
+            if (match('{')) return make_token(TOK_SET_LBRACE);
+            return error_token("Unexpected '#' (use #{...} for set literals).");
+
         case '@':
             if (match('"')) return verbatim_string_token();
             return error_token("Unexpected '@' (use @\"...\" for verbatim strings).");

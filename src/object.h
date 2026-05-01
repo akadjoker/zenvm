@@ -34,6 +34,7 @@ namespace zen
         OBJ_ARRAY,
         OBJ_MAP,
         OBJ_SET,
+        OBJ_BUFFER,
         OBJ_STRUCT,
         OBJ_CLASS,
         OBJ_INSTANCE,
@@ -342,6 +343,42 @@ namespace zen
 
     inline bool is_set(Value v) { return is_obj_type(v, OBJ_SET); }
     inline ObjSet *as_set(Value v) { return (ObjSet *)v.as.obj; }
+
+    /* =========================================================
+    ** ObjBuffer — Typed buffer (Int8Array, Uint8Array, etc.)
+    **
+    ** Fixed-size element array stored as raw bytes.
+    ** JS-style names: Int8Array, Int16Array, Int32Array,
+    **                 Uint8Array, Uint16Array, Uint32Array,
+    **                 Float32Array, Float64Array
+    ** ========================================================= */
+
+    enum BufferType : uint8_t
+    {
+        BUF_INT8 = 0,
+        BUF_INT16,
+        BUF_INT32,
+        BUF_UINT8,
+        BUF_UINT16,
+        BUF_UINT32,
+        BUF_FLOAT32,
+        BUF_FLOAT64,
+    };
+
+    static const int buffer_elem_size[] = {1, 2, 4, 1, 2, 4, 4, 8};
+
+    struct ObjBuffer
+    {
+        Obj obj;
+        BufferType btype;
+        uint8_t _pad[3];
+        int32_t count;    /* number of elements */
+        int32_t capacity; /* allocated elements */
+        uint8_t *data;    /* raw byte buffer */
+    };
+
+    inline bool is_buffer(Value v) { return is_obj_type(v, OBJ_BUFFER); }
+    inline ObjBuffer *as_buffer(Value v) { return (ObjBuffer *)v.as.obj; }
 
     /* =========================================================
     ** ObjStruct — Value type (sem herança, sem métodos virtuais).
