@@ -107,6 +107,7 @@ namespace zen
     /* GC control */
     void gc_init(GC *gc);
     void gc_collect(VM *vm);
+    void gc_sweep_all(GC *gc);
     void gc_mark_value(GC *gc, Value v);
     void gc_mark_obj(GC *gc, Obj *obj);
 

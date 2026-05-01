@@ -174,9 +174,15 @@ namespace zen
             case OBJ_INSTANCE:
                 printf("<instance %s>", ((ObjInstance *)obj)->klass->name->chars);
                 break;
+            case OBJ_PROCESS:
+                printf("<process>");
+                break;
             }
             break;
         }
+        case VAL_PTR:
+            printf("<ptr %p>", val.as.pointer);
+            break;
         }
     }
 

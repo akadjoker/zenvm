@@ -5,6 +5,13 @@
 #include <cstdlib>
 #include <cstring>
 
+/* Dynamic loading */
+#if defined(__linux__) || defined(__APPLE__)
+#include <dlfcn.h>
+#elif defined(_WIN32)
+#include <windows.h>
+#endif
+
 namespace zen
 {
 
@@ -12,13 +19,14 @@ namespace zen
     ** Construtor / Destrutor
     ** ========================================================= */
 
-    VM::VM() : num_globals_(0), main_fiber_(nullptr), current_fiber_(nullptr), fiber_depth_(0), had_error_(false), num_search_paths_(0)
+    VM::VM() : num_globals_(0), main_fiber_(nullptr), current_fiber_(nullptr), fiber_depth_(0), had_error_(false), num_search_paths_(0), num_libs_(0), num_plugins_(0)
     {
         gc_init(&gc_);
         gc_.vm = this;
         memset(globals_, 0, sizeof(globals_));
         memset(global_names_, 0, sizeof(global_names_));
         memset(search_paths_, 0, sizeof(search_paths_));
+        memset(plugin_handles_, 0, sizeof(plugin_handles_));
 
         /* Criar main fiber */
         main_fiber_ = new_fiber(nullptr, kMaxRegs * 4);
@@ -27,18 +35,22 @@ namespace zen
 
     VM::~VM()
     {
+        /* Close loaded plugins */
+#if defined(__linux__) || defined(__APPLE__)
+        for (int i = 0; i < num_plugins_; i++)
+            if (plugin_handles_[i]) dlclose(plugin_handles_[i]);
+#elif defined(_WIN32)
+        for (int i = 0; i < num_plugins_; i++)
+            if (plugin_handles_[i]) FreeLibrary((HMODULE)plugin_handles_[i]);
+#endif
+
         /* Free search paths */
         for (int i = 0; i < num_search_paths_; i++)
             free(search_paths_[i]);
 
-        /* Free all objects via GC sweep (marca nenhum → tudo WHITE → free) */
-        Obj *obj = gc_.objects;
-        while (obj)
-        {
-            Obj *next = obj->gc_next;
-            /* free_obj(&gc_, obj); — implementar em memory.cpp */
-            obj = next;
-        }
+        /* Free all objects via GC sweep */
+        gc_sweep_all(&gc_);
+
         /* Free gray list */
         if (gc_.gray_list)
             free(gc_.gray_list);
@@ -233,6 +245,148 @@ namespace zen
                                      hash_string(name, (int)strlen(name)));
         ObjNative *nat = new_native(&gc_, fn, arity, s);
         return def_global(name, val_obj((Obj *)nat));
+    }
+
+    /* =========================================================
+    ** Module registry
+    ** ========================================================= */
+
+    void VM::register_lib(const NativeLib *lib)
+    {
+        if (num_libs_ < MAX_LIBS)
+            libs_[num_libs_++] = lib;
+    }
+
+    const NativeLib *VM::find_lib(const char *name) const
+    {
+        for (int i = 0; i < num_libs_; i++)
+            if (strcmp(libs_[i]->name, name) == 0)
+                return libs_[i];
+        return nullptr;
+    }
+
+    int VM::open_lib_globals(const NativeLib *lib)
+    {
+        int base = num_globals_;
+        for (int i = 0; i < lib->num_functions; i++)
+            def_native(lib->functions[i].name, lib->functions[i].fn, lib->functions[i].arity);
+        for (int i = 0; i < lib->num_constants; i++)
+            def_global(lib->constants[i].name, lib->constants[i].value);
+        return base;
+    }
+
+    void VM::open_lib(const NativeLib *lib)
+    {
+        register_lib(lib);
+        open_lib_globals(lib);
+    }
+
+    /* =========================================================
+    ** try_load_plugin — fallback when find_lib fails.
+    **
+    ** Searches for <name>.so (Linux), <name>.dylib (macOS),
+    ** or <name>.dll (Windows) in search paths and CWD.
+    **
+    ** The shared library must export:
+    **   extern "C" const NativeLib* zen_open_<name>(void);
+    **
+    ** Returns the NativeLib* on success (already registered),
+    ** or nullptr on failure (no error raised — caller handles it).
+    ** ========================================================= */
+    const NativeLib *VM::try_load_plugin(const char *name)
+    {
+#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
+        if (num_plugins_ >= MAX_PLUGINS)
+            return nullptr;
+
+        /* Determine extension */
+#if defined(__APPLE__)
+        const char *ext = ".dylib";
+#elif defined(_WIN32)
+        const char *ext = ".dll";
+#else
+        const char *ext = ".so";
+#endif
+
+        /* Build symbol name: zen_open_<name> */
+        char sym_name[80];
+        snprintf(sym_name, sizeof(sym_name), "zen_open_%s", name);
+
+        /* Try paths: CWD first, then search_paths_ */
+        char path[512];
+        void *handle = nullptr;
+
+        /* Try: ./<name>.so */
+        snprintf(path, sizeof(path), "./%s%s", name, ext);
+#if defined(_WIN32)
+        handle = (void *)LoadLibraryA(path);
+#else
+        handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+#endif
+
+        /* Try search paths */
+        if (!handle)
+        {
+            for (int i = 0; i < num_search_paths_ && !handle; i++)
+            {
+                int dlen = (int)strlen(search_paths_[i]);
+                if (dlen > 0 && search_paths_[i][dlen - 1] == '/')
+                    snprintf(path, sizeof(path), "%s%s%s", search_paths_[i], name, ext);
+                else
+                    snprintf(path, sizeof(path), "%s/%s%s", search_paths_[i], name, ext);
+#if defined(_WIN32)
+                handle = (void *)LoadLibraryA(path);
+#else
+                handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+#endif
+            }
+        }
+
+        if (!handle)
+            return nullptr;
+
+        /* Find the opener symbol */
+        typedef const NativeLib *(*OpenFn)(void);
+        OpenFn opener;
+#if defined(_WIN32)
+        opener = (OpenFn)GetProcAddress((HMODULE)handle, sym_name);
+#else
+        opener = (OpenFn)dlsym(handle, sym_name);
+#endif
+
+        if (!opener)
+        {
+            /* Symbol not found — close handle */
+#if defined(_WIN32)
+            FreeLibrary((HMODULE)handle);
+#else
+            dlclose(handle);
+#endif
+            return nullptr;
+        }
+
+        /* Call opener to get NativeLib */
+        const NativeLib *lib = opener();
+        if (!lib)
+        {
+#if defined(_WIN32)
+            FreeLibrary((HMODULE)handle);
+#else
+            dlclose(handle);
+#endif
+            return nullptr;
+        }
+
+        /* Register plugin handle and library */
+        plugin_handles_[num_plugins_++] = handle;
+        register_lib(lib);
+        return lib;
+
+#else
+        /* WASM/other — no dynamic loading */
+        (void)name;
+        return nullptr;
+#endif
     }
 
     /* =========================================================

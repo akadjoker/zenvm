@@ -392,9 +392,9 @@ TokenType Lexer::identifier_type() {
             if (current_ - start_ > 1) {
                 switch (start_[1]) {
                     case 'f': if (current_ - start_ == 2) return TOK_IF; break;
+                    case 'm': return check_keyword(2, 4, "port", TOK_IMPORT);
                     case 'n': if (current_ - start_ == 2) return TOK_IN;
                               if (current_ - start_ == 7 && start_[2] == 'c') return check_keyword(2, 5, "clude", TOK_INCLUDE);
-                              return check_keyword(2, 4, "port", TOK_IMPORT);
                     break;
                 }
             }
@@ -461,6 +461,7 @@ TokenType Lexer::identifier_type() {
                 }
             }
             break;
+        case 'u': return check_keyword(1, 4, "sing", TOK_USING);
         case 'v': return check_keyword(1, 2, "ar", TOK_VAR);
         case 'w': return check_keyword(1, 4, "hile", TOK_WHILE);
         case 'x': return check_keyword(1, 2, "or", TOK_XOR);

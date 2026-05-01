@@ -3,6 +3,7 @@
 
 #include "lexer.h"
 #include "emitter.h"
+#include "module.h"
 
 namespace zen
 {
@@ -139,6 +140,7 @@ namespace zen
         void print_statement();
         void block();
         void import_statement();
+        void using_statement();
         void include_statement();
 
         /* --- Expressions (Pratt parser) --- */
@@ -218,6 +220,17 @@ namespace zen
         int include_count_;
         const char *include_stack_[MAX_INCLUDE_DEPTH];
         int include_depth_;
+
+        /* Imported modules (compile-time state) */
+        struct ImportedMod
+        {
+            const NativeLib *lib;
+            int base_gidx;  /* first global index for this module's functions */
+            bool exposed;   /* "using" was called */
+        };
+        static const int MAX_IMPORTS = 16;
+        ImportedMod imports_[MAX_IMPORTS];
+        int num_imports_;
     };
 
 } /* namespace zen */

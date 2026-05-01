@@ -15,11 +15,6 @@ namespace zen
     ** Tipos heap (apontam para GCObject, geridos pelo GC):
     **   OBJ → ObjString, ObjFunc, ObjArray, ObjMap, ObjClass, ObjInstance
     **
-    ** Porquê tagged union e não NaN boxing?
-    **   - Debug: v.type == TYPE_INT é óbvio, 0x7FFC... não é
-    **   - Extensível: novos tipos = +1 enum, +1 campo
-    **   - Performance equivalente no nosso uso (L1 quente)
-    **   - NaN boxing = optimização prematura para <5% de ganho aqui
     */
 
     enum ValueType : uint8_t
@@ -29,6 +24,7 @@ namespace zen
         VAL_INT,
         VAL_FLOAT,
         VAL_OBJ, /* qualquer objecto no heap (string, func, array...) */
+        VAL_PTR, /* raw pointer (não gerido pelo GC) */
     };
 
     struct Value
@@ -40,6 +36,7 @@ namespace zen
             int64_t integer;
             double number;
             Obj *obj;
+            void *pointer;
         } as;
     };
 
@@ -78,6 +75,13 @@ namespace zen
         v.as.obj = o;
         return v;
     }
+    inline Value val_ptr(void *p)
+    {
+        Value v;
+        v.type = VAL_PTR;
+        v.as.pointer = p;
+        return v;
+    }
 
     /* Type checks */
     inline bool is_nil(Value v) { return v.type == VAL_NIL; }
@@ -85,6 +89,8 @@ namespace zen
     inline bool is_int(Value v) { return v.type == VAL_INT; }
     inline bool is_float(Value v) { return v.type == VAL_FLOAT; }
     inline bool is_obj(Value v) { return v.type == VAL_OBJ; }
+    inline bool is_ptr(Value v) { return v.type == VAL_PTR; }
+    inline void *as_ptr(Value v) { return v.as.pointer; }
 
     /* Truthiness — nil e false são falsy, tudo o resto truthy */
     inline bool is_truthy(Value v)
@@ -136,6 +142,8 @@ namespace zen
                 return a.as.number == b.as.number;
             case VAL_OBJ:
                 return a.as.obj == b.as.obj;
+            case VAL_PTR:
+                return a.as.pointer == b.as.pointer;
             }
             return false;
         }

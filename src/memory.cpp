@@ -1382,8 +1382,12 @@ namespace zen
             ObjFunc *fn = (ObjFunc *)obj;
             if (fn->code)
                 zen_free(gc, fn->code, sizeof(Instruction) * fn->code_count);
+            if (fn->lines)
+                zen_free(gc, fn->lines, sizeof(int32_t) * fn->code_count);
             if (fn->constants)
                 zen_free(gc, fn->constants, sizeof(Value) * fn->const_count);
+            if (fn->upval_descs)
+                zen_free(gc, fn->upval_descs, sizeof(UpvalDesc) * fn->upvalue_count);
             break;
         }
         case OBJ_NATIVE:
@@ -1524,6 +1528,35 @@ namespace zen
     /* GC constants */
     static const size_t kGCMinThreshold = 1024 * 64;  /* 64 KB */
     static const size_t kGCMaxThreshold = 1024 * 1024 * 256; /* 256 MB */
+
+    /* gc_sweep_all — free ALL objects unconditionally (used in VM destructor) */
+    void gc_sweep_all(GC *gc)
+    {
+        Obj *obj = gc->objects;
+        while (obj)
+        {
+            Obj *next = obj->gc_next;
+            if (obj->type == OBJ_STRING)
+            {
+                ObjString *s = (ObjString *)obj;
+                uint32_t idx = s->obj.hash & (gc->string_capacity - 1);
+                while (gc->strings[idx] != s)
+                {
+                    if (gc->strings[idx] == nullptr)
+                        break;
+                    idx = (idx + 1) & (gc->string_capacity - 1);
+                }
+                if (gc->strings[idx] == s)
+                {
+                    gc->strings[idx] = nullptr;
+                    gc->string_count--;
+                }
+            }
+            free_obj(gc, obj);
+            obj = next;
+        }
+        gc->objects = nullptr;
+    }
 
     /* gc_collect — chamado pelo VM quando bytes_allocated > next_gc */
     void gc_collect(VM *vm)

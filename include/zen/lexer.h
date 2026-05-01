@@ -88,6 +88,7 @@ namespace zen
         TOK_PRINT,
         TOK_IMPORT,
         TOK_INCLUDE,
+        TOK_USING,
         TOK_STRUCT,
         TOK_YIELD,
         TOK_SPAWN,

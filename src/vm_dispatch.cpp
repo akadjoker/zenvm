@@ -11,6 +11,7 @@
 
 #include "vm.h"
 #include "debug.h"
+#include "zenconf.h"
 #include <cmath>
 #include <ctime>
 
@@ -1146,33 +1147,44 @@ namespace zen
                 switch (v.type)
                 {
                 case VAL_NIL:
-                    printf("nil");
+                    zen_writes("nil");
                     break;
                 case VAL_BOOL:
-                    printf(v.as.boolean ? "true" : "false");
+                    zen_writes(v.as.boolean ? "true" : "false");
                     break;
                 case VAL_INT:
                 {
                     char ibuf[21];
                     int ilen = int_to_cstr(v.as.integer, ibuf);
-                    fwrite(ibuf, 1, (size_t)ilen, stdout);
+                    zen_write(ibuf, (size_t)ilen);
                     break;
                 }
                 case VAL_FLOAT:
-                    printf("%g", v.as.number);
+                {
+                    char fbuf[32];
+                    int flen = snprintf(fbuf, sizeof(fbuf), "%g", v.as.number);
+                    zen_write(fbuf, (size_t)flen);
                     break;
+                }
                 case VAL_OBJ:
                     if (v.as.obj->type == OBJ_STRING)
-                        printf("%s", ((ObjString *)v.as.obj)->chars);
+                        zen_write(((ObjString *)v.as.obj)->chars, (size_t)((ObjString *)v.as.obj)->length);
                     else
                         print_value(v);
                     break;
+                case VAL_PTR:
+                {
+                    char pbuf[32];
+                    int plen = snprintf(pbuf, sizeof(pbuf), "<ptr %p>", v.as.pointer);
+                    zen_write(pbuf, (size_t)plen);
+                    break;
+                }
                 }
             }
             if (ZEN_B(i))
-                printf("\n");
+                zen_writeln();
             else
-                printf(" ");
+                zen_writes(" ");
             NEXT();
         }
 

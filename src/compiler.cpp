@@ -20,7 +20,7 @@ namespace zen
 
     Compiler::Compiler()
         : gc_(nullptr), vm_(nullptr), state_(nullptr),
-          had_error_(false), panic_mode_(false), current_file_(nullptr), include_count_(0), include_depth_(0)
+          had_error_(false), panic_mode_(false), current_file_(nullptr), include_count_(0), include_depth_(0), num_imports_(0)
     {
         current_.type = TOK_EOF;
         previous_.type = TOK_EOF;

@@ -3,6 +3,7 @@
 
 #include "memory.h"
 #include "opcodes.h"
+#include "module.h"
 
 namespace zen
 {
@@ -61,6 +62,13 @@ namespace zen
         /* --- Natives --- */
         int def_native(const char *name, NativeFn fn, int arity);
 
+        /* --- Module registry --- */
+        void register_lib(const NativeLib *lib);  /* make available for import */
+        void open_lib(const NativeLib *lib);       /* register + put in globals */
+        const NativeLib *find_lib(const char *name) const;
+        int open_lib_globals(const NativeLib *lib); /* returns base gidx */
+        const NativeLib *try_load_plugin(const char *name); /* dlopen fallback */
+
         /* --- Class builder --- */
         struct ClassBuilder
         {
@@ -106,6 +114,9 @@ namespace zen
         void collect();
         void gc_mark_roots(); /* mark all VM roots for GC */
 
+        /* --- Error reporting (for native functions) --- */
+        void runtime_error(const char *fmt, ...);
+
     private:
 /*
 ** Dispatch mode — seleccionado em compile-time:
@@ -128,7 +139,6 @@ namespace zen
         void close_upvalues(ObjFiber *fiber, Value *last);
         bool call_value(ObjFiber *fiber, Value callee, int nargs, int nresults);
         bool call_closure(ObjFiber *fiber, ObjClosure *closure, int nargs, int nresults);
-        void runtime_error(const char *fmt, ...);
 
         /* find_global moved to public */
 
@@ -150,6 +160,16 @@ namespace zen
         static const int MAX_SEARCH_PATHS = 16;
         char *search_paths_[MAX_SEARCH_PATHS];
         int num_search_paths_;
+
+        /* Module registry */
+        static const int MAX_LIBS = 32;
+        const NativeLib *libs_[MAX_LIBS];
+        int num_libs_;
+
+        /* Loaded plugin handles (for cleanup) */
+        static const int MAX_PLUGINS = 16;
+        void *plugin_handles_[MAX_PLUGINS];
+        int num_plugins_;
 
     public:
         bool had_error() const { return had_error_; }

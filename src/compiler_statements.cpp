@@ -72,6 +72,11 @@ namespace zen
             advance();
             import_statement();
         }
+        else if (check(TOK_USING))
+        {
+            advance();
+            using_statement();
+        }
         else if (check(TOK_INCLUDE))
         {
             advance();
@@ -343,8 +348,93 @@ namespace zen
     void Compiler::import_statement()
     {
         consume(TOK_IDENTIFIER, "Expected module name after 'import'.");
+        Token name = previous_;
         consume(TOK_SEMICOLON, "Expected ';' after import.");
-        error("Import not yet implemented.");
+
+        /* Build name string */
+        char mod_name[64];
+        int len = name.length < 63 ? name.length : 63;
+        memcpy(mod_name, name.start, len);
+        mod_name[len] = '\0';
+
+        /* Check not already imported */
+        for (int i = 0; i < num_imports_; i++)
+        {
+            if (strcmp(imports_[i].lib->name, mod_name) == 0)
+                return; /* already imported, skip */
+        }
+
+        /* Find in VM registry */
+        const NativeLib *lib = vm_->find_lib(mod_name);
+        if (!lib)
+        {
+            /* Try loading as plugin (.so/.dll/.dylib) */
+            lib = vm_->try_load_plugin(mod_name);
+        }
+        if (!lib)
+        {
+            error("Unknown module.");
+            return;
+        }
+
+        if (num_imports_ >= MAX_IMPORTS)
+        {
+            error("Too many imports.");
+            return;
+        }
+
+        /* Register all functions/constants as globals */
+        int base = vm_->open_lib_globals(lib);
+
+        imports_[num_imports_].lib = lib;
+        imports_[num_imports_].base_gidx = base;
+        imports_[num_imports_].exposed = false;
+        num_imports_++;
+    }
+
+    void Compiler::using_statement()
+    {
+        consume(TOK_IDENTIFIER, "Expected module name after 'using'.");
+        Token name = previous_;
+        consume(TOK_SEMICOLON, "Expected ';' after using.");
+
+        /* Build name string */
+        char mod_name[64];
+        int len = name.length < 63 ? name.length : 63;
+        memcpy(mod_name, name.start, len);
+        mod_name[len] = '\0';
+
+        /* Find in imported modules */
+        for (int i = 0; i < num_imports_; i++)
+        {
+            if (strcmp(imports_[i].lib->name, mod_name) == 0)
+            {
+                imports_[i].exposed = true;
+                return;
+            }
+        }
+
+        /* Not imported yet? Try to import + expose */
+        const NativeLib *lib = vm_->find_lib(mod_name);
+        if (!lib)
+            lib = vm_->try_load_plugin(mod_name);
+        if (!lib)
+        {
+            error("Unknown module. Use 'import' first.");
+            return;
+        }
+
+        if (num_imports_ >= MAX_IMPORTS)
+        {
+            error("Too many imports.");
+            return;
+        }
+
+        int base = vm_->open_lib_globals(lib);
+        imports_[num_imports_].lib = lib;
+        imports_[num_imports_].base_gidx = base;
+        imports_[num_imports_].exposed = true;
+        num_imports_++;
     }
 
     void Compiler::include_statement()

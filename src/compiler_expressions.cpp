@@ -446,6 +446,88 @@ namespace zen
                 return buffer_constructor((BufferType)btype, dest);
         }
 
+        /* Check for module dot-access: math.random(), math.PI */
+        if (token.type == TOK_IDENTIFIER && check(TOK_DOT))
+        {
+            char mod_name[64];
+            int mlen = token.length < 63 ? token.length : 63;
+            memcpy(mod_name, token.start, mlen);
+            mod_name[mlen] = '\0';
+
+            for (int i = 0; i < num_imports_; i++)
+            {
+                if (strcmp(imports_[i].lib->name, mod_name) == 0)
+                {
+                    advance(); /* consume '.' */
+                    /* Accept identifier or keyword as member name */
+                    if (current_.type == TOK_IDENTIFIER ||
+                        (current_.type >= TOK_VAR && current_.type <= TOK_CLOCK))
+                        advance();
+                    else
+                        error_at_current("Expected member name after '.'.");
+                    Token member = previous_;
+                    char mem_name[64];
+                    int memlen = member.length < 63 ? member.length : 63;
+                    memcpy(mem_name, member.start, memlen);
+                    mem_name[memlen] = '\0';
+
+                    const NativeLib *lib = imports_[i].lib;
+                    int base = imports_[i].base_gidx;
+
+                    /* Search functions */
+                    for (int f = 0; f < lib->num_functions; f++)
+                    {
+                        if (strcmp(lib->functions[f].name, mem_name) == 0)
+                        {
+                            int fn_gidx = base + f;
+                            /* Must be a call */
+                            if (!check(TOK_LPAREN))
+                            {
+                                /* Return function as value */
+                                int reg = dest >= 0 ? dest : alloc_reg();
+                                state_->emitter.emit_abx(OP_GETGLOBAL, reg, fn_gidx, member.line);
+                                return reg;
+                            }
+                            advance(); /* consume '(' */
+                            int fn_reg = alloc_reg();
+                            state_->emitter.emit_abx(OP_GETGLOBAL, fn_reg, fn_gidx, member.line);
+                            int save_next = state_->next_reg;
+                            int arg_count = 0;
+                            if (!check(TOK_RPAREN))
+                            {
+                                do
+                                {
+                                    int arg_reg = alloc_reg();
+                                    expression(arg_reg);
+                                    arg_count++;
+                                } while (match(TOK_COMMA));
+                            }
+                            consume(TOK_RPAREN, "Expected ')' after arguments.");
+                            state_->emitter.emit_abc(OP_CALL, fn_reg, arg_count, 0, member.line);
+                            state_->next_reg = save_next;
+                            int result = dest >= 0 ? dest : fn_reg;
+                            if (result != fn_reg)
+                                emit_move(result, fn_reg);
+                            return result;
+                        }
+                    }
+                    /* Search constants */
+                    for (int c = 0; c < lib->num_constants; c++)
+                    {
+                        if (strcmp(lib->constants[c].name, mem_name) == 0)
+                        {
+                            int const_gidx = base + lib->num_functions + c;
+                            int reg = dest >= 0 ? dest : alloc_reg();
+                            state_->emitter.emit_abx(OP_GETGLOBAL, reg, const_gidx, member.line);
+                            return reg;
+                        }
+                    }
+                    error("Unknown module member.");
+                    return dest >= 0 ? dest : alloc_reg();
+                }
+            }
+        }
+
         /* Resolve where the variable lives */
         int local_reg = resolve_local(state_, &token);
         int upval = (local_reg == -1) ? resolve_upvalue(state_, &token) : -1;
@@ -457,9 +539,36 @@ namespace zen
             int len = token.length < 255 ? token.length : 255;
             memcpy(name_buf, token.start, len);
             name_buf[len] = '\0';
+
+            /* Check exposed modules (using) for bare name resolution */
+            for (int i = 0; i < num_imports_; i++)
+            {
+                if (!imports_[i].exposed)
+                    continue;
+                const NativeLib *lib = imports_[i].lib;
+                int base = imports_[i].base_gidx;
+                for (int f = 0; f < lib->num_functions; f++)
+                {
+                    if (strcmp(lib->functions[f].name, name_buf) == 0)
+                    {
+                        gidx = base + f;
+                        goto resolved;
+                    }
+                }
+                for (int c = 0; c < lib->num_constants; c++)
+                {
+                    if (strcmp(lib->constants[c].name, name_buf) == 0)
+                    {
+                        gidx = base + lib->num_functions + c;
+                        goto resolved;
+                    }
+                }
+            }
+
             gidx = vm_->find_global(name_buf);
             if (gidx < 0)
                 gidx = vm_->def_global(name_buf, val_nil());
+        resolved:;
         }
 
         /* --- Assignment: = += -= *= /= --- */
