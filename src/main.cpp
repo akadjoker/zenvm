@@ -21,16 +21,26 @@ using namespace zen;
 static int tests_run = 0;
 static int tests_passed = 0;
 
-#define RUN_TEST(fn) do {                                      \
-    tests_run++;                                               \
-    printf("%-40s ", #fn);                                     \
-    fflush(stdout);                                            \
-    if (fn()) { tests_passed++; printf("PASS\n"); }            \
-    else { printf("FAIL\n"); }                                 \
-} while(0)
+#define RUN_TEST(fn)           \
+    do                         \
+    {                          \
+        tests_run++;           \
+        printf("%-40s ", #fn); \
+        fflush(stdout);        \
+        if (fn())              \
+        {                      \
+            tests_passed++;    \
+            printf("PASS\n");  \
+        }                      \
+        else                   \
+        {                      \
+            printf("FAIL\n");  \
+        }                      \
+    } while (0)
 
 /* Execute a function and read R[0] from the fiber stack after HALT */
-static Value run_and_get_r0(VM& vm, ObjFunc* fn) {
+static Value run_and_get_r0(VM &vm, ObjFunc *fn)
+{
     /* Save R[0] before run overwrites it */
     vm.run(fn);
     /* After run, main fiber is DONE. R[0] is at stack[0]. */
@@ -40,7 +50,8 @@ static Value run_and_get_r0(VM& vm, ObjFunc* fn) {
 }
 
 /* Better approach: store result in a global, then read it */
-static Value exec_and_read(VM& vm, ObjFunc* fn, int global_idx) {
+static Value exec_and_read(VM &vm, ObjFunc *fn, int global_idx)
+{
     vm.run(fn);
     return vm.get_global("_result");
 }
@@ -49,20 +60,28 @@ static Value exec_and_read(VM& vm, ObjFunc* fn, int global_idx) {
 ** Test: Value constructors and type checks
 ** ========================================================= */
 
-static bool test_value_types() {
+static bool test_value_types()
+{
     Value vn = val_nil();
     Value vb = val_bool(true);
     Value vi = val_int(42);
     Value vf = val_float(3.14);
 
-    if (!is_nil(vn)) return false;
-    if (!is_bool(vb)) return false;
-    if (!is_int(vi)) return false;
-    if (!is_float(vf)) return false;
+    if (!is_nil(vn))
+        return false;
+    if (!is_bool(vb))
+        return false;
+    if (!is_int(vi))
+        return false;
+    if (!is_float(vf))
+        return false;
 
-    if (vb.as.boolean != true) return false;
-    if (vi.as.integer != 42) return false;
-    if (vf.as.number != 3.14) return false;
+    if (vb.as.boolean != true)
+        return false;
+    if (vi.as.integer != 42)
+        return false;
+    if (vf.as.number != 3.14)
+        return false;
 
     return true;
 }
@@ -71,13 +90,20 @@ static bool test_value_types() {
 ** Test: Truthiness
 ** ========================================================= */
 
-static bool test_truthiness() {
-    if (is_truthy(val_nil())) return false;
-    if (is_truthy(val_bool(false))) return false;
-    if (!is_truthy(val_bool(true))) return false;
-    if (!is_truthy(val_int(0))) return false;  /* 0 is truthy! (not Python) */
-    if (!is_truthy(val_int(1))) return false;
-    if (!is_truthy(val_float(0.0))) return false;
+static bool test_truthiness()
+{
+    if (is_truthy(val_nil()))
+        return false;
+    if (is_truthy(val_bool(false)))
+        return false;
+    if (!is_truthy(val_bool(true)))
+        return false;
+    if (!is_truthy(val_int(0)))
+        return false; /* 0 is truthy! (not Python) */
+    if (!is_truthy(val_int(1)))
+        return false;
+    if (!is_truthy(val_float(0.0)))
+        return false;
     return true;
 }
 
@@ -85,16 +111,25 @@ static bool test_truthiness() {
 ** Test: values_equal
 ** ========================================================= */
 
-static bool test_values_equal() {
-    if (!values_equal(val_nil(), val_nil())) return false;
-    if (!values_equal(val_bool(true), val_bool(true))) return false;
-    if (values_equal(val_bool(true), val_bool(false))) return false;
-    if (!values_equal(val_int(42), val_int(42))) return false;
-    if (values_equal(val_int(42), val_int(43))) return false;
-    if (!values_equal(val_float(3.14), val_float(3.14))) return false;
+static bool test_values_equal()
+{
+    if (!values_equal(val_nil(), val_nil()))
+        return false;
+    if (!values_equal(val_bool(true), val_bool(true)))
+        return false;
+    if (values_equal(val_bool(true), val_bool(false)))
+        return false;
+    if (!values_equal(val_int(42), val_int(42)))
+        return false;
+    if (values_equal(val_int(42), val_int(43)))
+        return false;
+    if (!values_equal(val_float(3.14), val_float(3.14)))
+        return false;
     /* Different types are never equal */
-    if (values_equal(val_int(0), val_nil())) return false;
-    if (values_equal(val_int(0), val_bool(false))) return false;
+    if (values_equal(val_int(0), val_nil()))
+        return false;
+    if (values_equal(val_int(0), val_bool(false)))
+        return false;
     return true;
 }
 
@@ -102,14 +137,21 @@ static bool test_values_equal() {
 ** Test: to_number / to_integer
 ** ========================================================= */
 
-static bool test_conversions() {
-    if (to_number(val_int(10)) != 10.0) return false;
-    if (to_number(val_float(3.14)) != 3.14) return false;
-    if (to_number(val_nil()) != 0.0) return false;
+static bool test_conversions()
+{
+    if (to_number(val_int(10)) != 10.0)
+        return false;
+    if (to_number(val_float(3.14)) != 3.14)
+        return false;
+    if (to_number(val_nil()) != 0.0)
+        return false;
 
-    if (to_integer(val_int(42)) != 42) return false;
-    if (to_integer(val_float(3.7)) != 3) return false;
-    if (to_integer(val_nil()) != 0) return false;
+    if (to_integer(val_int(42)) != 42)
+        return false;
+    if (to_integer(val_float(3.7)) != 3)
+        return false;
+    if (to_integer(val_nil()) != 0)
+        return false;
     return true;
 }
 
@@ -117,16 +159,21 @@ static bool test_conversions() {
 ** Test: String interning
 ** ========================================================= */
 
-static bool test_string_interning() {
+static bool test_string_interning()
+{
     VM vm;
-    ObjString* a = vm.make_string("hello");
-    ObjString* b = vm.make_string("hello");
-    ObjString* c = vm.make_string("world");
+    ObjString *a = vm.make_string("hello");
+    ObjString *b = vm.make_string("hello");
+    ObjString *c = vm.make_string("world");
 
-    if (a != b) return false;       /* same content → same pointer */
-    if (a == c) return false;       /* different content → different pointer */
-    if (a->length != 5) return false;
-    if (strcmp(a->chars, "hello") != 0) return false;
+    if (a != b)
+        return false; /* same content → same pointer */
+    if (a == c)
+        return false; /* different content → different pointer */
+    if (a->length != 5)
+        return false;
+    if (strcmp(a->chars, "hello") != 0)
+        return false;
     return true;
 }
 
@@ -134,7 +181,8 @@ static bool test_string_interning() {
 ** Test: Emitter basics
 ** ========================================================= */
 
-static bool test_emitter_basic() {
+static bool test_emitter_basic()
+{
     VM vm;
     Emitter e(&vm.get_gc());
     e.begin("test", 0);
@@ -144,17 +192,23 @@ static bool test_emitter_basic() {
     /* PRINT R0 */
     e.emit_abc(OP_PRINT, 0, 0, 0, 1);
 
-    ObjFunc* fn = e.end(1);
+    ObjFunc *fn = e.end(1);
 
-    if (fn->code_count != 3) return false; /* 2 + HALT */
-    if (fn->arity != 0) return false;
-    if (fn->num_regs != 1) return false;
+    if (fn->code_count != 3)
+        return false; /* 2 + HALT */
+    if (fn->arity != 0)
+        return false;
+    if (fn->num_regs != 1)
+        return false;
 
     /* Verify encoding */
     uint32_t loadi = fn->code[0];
-    if (ZEN_OP(loadi) != OP_LOADI) return false;
-    if (ZEN_A(loadi) != 0) return false;
-    if (ZEN_SBX(loadi) != 42) return false;
+    if (ZEN_OP(loadi) != OP_LOADI)
+        return false;
+    if (ZEN_A(loadi) != 0)
+        return false;
+    if (ZEN_SBX(loadi) != 42)
+        return false;
 
     return true;
 }
@@ -163,7 +217,8 @@ static bool test_emitter_basic() {
 ** Test: LOADI + PRINT (execute)
 ** ========================================================= */
 
-static bool test_loadi_print() {
+static bool test_loadi_print()
+{
     VM vm;
     Emitter e(&vm.get_gc());
     e.begin("test_loadi", 0);
@@ -172,7 +227,7 @@ static bool test_loadi_print() {
     e.emit_asbx(OP_LOADI, 0, 42, 1);
     e.emit_abc(OP_PRINT, 0, 0, 0, 1);
 
-    ObjFunc* fn = e.end(1);
+    ObjFunc *fn = e.end(1);
 
     printf("[expect: 42] ");
     fflush(stdout);
@@ -185,7 +240,8 @@ static bool test_loadi_print() {
 ** Test: LOADI negative
 ** ========================================================= */
 
-static bool test_loadi_negative() {
+static bool test_loadi_negative()
+{
     VM vm;
     Emitter e(&vm.get_gc());
     e.begin("test_neg_loadi", 0);
@@ -194,7 +250,7 @@ static bool test_loadi_negative() {
     e.emit_asbx(OP_LOADI, 0, -100, 1);
     e.emit_abc(OP_PRINT, 0, 0, 0, 1);
 
-    ObjFunc* fn = e.end(1);
+    ObjFunc *fn = e.end(1);
 
     printf("[expect: -100] ");
     fflush(stdout);
@@ -207,7 +263,8 @@ static bool test_loadi_negative() {
 ** Test: Arithmetic (int + int, float + float, mixed)
 ** ========================================================= */
 
-static bool test_arithmetic() {
+static bool test_arithmetic()
+{
     VM vm;
     Emitter e(&vm.get_gc());
     e.begin("test_arith", 0);
@@ -240,7 +297,7 @@ static bool test_arithmetic() {
     e.emit_abc(OP_NEG, 7, 0, 0, 1);
     e.emit_abc(OP_PRINT, 7, 0, 0, 1);
 
-    ObjFunc* fn = e.end(8);
+    ObjFunc *fn = e.end(8);
 
     printf("[expect: 30 10 200 2 0 -10] ");
     fflush(stdout);
@@ -253,7 +310,8 @@ static bool test_arithmetic() {
 ** Test: ADDI / SUBI superinstructions
 ** ========================================================= */
 
-static bool test_addi_subi() {
+static bool test_addi_subi()
+{
     VM vm;
     Emitter e(&vm.get_gc());
     e.begin("test_addi", 0);
@@ -269,7 +327,7 @@ static bool test_addi_subi() {
     e.emit_abc(OP_SUBI, 2, 0, 3, 1);
     e.emit_abc(OP_PRINT, 2, 0, 0, 1);
 
-    ObjFunc* fn = e.end(3);
+    ObjFunc *fn = e.end(3);
 
     printf("[expect: 105 97] ");
     fflush(stdout);
@@ -282,7 +340,8 @@ static bool test_addi_subi() {
 ** Test: Bitwise operations
 ** ========================================================= */
 
-static bool test_bitwise() {
+static bool test_bitwise()
+{
     VM vm;
     Emitter e(&vm.get_gc());
     e.begin("test_bits", 0);
@@ -318,7 +377,7 @@ static bool test_bitwise() {
     e.emit_abc(OP_SHR, 7, 6, 8, 1);
     e.emit_abc(OP_PRINT, 7, 0, 0, 1);
 
-    ObjFunc* fn = e.end(9);
+    ObjFunc *fn = e.end(9);
 
     printf("[expect: 15 255 240 ~15 256 16] ");
     fflush(stdout);
@@ -331,7 +390,8 @@ static bool test_bitwise() {
 ** Test: Comparison (EQ, LT, LE, NOT)
 ** ========================================================= */
 
-static bool test_comparison() {
+static bool test_comparison()
+{
     VM vm;
     Emitter e(&vm.get_gc());
     e.begin("test_cmp", 0);
@@ -362,7 +422,7 @@ static bool test_comparison() {
     e.emit_abc(OP_NOT, 7, 7, 0, 1);
     e.emit_abc(OP_PRINT, 7, 0, 0, 1);
 
-    ObjFunc* fn = e.end(8);
+    ObjFunc *fn = e.end(8);
 
     printf("[expect: true false true false false] ");
     fflush(stdout);
@@ -375,7 +435,8 @@ static bool test_comparison() {
 ** Test: LOADBOOL with skip
 ** ========================================================= */
 
-static bool test_loadbool_skip() {
+static bool test_loadbool_skip()
+{
     VM vm;
     Emitter e(&vm.get_gc());
     e.begin("test_lbskip", 0);
@@ -387,7 +448,7 @@ static bool test_loadbool_skip() {
     /* R0 should still be true */
     e.emit_abc(OP_PRINT, 0, 0, 0, 1);
 
-    ObjFunc* fn = e.end(1);
+    ObjFunc *fn = e.end(1);
 
     printf("[expect: true] ");
     fflush(stdout);
@@ -400,7 +461,8 @@ static bool test_loadbool_skip() {
 ** Test: LOADNIL
 ** ========================================================= */
 
-static bool test_loadnil() {
+static bool test_loadnil()
+{
     VM vm;
     Emitter e(&vm.get_gc());
     e.begin("test_nil", 0);
@@ -409,7 +471,7 @@ static bool test_loadnil() {
     e.emit_abc(OP_LOADNIL, 0, 0, 0, 1);
     e.emit_abc(OP_PRINT, 0, 0, 0, 1);
 
-    ObjFunc* fn = e.end(1);
+    ObjFunc *fn = e.end(1);
 
     printf("[expect: nil] ");
     fflush(stdout);
@@ -422,7 +484,8 @@ static bool test_loadnil() {
 ** Test: LOADK (constant pool)
 ** ========================================================= */
 
-static bool test_loadk() {
+static bool test_loadk()
+{
     VM vm;
     Emitter e(&vm.get_gc());
     e.begin("test_loadk", 0);
@@ -436,7 +499,7 @@ static bool test_loadk() {
     e.emit_abx(OP_LOADK, 1, k1, 1);
     e.emit_abc(OP_PRINT, 1, 0, 0, 1);
 
-    ObjFunc* fn = e.end(2);
+    ObjFunc *fn = e.end(2);
 
     printf("[expect: 3.14159 \"hello zen\"] ");
     fflush(stdout);
@@ -449,7 +512,8 @@ static bool test_loadk() {
 ** Test: JMP
 ** ========================================================= */
 
-static bool test_jmp() {
+static bool test_jmp()
+{
     VM vm;
     Emitter e(&vm.get_gc());
     e.begin("test_jmp", 0);
@@ -464,7 +528,7 @@ static bool test_jmp() {
     /* R0 should be 1 */
     e.emit_abc(OP_PRINT, 0, 0, 0, 1);
 
-    ObjFunc* fn = e.end(1);
+    ObjFunc *fn = e.end(1);
 
     printf("[expect: 1] ");
     fflush(stdout);
@@ -477,32 +541,33 @@ static bool test_jmp() {
 ** Test: JMPIF / JMPIFNOT
 ** ========================================================= */
 
-static bool test_conditional_jumps() {
+static bool test_conditional_jumps()
+{
     VM vm;
     Emitter e(&vm.get_gc());
     e.begin("test_cjmp", 0);
 
     /* if (true) R0 = 10; else R0 = 20; */
-    e.emit_abc(OP_LOADBOOL, 0, 1, 0, 1);  /* R0 = true */
+    e.emit_abc(OP_LOADBOOL, 0, 1, 0, 1); /* R0 = true */
     int skip_else = e.emit_jump(OP_JMPIF, 0, 1);
-    e.emit_asbx(OP_LOADI, 1, 20, 1);      /* else: R1 = 20 */
+    e.emit_asbx(OP_LOADI, 1, 20, 1); /* else: R1 = 20 */
     int skip_then = e.emit_jump(OP_JMP, 0, 1);
     e.patch_jump(skip_else);
-    e.emit_asbx(OP_LOADI, 1, 10, 1);      /* then: R1 = 10 */
+    e.emit_asbx(OP_LOADI, 1, 10, 1); /* then: R1 = 10 */
     e.patch_jump(skip_then);
     e.emit_abc(OP_PRINT, 1, 0, 0, 1);
 
     /* if (false) R2 = 10; else R2 = 20; */
-    e.emit_abc(OP_LOADBOOL, 0, 0, 0, 2);  /* R0 = false */
+    e.emit_abc(OP_LOADBOOL, 0, 0, 0, 2); /* R0 = false */
     int skip2 = e.emit_jump(OP_JMPIFNOT, 0, 2);
-    e.emit_asbx(OP_LOADI, 2, 10, 2);      /* then: R2 = 10 */
+    e.emit_asbx(OP_LOADI, 2, 10, 2); /* then: R2 = 10 */
     int end2 = e.emit_jump(OP_JMP, 0, 2);
     e.patch_jump(skip2);
-    e.emit_asbx(OP_LOADI, 2, 20, 2);      /* else: R2 = 20 */
+    e.emit_asbx(OP_LOADI, 2, 20, 2); /* else: R2 = 20 */
     e.patch_jump(end2);
     e.emit_abc(OP_PRINT, 2, 0, 0, 2);
 
-    ObjFunc* fn = e.end(3);
+    ObjFunc *fn = e.end(3);
 
     printf("[expect: 10 20] ");
     fflush(stdout);
@@ -515,7 +580,8 @@ static bool test_conditional_jumps() {
 ** Test: Loop (while i < 10, i = i + 1; print i)
 ** ========================================================= */
 
-static bool test_loop() {
+static bool test_loop()
+{
     VM vm;
     Emitter e(&vm.get_gc());
     e.begin("test_loop", 0);
@@ -543,7 +609,7 @@ static bool test_loop() {
     /* print R0 (should be 10) */
     e.emit_abc(OP_PRINT, 0, 0, 0, 1);
 
-    ObjFunc* fn = e.end(3);
+    ObjFunc *fn = e.end(3);
 
     printf("[expect: 10] ");
     fflush(stdout);
@@ -556,7 +622,8 @@ static bool test_loop() {
 ** Test: Globals (GETGLOBAL, SETGLOBAL)
 ** ========================================================= */
 
-static bool test_globals() {
+static bool test_globals()
+{
     VM vm;
 
     /* Define a global "x" = 42 */
@@ -576,7 +643,7 @@ static bool test_globals() {
     /* print R1 (should be 50) */
     e.emit_abc(OP_PRINT, 1, 0, 0, 1);
 
-    ObjFunc* fn = e.end(2);
+    ObjFunc *fn = e.end(2);
 
     printf("[expect: 50] ");
     fflush(stdout);
@@ -584,7 +651,8 @@ static bool test_globals() {
 
     /* Also check from C++ side — by index (O(1)) */
     Value v = vm.get_global(idx);
-    if (v.type != VAL_INT || v.as.integer != 50) return false;
+    if (v.type != VAL_INT || v.as.integer != 50)
+        return false;
 
     return true;
 }
@@ -593,21 +661,26 @@ static bool test_globals() {
 ** Test: Native function call
 ** ========================================================= */
 
-static int native_add(VM* vm, Value* args, int nargs) {
+static int native_add(VM *vm, Value *args, int nargs)
+{
     (void)vm;
-    if (nargs < 2) return 0;
+    if (nargs < 2)
+        return 0;
     args[0] = val_int(args[0].as.integer + args[1].as.integer);
     return 1;
 }
 
-static int native_square(VM* vm, Value* args, int nargs) {
-    (void)vm; (void)nargs;
+static int native_square(VM *vm, Value *args, int nargs)
+{
+    (void)vm;
+    (void)nargs;
     int32_t x = args[0].as.integer;
     args[0] = val_int(x * x);
     return 1;
 }
 
-static bool test_native_call() {
+static bool test_native_call()
+{
     VM vm;
 
     int add_idx = vm.def_native("add", native_add, 2);
@@ -633,7 +706,7 @@ static bool test_native_call() {
     e.emit_abc(OP_CALL, 3, 1, 1, 1);
     e.emit_abc(OP_PRINT, 3, 0, 0, 1);
 
-    ObjFunc* fn = e.end(5);
+    ObjFunc *fn = e.end(5);
 
     printf("[expect: 7 81] ");
     fflush(stdout);
@@ -646,7 +719,8 @@ static bool test_native_call() {
 ** Test: Script function call (CALL/RETURN)
 ** ========================================================= */
 
-static bool test_script_call() {
+static bool test_script_call()
+{
     VM vm;
 
     /* Create a function: double(n) → n * 2 */
@@ -658,20 +732,20 @@ static bool test_script_call() {
     e_fn.emit_abc(OP_MUL, 0, 0, 1, 1);
     /* return R0, 1 */
     e_fn.emit_abc(OP_RETURN, 0, 1, 0, 1);
-    ObjFunc* fn_double = e_fn.end(2);
+    ObjFunc *fn_double = e_fn.end(2);
 
     /* Register as global */
-    ObjClosure* cl_double = (ObjClosure*)zen_alloc(&vm.get_gc(), sizeof(ObjClosure));
+    ObjClosure *cl_double = (ObjClosure *)zen_alloc(&vm.get_gc(), sizeof(ObjClosure));
     cl_double->obj.type = OBJ_CLOSURE;
     cl_double->obj.color = GC_WHITE;
     cl_double->obj.hash = 0;
     cl_double->obj.gc_next = vm.get_gc().objects;
-    vm.get_gc().objects = (Obj*)cl_double;
+    vm.get_gc().objects = (Obj *)cl_double;
     cl_double->func = fn_double;
     cl_double->upvalues = nullptr;
     cl_double->upvalue_count = 0;
 
-    int dbl_idx = vm.def_global("double", val_obj((Obj*)cl_double));
+    int dbl_idx = vm.def_global("double", val_obj((Obj *)cl_double));
 
     /* Main script: print double(21) */
     Emitter e_main(&vm.get_gc());
@@ -686,7 +760,7 @@ static bool test_script_call() {
     /* print R0 */
     e_main.emit_abc(OP_PRINT, 0, 0, 0, 1);
 
-    ObjFunc* fn_main = e_main.end(2);
+    ObjFunc *fn_main = e_main.end(2);
 
     printf("[expect: 42] ");
     fflush(stdout);
@@ -699,7 +773,8 @@ static bool test_script_call() {
 ** Test: MOVE
 ** ========================================================= */
 
-static bool test_move() {
+static bool test_move()
+{
     VM vm;
     Emitter e(&vm.get_gc());
     e.begin("test_move", 0);
@@ -708,7 +783,7 @@ static bool test_move() {
     e.emit_abc(OP_MOVE, 1, 0, 0, 1);
     e.emit_abc(OP_PRINT, 1, 0, 0, 1);
 
-    ObjFunc* fn = e.end(2);
+    ObjFunc *fn = e.end(2);
 
     printf("[expect: 77] ");
     fflush(stdout);
@@ -722,7 +797,8 @@ static bool test_move() {
 ** — NOTE: CONCAT is currently a stub, so we test LEN instead
 ** ========================================================= */
 
-static bool test_len() {
+static bool test_len()
+{
     VM vm;
     Emitter e(&vm.get_gc());
     e.begin("test_len", 0);
@@ -734,7 +810,7 @@ static bool test_len() {
     e.emit_abc(OP_LEN, 1, 0, 0, 1);
     e.emit_abc(OP_PRINT, 1, 0, 0, 1);
 
-    ObjFunc* fn = e.end(2);
+    ObjFunc *fn = e.end(2);
 
     printf("[expect: 5] ");
     fflush(stdout);
@@ -747,7 +823,8 @@ static bool test_len() {
 ** Test: Disassembler output
 ** ========================================================= */
 
-static bool test_disassemble() {
+static bool test_disassemble()
+{
     VM vm;
     Emitter e(&vm.get_gc());
     e.begin("demo", 0);
@@ -757,7 +834,7 @@ static bool test_disassemble() {
     e.emit_abc(OP_ADD, 2, 0, 1, 2);
     e.emit_abc(OP_PRINT, 2, 0, 0, 2);
 
-    ObjFunc* fn = e.end(3);
+    ObjFunc *fn = e.end(3);
 
     printf("\n");
     disassemble_func(fn);
@@ -769,13 +846,14 @@ static bool test_disassemble() {
 ** Helper: create a closure from a func
 ** ========================================================= */
 
-static ObjClosure* wrap_closure(GC* gc, ObjFunc* fn) {
-    ObjClosure* cl = (ObjClosure*)zen_alloc(gc, sizeof(ObjClosure));
+static ObjClosure *wrap_closure(GC *gc, ObjFunc *fn)
+{
+    ObjClosure *cl = (ObjClosure *)zen_alloc(gc, sizeof(ObjClosure));
     cl->obj.type = OBJ_CLOSURE;
     cl->obj.color = GC_WHITE;
     cl->obj.hash = 0;
     cl->obj.gc_next = gc->objects;
-    gc->objects = (Obj*)cl;
+    gc->objects = (Obj *)cl;
     cl->func = fn;
     cl->upvalues = nullptr;
     cl->upvalue_count = 0;
@@ -800,7 +878,8 @@ static ObjClosure* wrap_closure(GC* gc, ObjFunc* fn) {
 **   R7 = arg slot
 ** ========================================================= */
 
-static bool test_fib() {
+static bool test_fib()
+{
     VM vm;
 
     /* --- Build fib function --- */
@@ -844,11 +923,11 @@ static bool test_fib() {
     /* return R0 */
     e_fib.emit_abc(OP_RETURN, 0, 1, 0, 4);
 
-    ObjFunc* fn_fib = e_fib.end(8);
+    ObjFunc *fn_fib = e_fib.end(8);
 
     /* Register fib as global */
-    ObjClosure* cl_fib = wrap_closure(&vm.get_gc(), fn_fib);
-    int fib_idx = vm.def_global("fib", val_obj((Obj*)cl_fib));
+    ObjClosure *cl_fib = wrap_closure(&vm.get_gc(), fn_fib);
+    int fib_idx = vm.def_global("fib", val_obj((Obj *)cl_fib));
 
     /* Patch GETGLOBAL instructions with the actual fib_idx */
     fn_fib->code[fib_load1] = ZEN_ENCODE_BX(OP_GETGLOBAL, 4, fib_idx);
@@ -867,7 +946,7 @@ static bool test_fib() {
     /* print R0 */
     e_main.emit_abc(OP_PRINT, 0, 0, 0, 1);
 
-    ObjFunc* fn_main = e_main.end(2);
+    ObjFunc *fn_main = e_main.end(2);
 
     printf("[expect: 832040] ");
     fflush(stdout);
@@ -886,7 +965,8 @@ static bool test_fib() {
 ** Test: Fibonacci 35 (benchmark)
 ** ========================================================= */
 
-static bool test_fib35() {
+static bool test_fib35()
+{
     VM vm;
 
     /* Build fib (same as above) */
@@ -914,10 +994,10 @@ static bool test_fib35() {
     e_fib.emit_abc(OP_ADD, 0, 4, 6, 4);
     e_fib.emit_abc(OP_RETURN, 0, 1, 0, 4);
 
-    ObjFunc* fn_fib = e_fib.end(8);
+    ObjFunc *fn_fib = e_fib.end(8);
 
-    ObjClosure* cl_fib = wrap_closure(&vm.get_gc(), fn_fib);
-    int fib_idx = vm.def_global("fib", val_obj((Obj*)cl_fib));
+    ObjClosure *cl_fib = wrap_closure(&vm.get_gc(), fn_fib);
+    int fib_idx = vm.def_global("fib", val_obj((Obj *)cl_fib));
 
     fn_fib->code[fib_load1] = ZEN_ENCODE_BX(OP_GETGLOBAL, 4, fib_idx);
     fn_fib->code[fib_load2] = ZEN_ENCODE_BX(OP_GETGLOBAL, 6, fib_idx);
@@ -931,7 +1011,7 @@ static bool test_fib35() {
     e_main.emit_abc(OP_CALL, 0, 1, 1, 1);
     e_main.emit_abc(OP_PRINT, 0, 0, 0, 1);
 
-    ObjFunc* fn_main = e_main.end(2);
+    ObjFunc *fn_main = e_main.end(2);
 
     printf("[fib(35)] ");
     fflush(stdout);
@@ -951,7 +1031,8 @@ static bool test_fib35() {
 ** Test: Fibonacci 35 with FUSED LTJMPIFNOT (benchmark)
 ** ========================================================= */
 
-static bool test_fib35_fused() {
+static bool test_fib35_fused()
+{
     VM vm;
 
     /* Build fib using LTJMPIFNOT fused superinstruction */
@@ -983,10 +1064,10 @@ static bool test_fib35_fused() {
     e_fib.emit_abc(OP_ADD, 0, 4, 6, 4);
     e_fib.emit_abc(OP_RETURN, 0, 1, 0, 4);
 
-    ObjFunc* fn_fib = e_fib.end(8);
+    ObjFunc *fn_fib = e_fib.end(8);
 
-    ObjClosure* cl_fib = wrap_closure(&vm.get_gc(), fn_fib);
-    int fib_idx = vm.def_global("fib", val_obj((Obj*)cl_fib));
+    ObjClosure *cl_fib = wrap_closure(&vm.get_gc(), fn_fib);
+    int fib_idx = vm.def_global("fib", val_obj((Obj *)cl_fib));
 
     fn_fib->code[fib_load1] = ZEN_ENCODE_BX(OP_GETGLOBAL, 4, fib_idx);
     fn_fib->code[fib_load2] = ZEN_ENCODE_BX(OP_GETGLOBAL, 6, fib_idx);
@@ -1000,7 +1081,7 @@ static bool test_fib35_fused() {
     e_main.emit_abc(OP_CALL, 0, 1, 1, 1);
     e_main.emit_abc(OP_PRINT, 0, 0, 0, 1);
 
-    ObjFunc* fn_main = e_main.end(2);
+    ObjFunc *fn_main = e_main.end(2);
 
     printf("[fib(35) fused] ");
     fflush(stdout);
@@ -1024,7 +1105,8 @@ static bool test_fib35_fused() {
 **               ADD, RETURN
 ** ========================================================= */
 
-static bool test_fib35_callglobal() {
+static bool test_fib35_callglobal()
+{
     VM vm;
 
     Emitter e_fib(&vm.get_gc());
@@ -1041,25 +1123,25 @@ static bool test_fib35_callglobal() {
     /* R2 = n - 1; put directly at R3+1 = R4 position? No — put at R3 arg slot */
     /* CALLGLOBAL convention: args at R[A+1]..R[A+nargs] */
     /* So for CALLGLOBAL R3, 1, 1: arg at R4 */
-    e_fib.emit_abc(OP_SUBI, 4, 0, 1, 2);   /* R4 = n-1 (arg slot for call at R3) */
+    e_fib.emit_abc(OP_SUBI, 4, 0, 1, 2); /* R4 = n-1 (arg slot for call at R3) */
     /* CALLGLOBAL R3, 1, 1, fib_idx — placeholder idx=0, patch later */
     int cg1_offset = e_fib.current_offset();
-    e_fib.emit_callglobal(3, 1, 1, 0, 2);  /* R3 = fib(n-1) */
+    e_fib.emit_callglobal(3, 1, 1, 0, 2); /* R3 = fib(n-1) */
 
     /* R6 = n - 2 (arg slot for call at R5) */
     e_fib.emit_abc(OP_SUBI, 6, 0, 2, 3);
     /* CALLGLOBAL R5, 1, 1, fib_idx */
     int cg2_offset = e_fib.current_offset();
-    e_fib.emit_callglobal(5, 1, 1, 0, 3);  /* R5 = fib(n-2) */
+    e_fib.emit_callglobal(5, 1, 1, 0, 3); /* R5 = fib(n-2) */
 
     /* R0 = R3 + R5 */
     e_fib.emit_abc(OP_ADD, 0, 3, 5, 4);
     e_fib.emit_abc(OP_RETURN, 0, 1, 0, 4);
 
-    ObjFunc* fn_fib = e_fib.end(7);
+    ObjFunc *fn_fib = e_fib.end(7);
 
-    ObjClosure* cl_fib = wrap_closure(&vm.get_gc(), fn_fib);
-    int fib_idx = vm.def_global("fib", val_obj((Obj*)cl_fib));
+    ObjClosure *cl_fib = wrap_closure(&vm.get_gc(), fn_fib);
+    int fib_idx = vm.def_global("fib", val_obj((Obj *)cl_fib));
 
     /* Patch CALLGLOBAL word2 with actual fib_idx */
     fn_fib->code[cg1_offset + 1] = ZEN_ENCODE_BX(OP_HALT, 0, fib_idx);
@@ -1074,7 +1156,7 @@ static bool test_fib35_callglobal() {
     e_main.emit_callglobal(0, 1, 1, fib_idx, 1);
     e_main.emit_abc(OP_PRINT, 0, 0, 0, 1);
 
-    ObjFunc* fn_main = e_main.end(2);
+    ObjFunc *fn_main = e_main.end(2);
 
     printf("[fib(35) callglobal] ");
     fflush(stdout);
@@ -1093,7 +1175,8 @@ static bool test_fib35_callglobal() {
 ** Test: NEWARRAY + LEN
 ** ========================================================= */
 
-static bool test_newarray() {
+static bool test_newarray()
+{
     VM vm;
     Emitter e(&vm.get_gc());
     e.begin("test_arr", 0);
@@ -1104,7 +1187,7 @@ static bool test_newarray() {
     e.emit_abc(OP_LEN, 1, 0, 0, 1);
     e.emit_abc(OP_PRINT, 1, 0, 0, 1);
 
-    ObjFunc* fn = e.end(2);
+    ObjFunc *fn = e.end(2);
 
     printf("[expect: 0] ");
     fflush(stdout);
@@ -1117,7 +1200,8 @@ static bool test_newarray() {
 ** Test: NEWMAP
 ** ========================================================= */
 
-static bool test_newmap() {
+static bool test_newmap()
+{
     VM vm;
     Emitter e(&vm.get_gc());
     e.begin("test_map", 0);
@@ -1128,7 +1212,7 @@ static bool test_newmap() {
     e.emit_abc(OP_LEN, 1, 0, 0, 1);
     e.emit_abc(OP_PRINT, 1, 0, 0, 1);
 
-    ObjFunc* fn = e.end(2);
+    ObjFunc *fn = e.end(2);
 
     printf("[expect: 0] ");
     fflush(stdout);
@@ -1144,7 +1228,8 @@ static bool test_newmap() {
 ** print(add3(1, 2, 3))  → 6
 ** ========================================================= */
 
-static bool test_multi_arg_call() {
+static bool test_multi_arg_call()
+{
     VM vm;
 
     /* Build add3(a, b, c) → a + b + c */
@@ -1158,9 +1243,9 @@ static bool test_multi_arg_call() {
     /* return R0, 1 */
     e_fn.emit_abc(OP_RETURN, 0, 1, 0, 1);
 
-    ObjFunc* fn_add3 = e_fn.end(4);
-    ObjClosure* cl = wrap_closure(&vm.get_gc(), fn_add3);
-    int add3_idx = vm.def_global("add3", val_obj((Obj*)cl));
+    ObjFunc *fn_add3 = e_fn.end(4);
+    ObjClosure *cl = wrap_closure(&vm.get_gc(), fn_add3);
+    int add3_idx = vm.def_global("add3", val_obj((Obj *)cl));
 
     /* Main */
     Emitter e_main(&vm.get_gc());
@@ -1176,7 +1261,7 @@ static bool test_multi_arg_call() {
     /* print R0 */
     e_main.emit_abc(OP_PRINT, 0, 0, 0, 1);
 
-    ObjFunc* fn_main = e_main.end(4);
+    ObjFunc *fn_main = e_main.end(4);
 
     printf("[expect: 6] ");
     fflush(stdout);
@@ -1189,7 +1274,8 @@ static bool test_multi_arg_call() {
 ** Test: Nested calls (f(g(x)))
 ** ========================================================= */
 
-static bool test_nested_calls() {
+static bool test_nested_calls()
+{
     VM vm;
 
     /* inc(x) = x + 1 */
@@ -1197,9 +1283,9 @@ static bool test_nested_calls() {
     e_inc.begin("inc", 1);
     e_inc.emit_abc(OP_ADDI, 0, 0, 1, 1);
     e_inc.emit_abc(OP_RETURN, 0, 1, 0, 1);
-    ObjFunc* fn_inc = e_inc.end(1);
-    ObjClosure* cl_inc = wrap_closure(&vm.get_gc(), fn_inc);
-    int inc_idx = vm.def_global("inc", val_obj((Obj*)cl_inc));
+    ObjFunc *fn_inc = e_inc.end(1);
+    ObjClosure *cl_inc = wrap_closure(&vm.get_gc(), fn_inc);
+    int inc_idx = vm.def_global("inc", val_obj((Obj *)cl_inc));
 
     /* dbl(x) = x * 2 */
     Emitter e_dbl(&vm.get_gc());
@@ -1207,9 +1293,9 @@ static bool test_nested_calls() {
     e_dbl.emit_asbx(OP_LOADI, 1, 2, 1);
     e_dbl.emit_abc(OP_MUL, 0, 0, 1, 1);
     e_dbl.emit_abc(OP_RETURN, 0, 1, 0, 1);
-    ObjFunc* fn_dbl = e_dbl.end(2);
-    ObjClosure* cl_dbl = wrap_closure(&vm.get_gc(), fn_dbl);
-    int dbl_idx = vm.def_global("dbl", val_obj((Obj*)cl_dbl));
+    ObjFunc *fn_dbl = e_dbl.end(2);
+    ObjClosure *cl_dbl = wrap_closure(&vm.get_gc(), fn_dbl);
+    int dbl_idx = vm.def_global("dbl", val_obj((Obj *)cl_dbl));
 
     /* Main: print(dbl(inc(5))) = (5+1)*2 = 12 */
     Emitter e_main(&vm.get_gc());
@@ -1230,7 +1316,7 @@ static bool test_nested_calls() {
 
     e_main.emit_abc(OP_PRINT, 0, 0, 0, 1);
 
-    ObjFunc* fn_main = e_main.end(3);
+    ObjFunc *fn_main = e_main.end(3);
 
     printf("[expect: 12] ");
     fflush(stdout);
@@ -1243,7 +1329,8 @@ static bool test_nested_calls() {
 ** Test: Edge cases — division by zero, overflow
 ** ========================================================= */
 
-static bool test_edge_cases() {
+static bool test_edge_cases()
+{
     VM vm;
     Emitter e(&vm.get_gc());
     e.begin("test_edge", 0);
@@ -1260,7 +1347,7 @@ static bool test_edge_cases() {
     e.emit_abc(OP_ADDI, 3, 3, 1, 1);
     e.emit_abc(OP_PRINT, 3, 0, 0, 1);
 
-    ObjFunc* fn = e.end(4);
+    ObjFunc *fn = e.end(4);
 
     printf("[expect: inf <overflow>] ");
     fflush(stdout);
@@ -1273,7 +1360,8 @@ static bool test_edge_cases() {
 ** Test: Mixed int/float arithmetic
 ** ========================================================= */
 
-static bool test_mixed_arith() {
+static bool test_mixed_arith()
+{
     VM vm;
     Emitter e(&vm.get_gc());
     e.begin("test_mixed", 0);
@@ -1291,7 +1379,7 @@ static bool test_mixed_arith() {
     e.emit_abc(OP_MUL, 3, 0, 1, 1);
     e.emit_abc(OP_PRINT, 3, 0, 0, 1);
 
-    ObjFunc* fn = e.end(4);
+    ObjFunc *fn = e.end(4);
 
     printf("[expect: 13.5 35] ");
     fflush(stdout);
@@ -1304,7 +1392,8 @@ static bool test_mixed_arith() {
 ** Test: Constant deduplication
 ** ========================================================= */
 
-static bool test_const_dedup() {
+static bool test_const_dedup()
+{
     VM vm;
     Emitter e(&vm.get_gc());
     e.begin("test_dedup", 0);
@@ -1313,13 +1402,16 @@ static bool test_const_dedup() {
     int k2 = e.add_constant(val_int(42));
     int k3 = e.add_constant(val_int(99));
 
-    if (k1 != k2) return false;  /* same value → same index */
-    if (k1 == k3) return false;  /* different value → different index */
+    if (k1 != k2)
+        return false; /* same value → same index */
+    if (k1 == k3)
+        return false; /* different value → different index */
 
     /* String dedup via interning */
     int s1 = e.add_string_constant("hello");
     int s2 = e.add_string_constant("hello");
-    if (s1 != s2) return false;
+    if (s1 != s2)
+        return false;
 
     return true;
 }
@@ -1328,7 +1420,8 @@ static bool test_const_dedup() {
 ** Test: Jump backpatching (complex if-else-if)
 ** ========================================================= */
 
-static bool test_backpatch() {
+static bool test_backpatch()
+{
     VM vm;
     Emitter e(&vm.get_gc());
     e.begin("test_bp", 0);
@@ -1365,7 +1458,7 @@ static bool test_backpatch() {
 
     e.emit_abc(OP_PRINT, 1, 0, 0, 4);
 
-    ObjFunc* fn = e.end(4);
+    ObjFunc *fn = e.end(4);
 
     printf("[expect: 20] ");
     fflush(stdout);
@@ -1378,7 +1471,8 @@ static bool test_backpatch() {
 ** Test: Countdown loop (while n > 0, n = n - 1)
 ** ========================================================= */
 
-static bool test_countdown() {
+static bool test_countdown()
+{
     VM vm;
     Emitter e(&vm.get_gc());
     e.begin("test_cd", 0);
@@ -1402,7 +1496,7 @@ static bool test_countdown() {
     /* print R0 (should be 0) */
     e.emit_abc(OP_PRINT, 0, 0, 0, 3);
 
-    ObjFunc* fn = e.end(3);
+    ObjFunc *fn = e.end(3);
 
     printf("[expect: 0] ");
     fflush(stdout);
@@ -1421,7 +1515,8 @@ static bool test_countdown() {
 ** MAIN
 ** ========================================================= */
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv)
+{
     printf("=== zen VM tests ===\n\n");
 
     /* --- Value-level tests (no VM) --- */

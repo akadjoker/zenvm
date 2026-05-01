@@ -1,0 +1,626 @@
+
+#include "interpreter.hpp"
+#include "platform.hpp"
+#include "utils.hpp"
+#include <iostream>
+#include <string>
+
+namespace
+{
+  int native_typeid(Interpreter *vm, int argCount, Value *args)
+  {
+    if (argCount != 1)
+    {
+      vm->runtimeError("typeid() expects exactly one argument");
+      return 0;
+    }
+
+    auto encode = [](int kind, int index) -> int
+    {
+      return ((kind & 0x7f) << 24) | (index & 0x00ffffff);
+    };
+
+    const Value &arg = args[0];
+    int typeId = 0;
+
+    switch (arg.type)
+    {
+    case ValueType::CLASS:
+      typeId = encode(1, arg.asClassId());
+      break;
+    case ValueType::CLASSINSTANCE:
+      if (!arg.asClassInstance() || !arg.asClassInstance()->klass)
+      {
+        vm->runtimeError("typeid() received invalid class instance");
+        return 0;
+      }
+      typeId = encode(1, arg.asClassInstance()->klass->index);
+      break;
+    case ValueType::STRUCT:
+      typeId = encode(2, arg.asStructId());
+      break;
+    case ValueType::STRUCTINSTANCE:
+      if (!arg.asStructInstance() || !arg.asStructInstance()->def)
+      {
+        vm->runtimeError("typeid() received invalid struct instance");
+        return 0;
+      }
+      typeId = encode(2, arg.asStructInstance()->def->index);
+      break;
+    case ValueType::NATIVECLASS:
+      typeId = encode(3, arg.asClassNativeId());
+      break;
+    case ValueType::NATIVECLASSINSTANCE:
+      if (!arg.asNativeClassInstance() || !arg.asNativeClassInstance()->klass)
+      {
+        vm->runtimeError("typeid() received invalid native class instance");
+        return 0;
+      }
+      typeId = encode(3, arg.asNativeClassInstance()->klass->index);
+      break;
+    case ValueType::NATIVESTRUCT:
+      typeId = encode(4, arg.asNativeStructId());
+      break;
+    case ValueType::NATIVESTRUCTINSTANCE:
+      if (!arg.asNativeStructInstance() || !arg.asNativeStructInstance()->def)
+      {
+        vm->runtimeError("typeid() received invalid native struct instance");
+        return 0;
+      }
+      typeId = encode(4, arg.asNativeStructInstance()->def->id);
+      break;
+    default:
+      vm->runtimeError("typeid() expects a type or instance");
+      return 0;
+    }
+
+    vm->pushInt(typeId);
+    return 1;
+  }
+} // namespace
+
+int native_print_stack(Interpreter *vm, int argCount, Value *args)
+{
+
+  if (argCount == 1)
+  {
+    Info("%s", args[0].asString()->chars());
+  }
+  vm->printStack();
+  return 0;
+}
+
+static void valueToString(const Value &v, std::string &out)
+{
+  char buffer[256];
+
+  switch (v.type)
+  {
+  case ValueType::NIL:
+    out += "nil";
+    break;
+  case ValueType::BOOL:
+    out += v.as.boolean ? "true" : "false";
+    break;
+  case ValueType::BYTE:
+    snprintf(buffer, 256, "%u", v.as.byte);
+    out += buffer;
+    break;
+  case ValueType::INT:
+    snprintf(buffer, 256, "%d", v.as.integer);
+    out += buffer;
+    break;
+  case ValueType::UINT:
+    snprintf(buffer, 256, "%u", v.as.unsignedInteger);
+    out += buffer;
+    break;
+  case ValueType::FLOAT:
+    snprintf(buffer, 256, "%.2f", v.as.real);
+    out += buffer;
+    break;
+  case ValueType::DOUBLE:
+    snprintf(buffer, 256, "%.2f", v.as.number);
+    out += buffer;
+    break;
+  case ValueType::STRING:
+  {
+    out += v.asStringChars();
+    break;
+  }
+  case ValueType::PROCESS:
+    snprintf(buffer, 256, "<process:%u>", v.as.integer);
+    out += buffer;
+    break;
+  case ValueType::PROCESS_INSTANCE:
+  {
+    Process *proc = v.asProcess();
+    if (!proc)
+    {
+      out += "<process:null>";
+      break;
+    }
+    if (proc->name)
+      snprintf(buffer, 256, "<process:%u %s>", proc->id, proc->name->chars());
+    else
+      snprintf(buffer, 256, "<process:%u>", proc->id);
+    out += buffer;
+    break;
+  }
+  case ValueType::ARRAY:
+    out += "[array]";
+    break;
+  case ValueType::MAP:
+    out += "{map}";
+    break;
+  case ValueType::SET:
+    out += "{set}";
+    break;
+  case ValueType::BUFFER:
+    out += "[buffer]";
+    break;
+  default:
+    out += "<unknown>";
+  }
+}
+
+int native_char(Interpreter *vm, int argCount, Value *args)
+{
+  if (argCount != 1)
+  {
+    vm->runtimeError("char() expects exactly one argument");
+    return 0;
+  }
+
+  const Value &arg = args[0];
+  int code = 0;
+
+  switch (arg.type)
+  {
+  case ValueType::INT:
+    code = (int)arg.as.integer;
+    break;
+  case ValueType::BYTE:
+    code = (int)arg.as.byte;
+    break;
+  case ValueType::UINT:
+    code = (int)arg.as.unsignedInteger;
+    break;
+  case ValueType::FLOAT:
+    code = (int)arg.as.real;
+    break;
+  case ValueType::DOUBLE:
+    code = (int)arg.as.number;
+    break;
+  case ValueType::STRING:
+  {
+    const char *str = arg.asStringChars();
+    if (str[0] != '\0')
+      code = (unsigned char)str[0];
+    break;
+  }
+  default:
+    vm->runtimeError("char() cannot convert value of this type");
+    return 0;
+  }
+
+  // ASCII / byte range 
+  if (code >= 0 && code < 128)
+  {
+    char buf[2] = { (char)code, '\0' };
+    vm->push(vm->makeString(vm->createString(buf, 1)));
+    return 1;
+  }
+
+  // Unicode — devolve string UTF-8
+  char buf[5] = {};
+  int len = 0;
+
+  if (code < 0x800)
+  {
+    buf[0] = (char)(0xC0 | (code >> 6));
+    buf[1] = (char)(0x80 | (code & 0x3F));
+    len = 2;
+  }
+  else if (code < 0x10000)
+  {
+    buf[0] = (char)(0xE0 | (code >> 12));
+    buf[1] = (char)(0x80 | ((code >> 6) & 0x3F));
+    buf[2] = (char)(0x80 | (code & 0x3F));
+    len = 3;
+  }
+  else if (code < 0x110000)
+  {
+    buf[0] = (char)(0xF0 | (code >> 18));
+    buf[1] = (char)(0x80 | ((code >> 12) & 0x3F));
+    buf[2] = (char)(0x80 | ((code >> 6) & 0x3F));
+    buf[3] = (char)(0x80 | (code & 0x3F));
+    len = 4;
+  }
+  else
+  {
+    vm->runtimeError("char() codepoint out of range");
+    return 0;
+  }
+
+  vm->push(vm->makeString(vm->createString(buf, len)));
+  return 1;
+}
+
+int native_string(Interpreter *vm, int argCount, Value *args)
+{
+  if (argCount != 1)
+  {
+    vm->runtimeError("str() expects exactly one argument");
+    return 0;
+  }
+
+  std::string result;
+  valueToString(args[0], result);
+  vm->pushString(result.c_str());
+  return 1;
+}
+
+int native_classname(Interpreter *vm, int argCount, Value *args)
+{
+  if (argCount != 1)
+  {
+    vm->runtimeError("classname() expects exactly one argument");
+    return 0;
+  }
+  const Value &arg = args[0];
+  if (arg.isClassInstance())
+  {
+    vm->pushString(arg.as.sClass->klass->name->chars());
+    return 1;
+  }
+  if (arg.isStructInstance())
+  {
+    vm->pushString(arg.as.sInstance->def->name->chars());
+    return 1;
+  }
+  if (arg.isNativeClassInstance() && arg.as.sClassInstance->klass)
+  {
+    vm->pushString(arg.as.sClassInstance->klass->name->chars());
+    return 1;
+  }
+  vm->runtimeError("classname() argument is not a class/struct instance");
+  return 0;
+}
+
+int native_int(Interpreter *vm, int argCount, Value *args)
+{
+  if (argCount != 1)
+  {
+    vm->runtimeError("int() expects exactly one argument");
+    return 0;
+  }
+
+  const Value &arg = args[0];
+  int intValue = 0;
+
+  switch (arg.type)
+  {
+  case ValueType::INT:
+    intValue = arg.as.integer;
+    break;
+  case ValueType::UINT:
+    intValue = static_cast<int>(arg.as.unsignedInteger);
+    break;
+  case ValueType::FLOAT:
+    intValue = static_cast<int>(arg.as.real);
+    break;
+  case ValueType::DOUBLE:
+    intValue = static_cast<int>(arg.as.number);
+    break;
+  case ValueType::STRING:
+  {
+    const char *str = arg.asStringChars();
+    intValue = std::strtol(str, nullptr, 10);
+    break;
+  }
+  default:
+    vm->runtimeError("int() cannot convert value of this type to int");
+    return 0;
+  }
+
+  vm->push(vm->makeInt(intValue));
+  return 1;
+}
+
+int native_real(Interpreter *vm, int argCount, Value *args)
+{
+  if (argCount != 1)
+  {
+    vm->runtimeError("real() expects exactly one argument");
+    return 0;
+  }
+
+  const Value &arg = args[0];
+  double floatValue = 0.0;
+
+  switch (arg.type)
+  {
+  case ValueType::INT:
+    floatValue = static_cast<double>(arg.as.integer);
+    break;
+  case ValueType::UINT:
+    floatValue = static_cast<double>(arg.as.unsignedInteger);
+    break;
+  case ValueType::FLOAT:
+    floatValue = arg.as.real;
+    break;
+  case ValueType::DOUBLE:
+    floatValue = static_cast<double>(arg.as.number);
+    break;
+  case ValueType::STRING:
+  {
+    const char *str = arg.asStringChars();
+    floatValue = std::strtod(str, nullptr);
+    break;
+  }
+  default:
+    vm->runtimeError("real() cannot convert value of this type to real");
+    return 0;
+  }
+
+  vm->push(vm->makeDouble(static_cast<double>(floatValue)));
+  return 1;
+}
+
+int native_format(Interpreter *vm, int argCount, Value *args)
+{
+  if (argCount < 1 || args[0].type != ValueType::STRING)
+  {
+    vm->runtimeError("format expects string as first argument");
+    return 0;
+  }
+
+  const char *fmt = args[0].asStringChars();
+  std::string result;
+  int argIndex = 1;
+
+  for (int i = 0; fmt[i] != '\0'; i++)
+  {
+    if (fmt[i] == '{' && fmt[i + 1] == '}')
+    {
+      if (argIndex < argCount)
+      {
+        valueToString(args[argIndex++], result);
+      }
+      i++;
+    }
+    else
+    {
+      result += fmt[i];
+    }
+  }
+
+  vm->push(vm->makeString(result.c_str()));
+  return 1;
+}
+
+int native_write(Interpreter *vm, int argCount, Value *args)
+{
+  if (argCount < 1 || args[0].type != ValueType::STRING)
+  {
+    vm->runtimeError("write expects string as first argument");
+    return 0;
+  }
+
+  const char *fmt = args[0].asStringChars();
+  std::string result;
+  int argIndex = 1;
+
+  for (int i = 0; fmt[i] != '\0'; i++)
+  {
+    if (fmt[i] == '{' && fmt[i + 1] == '}')
+    {
+      if (argIndex < argCount)
+      {
+        valueToString(args[argIndex++], result);
+      }
+      i++;
+    }
+    else
+    {
+      result += fmt[i];
+    }
+  }
+
+  OsPrintf("%s", result.c_str());
+  return 0;
+}
+
+int native_input(Interpreter *vm, int argCount, Value *args)
+{
+  if (argCount > 0 && args[0].isString())
+  {
+    OsPrintf("%s", args[0].asStringChars());
+    std::cout.flush();
+  }
+
+  std::string line;
+  if (std::getline(std::cin, line))
+  {
+    // Normalize CRLF on Windows consoles/pipes.
+    if (!line.empty() && line.back() == '\r')
+    {
+      line.pop_back();
+    }
+
+    vm->push(vm->makeString(line.c_str()));
+    return 1;
+  }
+
+  return 0;
+}
+
+int native_gc(Interpreter *vm, int argCount, Value *args)
+{
+  vm->runGC();
+  return 0;
+}
+
+int native_ticks(Interpreter *vm, int argCount, Value *args)
+{
+  if (argCount != 1 || !args[0].isNumber())
+  {
+    vm->runtimeError("ticks expects double as argument");
+    return 0;
+  }
+  vm->update(args[0].asNumber());
+  return 0;
+}
+
+int native_range(Interpreter *vm, int argCount, Value *args)
+{
+  if (argCount < 1 || argCount > 3)
+  {
+    vm->runtimeError("range() expects 1 to 3 arguments: range(stop), range(start,stop), range(start,stop,step)");
+    return 0;
+  }
+
+  int start = 0, stop = 0, step = 1;
+
+  if (argCount == 1)
+  {
+    stop = args[0].asInt();
+  }
+  else if (argCount == 2)
+  {
+    start = args[0].asInt();
+    stop  = args[1].asInt();
+  }
+  else
+  {
+    start = args[0].asInt();
+    stop  = args[1].asInt();
+    step  = args[2].asInt();
+  }
+
+  if (step == 0)
+  {
+    vm->runtimeError("range() step cannot be zero");
+    return 0;
+  }
+
+  Value arr = vm->makeArray();
+  ArrayInstance *a = arr.asArray();
+
+  if (step > 0)
+  {
+    for (int i = start; i < stop; i += step)
+      a->values.push(vm->makeInt(i));
+  }
+  else
+  {
+    for (int i = start; i > stop; i += step)
+      a->values.push(vm->makeInt(i));
+  }
+
+  vm->push(arr);
+  return 1;
+}
+
+int native_typeof(Interpreter *vm, int argCount, Value *args)
+{
+  if (argCount != 1) { vm->runtimeError("typeof() expects 1 argument"); return 0; }
+  const Value &v = args[0];
+  const char *name = "unknown";
+  switch (v.type) {
+    case ValueType::NIL:    name = "nil"; break;
+    case ValueType::BOOL:   name = "bool"; break;
+    case ValueType::INT:    name = "int"; break;
+    case ValueType::UINT:   name = "uint"; break;
+    case ValueType::FLOAT:  name = "float"; break;
+    case ValueType::DOUBLE: name = "double"; break;
+    case ValueType::STRING: name = "string"; break;
+    case ValueType::ARRAY:  name = "array"; break;
+    case ValueType::MAP:    name = "map"; break;
+    case ValueType::FUNCTION: name = "function"; break;
+    case ValueType::NATIVE: name = "native"; break;
+    case ValueType::CLASS:  name = "class"; break;
+    case ValueType::CLASSINSTANCE: name = "object"; break;
+    case ValueType::STRUCT: name = "struct"; break;
+    case ValueType::STRUCTINSTANCE: name = "struct_instance"; break;
+    case ValueType::BUFFER: name = "buffer"; break;
+    default: name = "unknown"; break;
+  }
+  vm->pushString(name);
+  return 1;
+}
+
+void Interpreter::registerBase()
+{
+  registerNative("format", native_format, -1);
+  registerNative("write", native_write, -1);
+  registerNative("input", native_input, -1);
+  registerNative("print_stack", native_print_stack, -1);
+  registerNative("ticks", native_ticks, 1);
+  registerNative("_gc", native_gc, 0);
+  registerNative("str", native_string, 1);
+  registerNative("int", native_int, 1);
+  registerNative("real", native_real, 1);
+  registerNative("char", native_char, 1);
+  registerNative("classname", native_classname, 1);
+  registerNative("typeid", native_typeid, 1);
+  registerNative("range", native_range, -1);
+  registerNative("typeof", native_typeof, 1);
+}
+
+void Interpreter::registerAll()
+{
+  registerBase();
+  registerArray();
+
+#ifdef BU_ENABLE_MATH
+  registerMath();
+#endif
+
+#ifdef BU_ENABLE_OS
+
+  registerOS();
+
+#endif
+
+#ifdef BU_ENABLE_PATH
+
+  registerPath();
+
+#endif
+
+#ifdef BU_ENABLE_TIME
+
+  registerTime();
+
+#endif
+
+#ifdef BU_ENABLE_FILE_IO
+  registerFS();
+  registerFile();
+#endif
+
+#ifdef BU_ENABLE_JSON
+  registerJSON();
+#endif
+
+#ifdef BU_ENABLE_REGEX
+  registerRegex();
+#endif
+
+#ifdef BU_ENABLE_ZIP
+  registerZip();
+#endif
+
+#ifdef BU_ENABLE_SOCKETS
+  registerSocket();
+#endif
+
+#ifdef BU_ENABLE_CRYPTO
+  registerCrypto();
+#endif
+
+#ifdef BU_ENABLE_NN
+  registerNN();
+#endif
+}

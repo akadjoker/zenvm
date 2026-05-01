@@ -18,28 +18,33 @@
 using namespace zen;
 
 /* ---- timing ---- */
-static double now_sec() {
+static double now_sec()
+{
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
 
-#define BENCH(label, code) do { \
-    double t0 = now_sec(); \
-    code; \
-    double dt = now_sec() - t0; \
-    printf("  %-40s %8.3f ms\n", label, dt * 1000.0); \
-} while(0)
+#define BENCH(label, code)                                \
+    do                                                    \
+    {                                                     \
+        double t0 = now_sec();                            \
+        code;                                             \
+        double dt = now_sec() - t0;                       \
+        printf("  %-40s %8.3f ms\n", label, dt * 1000.0); \
+    } while (0)
 
 /* =========================================================
 ** Array stress
 ** ========================================================= */
 
-static void test_array_push_pop(int N) {
+static void test_array_push_pop(int N)
+{
     printf("\n--- Array push/pop (N=%d) ---\n", N);
-    GC gc; gc_init(&gc);
+    GC gc;
+    gc_init(&gc);
 
-    ObjArray* arr = new_array(&gc);
+    ObjArray *arr = new_array(&gc);
 
     BENCH("zen array_push", {
         for (int i = 0; i < N; i++)
@@ -80,13 +85,24 @@ static void test_array_push_pop(int N) {
         for (int i = 0; i < N; i++)
             vec.push_back(i);
     });
+
+    /* Fair comparison: same element size (16 bytes) */
+    std::vector<Value> vvec;
+    vvec.reserve(N);
+    BENCH("std::vector<Value> push (pre-alloc)", {
+        vvec.clear();
+        for (int i = 0; i < N; i++)
+            vvec.push_back(val_int(i));
+    });
 }
 
-static void test_array_random_access(int N) {
+static void test_array_random_access(int N)
+{
     printf("\n--- Array random access (N=%d) ---\n", N);
-    GC gc; gc_init(&gc);
+    GC gc;
+    gc_init(&gc);
 
-    ObjArray* arr = new_array(&gc);
+    ObjArray *arr = new_array(&gc);
     for (int i = 0; i < N; i++)
         array_push(&gc, arr, val_int(i));
 
@@ -94,7 +110,8 @@ static void test_array_random_access(int N) {
     volatile int32_t sink = 0;
     srand(42);
     BENCH("zen array_get random", {
-        for (int i = 0; i < N; i++) {
+        for (int i = 0; i < N; i++)
+        {
             int idx = rand() % N;
             Value v = array_get(arr, idx);
             sink += v.as.integer;
@@ -104,18 +121,21 @@ static void test_array_random_access(int N) {
 
     /* Random writes */
     BENCH("zen array_set random", {
-        for (int i = 0; i < N; i++) {
+        for (int i = 0; i < N; i++)
+        {
             int idx = rand() % N;
             array_set(&gc, arr, idx, val_int(idx * 2));
         }
     });
 }
 
-static void test_array_sort(int N) {
+static void test_array_sort(int N)
+{
     printf("\n--- Array sort (N=%d) ---\n", N);
-    GC gc; gc_init(&gc);
+    GC gc;
+    gc_init(&gc);
 
-    ObjArray* arr = new_array(&gc);
+    ObjArray *arr = new_array(&gc);
     srand(123);
     for (int i = 0; i < N; i++)
         array_push(&gc, arr, val_int(rand() % (N * 10)));
@@ -138,35 +158,42 @@ static void test_array_sort(int N) {
     });
 }
 
-static void test_array_find(int N) {
+static void test_array_find(int N)
+{
     printf("\n--- Array find (N=%d) ---\n", N);
-    GC gc; gc_init(&gc);
+    GC gc;
+    gc_init(&gc);
 
-    ObjArray* arr = new_array(&gc);
+    ObjArray *arr = new_array(&gc);
     for (int i = 0; i < N; i++)
         array_push(&gc, arr, val_int(i));
 
     int found = 0;
     BENCH("zen array_find (hit)", {
-        for (int i = 0; i < 1000; i++) {
+        for (int i = 0; i < 1000; i++)
+        {
             int32_t idx = array_find(arr, val_int(rand() % N));
-            if (idx >= 0) found++;
+            if (idx >= 0)
+                found++;
         }
     });
     assert(found == 1000);
 
     BENCH("zen array_contains (miss)", {
-        for (int i = 0; i < 1000; i++) {
+        for (int i = 0; i < 1000; i++)
+        {
             array_contains(arr, val_int(N + i));
         }
     });
 }
 
-static void test_array_insert_remove(int N) {
+static void test_array_insert_remove(int N)
+{
     printf("\n--- Array insert/remove middle (N=%d) ---\n", N);
-    GC gc; gc_init(&gc);
+    GC gc;
+    gc_init(&gc);
 
-    ObjArray* arr = new_array(&gc);
+    ObjArray *arr = new_array(&gc);
     for (int i = 0; i < N; i++)
         array_push(&gc, arr, val_int(i));
 
@@ -187,11 +214,13 @@ static void test_array_insert_remove(int N) {
 ** Map stress
 ** ========================================================= */
 
-static void test_map_insert_lookup(int N) {
+static void test_map_insert_lookup(int N)
+{
     printf("\n--- Map insert+lookup (N=%d) ---\n", N);
-    GC gc; gc_init(&gc);
+    GC gc;
+    gc_init(&gc);
 
-    ObjMap* map = new_map(&gc);
+    ObjMap *map = new_map(&gc);
 
     BENCH("zen map_set", {
         for (int i = 0; i < N; i++)
@@ -202,10 +231,12 @@ static void test_map_insert_lookup(int N) {
     /* Lookup all */
     int hits = 0;
     BENCH("zen map_get (all hit)", {
-        for (int i = 0; i < N; i++) {
+        for (int i = 0; i < N; i++)
+        {
             bool found;
             Value v = map_get(map, val_int(i), &found);
-            if (found && v.as.integer == i * 3) hits++;
+            if (found && v.as.integer == i * 3)
+                hits++;
         }
     });
     assert(hits == N);
@@ -225,19 +256,23 @@ static void test_map_insert_lookup(int N) {
 
     hits = 0;
     BENCH("std::unordered_map find", {
-        for (int i = 0; i < N; i++) {
+        for (int i = 0; i < N; i++)
+        {
             auto it = smap.find(i);
-            if (it != smap.end() && it->second == i * 3) hits++;
+            if (it != smap.end() && it->second == i * 3)
+                hits++;
         }
     });
     assert(hits == N);
 }
 
-static void test_map_delete_stress(int N) {
+static void test_map_delete_stress(int N)
+{
     printf("\n--- Map delete stress (N=%d) ---\n", N);
-    GC gc; gc_init(&gc);
+    GC gc;
+    gc_init(&gc);
 
-    ObjMap* map = new_map(&gc);
+    ObjMap *map = new_map(&gc);
     for (int i = 0; i < N; i++)
         map_set(&gc, map, val_int(i), val_int(i));
 
@@ -256,23 +291,26 @@ static void test_map_delete_stress(int N) {
     assert(map_count(map) == N);
 
     /* Verify all present */
-    for (int i = 0; i < N; i++) {
+    for (int i = 0; i < N; i++)
+    {
         bool found;
         map_get(map, val_int(i), &found);
         assert(found);
     }
 }
 
-static void test_map_keys_values(int N) {
+static void test_map_keys_values(int N)
+{
     printf("\n--- Map keys/values (N=%d) ---\n", N);
-    GC gc; gc_init(&gc);
+    GC gc;
+    gc_init(&gc);
 
-    ObjMap* map = new_map(&gc);
+    ObjMap *map = new_map(&gc);
     for (int i = 0; i < N; i++)
         map_set(&gc, map, val_int(i), val_int(i * 2));
 
-    ObjArray* keys = new_array(&gc);
-    ObjArray* vals = new_array(&gc);
+    ObjArray *keys = new_array(&gc);
+    ObjArray *vals = new_array(&gc);
 
     BENCH("zen map_keys", {
         map_keys(&gc, map, keys);
@@ -289,11 +327,13 @@ static void test_map_keys_values(int N) {
 ** Set stress
 ** ========================================================= */
 
-static void test_set_add_contains(int N) {
+static void test_set_add_contains(int N)
+{
     printf("\n--- Set add+contains (N=%d) ---\n", N);
-    GC gc; gc_init(&gc);
+    GC gc;
+    gc_init(&gc);
 
-    ObjSet* set = new_set(&gc);
+    ObjSet *set = new_set(&gc);
 
     BENCH("zen set_add", {
         for (int i = 0; i < N; i++)
@@ -309,7 +349,8 @@ static void test_set_add_contains(int N) {
     int hits = 0;
     BENCH("zen set_contains (all hit)", {
         for (int i = 0; i < N; i++)
-            if (set_contains(set, val_int(i))) hits++;
+            if (set_contains(set, val_int(i)))
+                hits++;
     });
     assert(hits == N);
 
@@ -328,16 +369,19 @@ static void test_set_add_contains(int N) {
     hits = 0;
     BENCH("std::unordered_set find", {
         for (int i = 0; i < N; i++)
-            if (sset.count(i)) hits++;
+            if (sset.count(i))
+                hits++;
     });
     assert(hits == N);
 }
 
-static void test_set_remove_stress(int N) {
+static void test_set_remove_stress(int N)
+{
     printf("\n--- Set remove stress (N=%d) ---\n", N);
-    GC gc; gc_init(&gc);
+    GC gc;
+    gc_init(&gc);
 
-    ObjSet* set = new_set(&gc);
+    ObjSet *set = new_set(&gc);
     for (int i = 0; i < N; i++)
         set_add(&gc, set, val_int(i));
 
@@ -359,16 +403,19 @@ static void test_set_remove_stress(int N) {
 ** Mixed stress: interleaved ops, checks correctness
 ** ========================================================= */
 
-static void test_mixed_stress(int N) {
+static void test_mixed_stress(int N)
+{
     printf("\n--- Mixed interleaved stress (N=%d) ---\n", N);
-    GC gc; gc_init(&gc);
+    GC gc;
+    gc_init(&gc);
 
-    ObjArray* arr = new_array(&gc);
-    ObjMap* map   = new_map(&gc);
-    ObjSet* set   = new_set(&gc);
+    ObjArray *arr = new_array(&gc);
+    ObjMap *map = new_map(&gc);
+    ObjSet *set = new_set(&gc);
 
     BENCH("interleaved push+set+add", {
-        for (int i = 0; i < N; i++) {
+        for (int i = 0; i < N; i++)
+        {
             array_push(&gc, arr, val_int(i));
             map_set(&gc, map, val_int(i), val_int(i * 7));
             set_add(&gc, set, val_int(i));
@@ -381,12 +428,12 @@ static void test_mixed_stress(int N) {
 
     /* Verify consistency */
     int ok = 0;
-    for (int i = 0; i < N; i++) {
+    for (int i = 0; i < N; i++)
+    {
         bool found;
         Value v = map_get(map, val_int(i), &found);
-        if (found && v.as.integer == i * 7
-            && set_contains(set, val_int(i))
-            && array_get(arr, i).as.integer == i) {
+        if (found && v.as.integer == i * 7 && set_contains(set, val_int(i)) && array_get(arr, i).as.integer == i)
+        {
             ok++;
         }
     }
@@ -394,7 +441,8 @@ static void test_mixed_stress(int N) {
 
     /* Mass delete from map and set */
     BENCH("interleaved delete+remove", {
-        for (int i = 0; i < N; i += 3) {
+        for (int i = 0; i < N; i += 3)
+        {
             map_delete(map, val_int(i));
             set_remove(set, val_int(i));
         }
@@ -407,29 +455,37 @@ static void test_mixed_stress(int N) {
 ** Main
 ** ========================================================= */
 
-int main() {
+int main()
+{
     printf("=== zen collections stress test ===\n");
     printf("(comparing against std:: where applicable)\n");
 
     /* Small N for correctness, large for perf */
-    int sizes[] = { 100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000 };
+    int sizes[] = {100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000};
 
-    for (int s : sizes) {
+    for (int s : sizes)
+    {
         printf("\n========================================\n");
         printf("  N = %d\n", s);
         printf("========================================\n");
 
         test_array_push_pop(s);
-        if (s <= 1000000) test_array_random_access(s);
-        if (s <= 50000) test_array_insert_remove(s);
-        if (s <= 1000000) test_array_sort(s);
-        if (s <= 50000) test_array_find(s);
+        if (s <= 1000000)
+            test_array_random_access(s);
+        if (s <= 50000)
+            test_array_insert_remove(s);
+        if (s <= 1000000)
+            test_array_sort(s);
+        if (s <= 50000)
+            test_array_find(s);
         test_map_insert_lookup(s);
         test_map_delete_stress(s);
-        if (s <= 100000) test_map_keys_values(s);
+        if (s <= 100000)
+            test_map_keys_values(s);
         test_set_add_contains(s);
         test_set_remove_stress(s);
-        if (s <= 1000000) test_mixed_stress(s);
+        if (s <= 1000000)
+            test_mixed_stress(s);
     }
 
     printf("\n=== ALL STRESS TESTS PASSED ===\n");

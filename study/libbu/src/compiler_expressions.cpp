@@ -1,0 +1,780 @@
+#include "compiler.hpp"
+#include "interpreter.hpp"
+#include "value.hpp"
+#include "opcode.hpp"
+#include "platform.hpp"
+#include <algorithm>
+
+void Compiler::expression()
+{
+    parsePrecedence(PREC_ASSIGNMENT);
+}
+
+// ============================================
+// PREFIX FUNCTIONS
+// ============================================
+
+void Compiler::lengthExpression(bool canAssign)
+{
+    consume(TOKEN_LPAREN, "Expect '(' after len");
+
+    expression(); // empilha o valor (array, string, etc.)
+    if (hadError)
+        return;
+    consume(TOKEN_RPAREN, "Expect ')' after expression");
+
+    emitByte(OP_FUNC_LEN);
+}
+
+void Compiler::freeExpression(bool canAssign)
+{
+    consume(TOKEN_LPAREN, "Expect '(' after 'free'");
+
+    expression();
+    if (hadError)
+        return;
+    consume(TOKEN_RPAREN, "Expect ')' after expression");
+
+    emitByte(OP_FREE);
+}
+
+// 1. Para funções tipo: sin(x)
+void Compiler::mathUnary(bool canAssign)
+{
+    TokenType type = previous.type; // Guardamos qual foi (SIN, COS, etc)
+
+    consume(TOKEN_LPAREN, "Expect '('");
+    expression();
+    if (hadError)
+        return;
+    consume(TOKEN_RPAREN, "Expect ')'");
+
+    switch (type)
+    {
+    case TOKEN_SIN:
+        emitByte(OP_SIN);
+        break;
+    case TOKEN_COS:
+        emitByte(OP_COS);
+        break;
+    case TOKEN_TAN:
+        emitByte(OP_TAN);
+        break;
+    case TOKEN_ASIN:
+        emitByte(OP_ASIN);
+        break;
+    case TOKEN_ACOS:
+        emitByte(OP_ACOS);
+        break;
+    case TOKEN_ATAN:
+        emitByte(OP_ATAN);
+        break;
+    case TOKEN_SQRT:
+        emitByte(OP_SQRT);
+        break;
+    case TOKEN_ABS:
+        emitByte(OP_ABS);
+        break;
+    case TOKEN_FLOOR:
+        emitByte(OP_FLOOR);
+        break;
+    case TOKEN_CEIL:
+        emitByte(OP_CEIL);
+        break;
+    case TOKEN_DEG:
+        emitByte(OP_DEG);
+        break;
+    case TOKEN_RAD:
+        emitByte(OP_RAD);
+        break;
+    case TOKEN_LOG:
+        emitByte(OP_LOG);
+        break;
+    case TOKEN_EXP:
+        emitByte(OP_EXP);
+        break;
+    default:
+        return; // Erro
+    }
+}
+
+// 2. Para funções tipo: atan2(y, x) ou pow(base, exp)
+void Compiler::mathBinary(bool canAssign)
+{
+    TokenType type = previous.type;
+
+    consume(TOKEN_LPAREN, "Expect '('");
+    expression(); // Arg 1
+    if (hadError)
+        return;
+    consume(TOKEN_COMMA, "Expect ','");
+    expression(); // Arg 2
+    if (hadError)
+        return;
+    consume(TOKEN_RPAREN, "Expect ')'");
+
+    switch (type)
+    {
+    case TOKEN_ATAN2:
+        emitByte(OP_ATAN2);
+        break;
+    case TOKEN_POW:
+        emitByte(OP_POW);
+        break;
+    default:
+        return;
+    }
+}
+
+void Compiler::expressionClock(bool canAssign)
+{
+    (void)canAssign;
+
+    consume(TOKEN_LPAREN, "Expect '(' after clock");
+    consume(TOKEN_RPAREN, "Expect ')' after '('");
+
+    emitByte(OP_CLOCK);
+}
+
+void Compiler::typeExpression(bool canAssign)
+{
+    (void)canAssign;
+    consume(TOKEN_IDENTIFIER, "Expect process name after 'type'");
+    emitConstant(vm_->makeString(previous.lexeme.c_str()));
+    emitByte(OP_TYPE);
+}
+
+void Compiler::procExpression(bool canAssign)
+{
+    (void)canAssign;
+    consume(TOKEN_LPAREN, "Expect '(' after 'proc'");
+    expression();
+    if (hadError) return;
+    consume(TOKEN_RPAREN, "Expect ')' after expression");
+    emitByte(OP_PROC);
+}
+
+void Compiler::getIdExpression(bool canAssign)
+{
+    (void)canAssign;
+    consume(TOKEN_LPAREN, "Expect '(' after 'get_id'");
+    expression();
+    if (hadError) return;
+    consume(TOKEN_RPAREN, "Expect ')' after expression");
+    emitByte(OP_GET_ID);
+}
+
+void Compiler::number(bool canAssign)
+{
+    (void)canAssign;
+    const char *str = previous.lexeme.c_str();
+
+    if (previous.type == TOKEN_INT)
+    {
+        errno = 0;
+        char *endptr = nullptr;
+        long long value;
+
+        if (str[0] == '0' && (str[1] == 'x' || str[1] == 'X'))
+        {
+            value = std::strtoll(str, &endptr, 16);
+        }
+        else
+        {
+            value = std::strtoll(str, &endptr, 10);
+        }
+
+        // Verifica overflow
+        if (errno == ERANGE)
+        {
+            error("Integer literal out of range");
+            emitConstant(vm_->makeInt(0)); // Valor default
+            return;
+        }
+
+        // Verifica parse válido
+        if (endptr == str)
+        {
+            error("Invalid integer literal");
+            emitConstant(vm_->makeInt(0));
+            return;
+        }
+
+        // Verifica caracteres extras
+        if (*endptr != '\0')
+        {
+            error("Invalid characters in integer literal");
+            emitConstant(vm_->makeInt(0));
+            return;
+        }
+
+        // Verifica range específico se necessário
+        if (options.checkIntegerOverflow)
+        {
+            if (value > INT64_MAX || value < INT64_MIN)
+            {
+                error("Integer literal exceeds 64-bit range");
+                emitConstant(vm_->makeInt(0));
+                return;
+            }
+        }
+
+        // Emite valor apropriado
+        if (value > INT32_MAX || value < INT32_MIN)
+        {
+            emitConstant(vm_->makeUInt(value));
+        }
+        else
+        {
+            emitConstant(vm_->makeInt((int)value));
+        }
+    }
+    else // TOKEN_FLOAT
+    {
+        errno = 0;
+        char *endptr = nullptr;
+        double value = std::strtod(str, &endptr);
+
+        // Verifica overflow/underflow
+        if (errno == ERANGE)
+        {
+            if (value == HUGE_VAL || value == -HUGE_VAL)
+            {
+                error("Float literal overflow");
+            }
+            else
+            {
+                error("Float literal underflow");
+            }
+            emitConstant(vm_->makeDouble(0.0));
+            return;
+        }
+
+        // Verifica parse válido
+        if (endptr == str)
+        {
+            error("Invalid float literal");
+            emitConstant(vm_->makeDouble(0.0));
+            return;
+        }
+
+        // Verifica caracteres extras
+        if (*endptr != '\0')
+        {
+            error("Invalid characters in float literal");
+            emitConstant(vm_->makeDouble(0.0));
+            return;
+        }
+
+        // Verifica NaN/Inf
+        if (std::isnan(value))
+        {
+            error("Float literal is NaN");
+            emitConstant(vm_->makeDouble(0.0));
+            return;
+        }
+
+        if (std::isinf(value))
+        {
+            error("Float literal is infinite");
+            emitConstant(vm_->makeDouble(0.0));
+            return;
+        }
+
+        emitConstant(vm_->makeDouble(value));
+    }
+}
+
+void Compiler::string(bool canAssign)
+{
+    (void)canAssign;
+    emitConstant(vm_->makeString(previous.lexeme.c_str()));
+}
+
+void Compiler::fstringExpression(bool canAssign)
+{
+    (void)canAssign;
+
+    // previous.lexeme contains the raw f-string content with {expr} markers
+    // We parse it into segments: literal strings and {expressions}
+    // Result: "literal" + str(expr) + "literal" + str(expr) + ...
+    // We emit all segments first and then OP_CONCAT_N once
+    // to avoid O(n) opcode chaining.
+
+    const std::string &content = previous.lexeme;
+    size_t len = content.length();
+    size_t pos = 0;
+    int segmentCount = 0;
+
+    while (pos < len)
+    {
+        // Find next { that starts an expression (skip sentinel \x01{ which is an escaped literal)
+        size_t braceStart = pos;
+        while (braceStart < len)
+        {
+            braceStart = content.find('{', braceStart);
+            if (braceStart == std::string::npos) break;
+            // Check if preceded by sentinel \x01 — that means it's a literal {
+            if (braceStart > 0 && content[braceStart - 1] == '\x01')
+            {
+                braceStart++; // skip this one, keep searching
+                continue;
+            }
+            break;
+        }
+
+        if (braceStart == std::string::npos)
+        {
+            // Rest is literal text — strip sentinels
+            std::string literal = content.substr(pos);
+            // Remove sentinel chars
+            literal.erase(std::remove(literal.begin(), literal.end(), '\x01'), literal.end());
+            if (!literal.empty() || segmentCount == 0)
+            {
+                emitConstant(vm_->makeString(literal.c_str()));
+                segmentCount++;
+            }
+            break;
+        }
+
+        // Emit literal part before the {
+        if (braceStart > pos)
+        {
+            std::string literal = content.substr(pos, braceStart - pos);
+            // Remove sentinel chars
+            literal.erase(std::remove(literal.begin(), literal.end(), '\x01'), literal.end());
+            emitConstant(vm_->makeString(literal.c_str()));
+            segmentCount++;
+        }
+
+        // Find matching }
+        size_t braceEnd = braceStart + 1;
+        int depth = 1;
+        while (braceEnd < len && depth > 0)
+        {
+            if (content[braceEnd] == '{') depth++;
+            else if (content[braceEnd] == '}') depth--;
+            if (depth > 0) braceEnd++;
+        }
+
+        if (depth != 0)
+        {
+            error("Unterminated expression in f-string");
+            return;
+        }
+
+        // Extract expression source
+        std::string exprSrc = content.substr(braceStart + 1, braceEnd - braceStart - 1);
+
+        if (exprSrc.empty())
+        {
+            error("Empty expression in f-string");
+            return;
+        }
+
+        // Compile the expression using a sub-lexer
+        // Save current lexer/parser state
+        Lexer *savedLexer = lexer;
+        std::vector<Token> savedTokens = tokens;
+        int savedCursor = cursor;
+        Token savedCurrent = current;
+        Token savedPrevious = previous;
+        int fstringLine = savedPrevious.line;
+
+        // Create a sub-lexer for the expression
+        Lexer subLexer(exprSrc);
+        lexer = &subLexer;
+        tokens = lexer->scanAll();
+        cursor = 0;
+
+        // Patch token lines to the real f-string line
+        for (size_t ti = 0; ti < tokens.size(); ti++)
+        {
+            tokens[ti].line = fstringLine;
+        }
+
+        // Prime the parser with first token
+        if (!tokens.empty())
+        {
+            current = tokens[0];
+            cursor = 1;
+        }
+
+        // Compile the expression
+        expression();
+
+        // Convert to string
+        if (!hadError)
+            emitByte(OP_TOSTRING);
+
+        // Restore lexer/parser state
+        lexer = savedLexer;
+        tokens = savedTokens;
+        cursor = savedCursor;
+        current = savedCurrent;
+        previous = savedPrevious;
+
+        segmentCount++;
+
+        pos = braceEnd + 1; // skip past }
+    }
+
+    // Handle empty f-string: f""
+    if (segmentCount == 0)
+    {
+        emitConstant(vm_->makeString(""));
+    }
+    else if (segmentCount > 1)
+    {
+        if (segmentCount > 65535)
+        {
+            error("Too many segments in f-string (max 65535)");
+            return;
+        }
+        emitByte(OP_CONCAT_N);
+        emitShort((uint16)segmentCount);
+    }
+}
+
+void Compiler::literal(bool canAssign)
+{
+    (void)canAssign;
+    switch (previous.type)
+    {
+    case TOKEN_TRUE:
+        emitByte(OP_TRUE);
+        break;
+    case TOKEN_FALSE:
+        emitByte(OP_FALSE);
+        break;
+    case TOKEN_NIL:
+        emitByte(OP_NIL);
+        break;
+    default:
+        return;
+    }
+}
+
+void Compiler::grouping(bool canAssign)
+{
+    (void)canAssign;
+
+    // () → empty set
+    if (match(TOKEN_RPAREN))
+    {
+        emitByte(OP_DEFINE_SET);
+        emitShort(0);
+        return;
+    }
+
+    expression();
+    if (hadError) return;
+
+    // (expr, ...) → set literal
+    if (match(TOKEN_COMMA))
+    {
+        int count = 1;
+        do
+        {
+            expression();
+            if (hadError) return;
+            count++;
+            if (count > 65535)
+            {
+                error("Cannot have more than 65535 set elements");
+                break;
+            }
+        } while (match(TOKEN_COMMA));
+        consume(TOKEN_RPAREN, "Expect ')' after set elements");
+        if (!hadError)
+        {
+            emitByte(OP_DEFINE_SET);
+            emitShort((uint16)count);
+        }
+        return;
+    }
+
+    // (expr) → grouping
+    consume(TOKEN_RPAREN, "Expect ')' after expression");
+}
+
+void Compiler::unary(bool canAssign)
+{
+    (void)canAssign;
+    TokenType operatorType = previous.type;
+
+    parsePrecedence(PREC_UNARY);
+
+    switch (operatorType)
+    {
+    case TOKEN_MINUS:
+        emitByte(OP_NEGATE);
+        break;
+    case TOKEN_BANG:
+        emitByte(OP_NOT);
+        break;
+    case TOKEN_TILDE:
+        emitByte(OP_BITWISE_NOT);
+        break;
+    default:
+        return;
+    }
+}
+void Compiler::binary(bool canAssign)
+{
+    (void)canAssign;
+    TokenType operatorType = previous.type;
+
+    // Generic call: callee<Type>(args...)
+    // Disambiguate from comparison by requiring the exact pattern <Type>(.
+    if (operatorType == TOKEN_LESS
+        && (check(TOKEN_IDENTIFIER) || isKeywordToken(current.type))
+        && peek(0).type == TOKEN_GREATER
+        && peek(1).type == TOKEN_LPAREN)
+    {
+        uint16 argCount = genericArgumentList();
+        emitByte(OP_CALL);
+        emitShort(argCount);
+        return;
+    }
+
+    ParseRule *rule = getRule(operatorType);
+
+    parsePrecedence((Precedence)(rule->prec + 1));
+
+    switch (operatorType)
+    {
+    case TOKEN_PLUS:
+        emitByte(OP_ADD);
+        break;
+    case TOKEN_MINUS:
+        emitByte(OP_SUBTRACT);
+        break;
+    case TOKEN_STAR:
+        emitByte(OP_MULTIPLY);
+        break;
+    case TOKEN_SLASH:
+        emitByte(OP_DIVIDE);
+        break;
+    case TOKEN_PERCENT:
+        emitByte(OP_MODULO);
+        break;
+    case TOKEN_EQUAL_EQUAL:
+        emitByte(OP_EQUAL);
+        break;
+    case TOKEN_BANG_EQUAL:
+        emitByte(OP_EQUAL);
+        emitByte(OP_NOT);
+        break;
+
+    case TOKEN_LESS:
+        emitByte(OP_LESS);
+        break;
+    case TOKEN_LESS_EQUAL:
+        emitByte(OP_GREATER);
+        emitByte(OP_NOT);
+        break;
+    case TOKEN_GREATER:
+        emitByte(OP_GREATER);
+        break;
+    case TOKEN_GREATER_EQUAL:
+        emitByte(OP_LESS);
+        emitByte(OP_NOT);
+        break;
+    case TOKEN_PIPE:
+        emitByte(OP_BITWISE_OR);
+        break;
+    case TOKEN_AMPERSAND:
+        emitByte(OP_BITWISE_AND);
+        break;
+    case TOKEN_CARET:
+        emitByte(OP_BITWISE_XOR);
+        break;
+    case TOKEN_LEFT_SHIFT:
+        emitByte(OP_SHIFT_LEFT);
+        break;
+    case TOKEN_RIGHT_SHIFT:
+        emitByte(OP_SHIFT_RIGHT);
+        break;
+    default:
+        return;
+    }
+}
+
+void Compiler::ternary(bool canAssign)
+{
+    (void)canAssign;
+
+    // Condition value is already on stack.
+    int elseJump = emitJump(OP_JUMP_IF_FALSE);
+    emitByte(OP_POP); // Pop condition for true branch
+
+    // True expression
+    parsePrecedence(PREC_ASSIGNMENT);
+    consume(TOKEN_COLON, "Expect ':' in conditional expression");
+
+    int endJump = emitJump(OP_JUMP);
+
+    // False expression
+    patchJump(elseJump);
+    emitByte(OP_POP); // Pop condition for false branch
+    parsePrecedence(PREC_ASSIGNMENT);
+
+    patchJump(endJump);
+}
+
+void Compiler::bufferLiteral(bool canAssign)
+{
+    (void)canAssign; // Buffers não podem ser l-values
+
+    consume(TOKEN_LPAREN, "Expect '(' after '@'");
+
+    // Parse da expressão de tamanho (SIZE)
+    // Pode ser: 4, x+2, getSize(), etc.
+    expression();
+    if (hadError)
+        return;
+    // Espera vírgula
+    consume(TOKEN_COMMA, "Expect ',' in buffer literal");
+
+    // Parse da expressão de tipo (TYPE)
+    // Pode ser: TYPE_UINT8, getType(), etc.
+    expression();
+    if (hadError)
+        return;
+    // Espera ')' de fechamento
+    consume(TOKEN_RPAREN, "Expect ')' after buffer literal");
+
+    // Emite o opcode para criar o buffer
+    emitByte(OP_NEW_BUFFER);
+}
+
+void Compiler::arrayLiteral(bool canAssign)
+{
+    (void)canAssign;
+
+    int count = 0;
+
+    if (!check(TOKEN_RBRACKET))
+    {
+        do
+        {
+            expression();
+            if (hadError)
+                return;
+            count++;
+
+            if (count > 65535)
+            {
+                error("Cannot have more than 65535 array elements on initialize.");
+
+                while (!check(TOKEN_RBRACKET) && !check(TOKEN_EOF))
+                {
+                    if (match(TOKEN_COMMA))
+                    {
+                        expression();
+                        if (hadError)
+                            return;
+                    }
+                    else
+                    {
+                        advance();
+                    }
+                }
+                break;
+            }
+        } while (match(TOKEN_COMMA));
+    }
+
+    consume(TOKEN_RBRACKET, "Expect ']' after array elements");
+
+    if (!hadError)
+    {
+        emitByte(OP_DEFINE_ARRAY);
+        emitShort((uint16)count);
+    }
+}
+
+void Compiler::mapLiteral(bool canAssign)
+{
+    (void)canAssign;
+
+
+
+    int count = 0;
+
+    if (!check(TOKEN_RBRACE))
+    {
+        do
+        {
+            if (match(TOKEN_IDENTIFIER))
+            {
+                Token key = previous;
+                emitConstant(vm_->makeString(key.lexeme.c_str()));
+                consume(TOKEN_COLON, "Expect ':' after map key");
+                expression();
+                if (hadError)
+                    return;
+            }
+            else if (match(TOKEN_STRING))
+            {
+                Token key = previous;
+                emitConstant(vm_->makeString(key.lexeme.c_str()));
+                consume(TOKEN_COLON, "Expect ':' after map key");
+                expression();
+                if (hadError)
+                    return;
+            }
+            else if (match(TOKEN_LBRACKET))
+            {
+                // [expr]: value — dynamic key
+                expression();
+                if (hadError) return;
+                consume(TOKEN_RBRACKET, "Expect ']' after expression key");
+                consume(TOKEN_COLON, "Expect ':' after map key");
+                expression();
+                if (hadError) return;
+            }
+            else
+            {
+                error("Expect identifier, string, or [expression] as map key");
+                break;
+            }
+
+            count++;
+
+            if (count > 65535)
+            {
+                error("Cannot have more than 65535 map entries");
+
+                while (!check(TOKEN_RBRACE) && !check(TOKEN_EOF))
+                {
+                    if (match(TOKEN_COMMA))
+                    {
+                        if (match(TOKEN_IDENTIFIER) || match(TOKEN_STRING))
+                        {
+                            consume(TOKEN_COLON, "Expect ':'");
+                            expression();
+                            if (hadError)
+                                return;
+                        }
+                    }
+                    else
+                    {
+                        advance();
+                    }
+                }
+                break;
+            }
+
+        } while (match(TOKEN_COMMA));
+    }
+
+    consume(TOKEN_RBRACE, "Expect '}' after map elements");
+
+    if (!hadError)
+    {
+        emitByte(OP_DEFINE_MAP);
+        emitShort((uint16)count);
+    }
+}

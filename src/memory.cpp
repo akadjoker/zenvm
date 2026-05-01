@@ -1,881 +1,1085 @@
 #include "memory.h"
 
-namespace zen {
+namespace zen
+{
 
-/* =========================================================
-** Allocator base — wrapper fino sobre malloc/realloc/free.
-** Contabiliza bytes para trigger do GC.
-** ========================================================= */
+    /* =========================================================
+    ** Allocator base — wrapper fino sobre malloc/realloc/free.
+    ** Contabiliza bytes para trigger do GC.
+    ** ========================================================= */
 
-void* zen_alloc(GC* gc, size_t size) {
-    gc->bytes_allocated += size;
-    return malloc(size);
-}
+    void *zen_alloc(GC *gc, size_t size)
+    {
+        gc->bytes_allocated += size;
+        return malloc(size);
+    }
 
-void* zen_realloc(GC* gc, void* ptr, size_t old_size, size_t new_size) {
-    gc->bytes_allocated += new_size - old_size;
-    if (new_size == 0) {
+    void *zen_realloc(GC *gc, void *ptr, size_t old_size, size_t new_size)
+    {
+        gc->bytes_allocated += new_size - old_size;
+        if (new_size == 0)
+        {
+            free(ptr);
+            return nullptr;
+        }
+        return realloc(ptr, new_size);
+    }
+
+    void zen_free(GC *gc, void *ptr, size_t size)
+    {
+        gc->bytes_allocated -= size;
         free(ptr);
-        return nullptr;
     }
-    return realloc(ptr, new_size);
-}
 
-void zen_free(GC* gc, void* ptr, size_t size) {
-    gc->bytes_allocated -= size;
-    free(ptr);
-}
+    /* =========================================================
+    ** GC Init
+    ** ========================================================= */
 
-/* =========================================================
-** GC Init
-** ========================================================= */
+    void gc_init(GC *gc)
+    {
+        gc->objects = nullptr;
+        gc->gray_list = nullptr;
+        gc->gray_count = 0;
+        gc->gray_capacity = 0;
+        gc->bytes_allocated = 0;
+        gc->next_gc = kGCInitThreshold;
 
-void gc_init(GC* gc) {
-    gc->objects        = nullptr;
-    gc->gray_list      = nullptr;
-    gc->gray_count     = 0;
-    gc->gray_capacity  = 0;
-    gc->bytes_allocated = 0;
-    gc->next_gc        = kGCInitThreshold;
+        /* String interning table — começa com 64 slots */
+        gc->string_capacity = 64;
+        gc->string_count = 0;
+        gc->strings = (ObjString **)calloc(gc->string_capacity, sizeof(ObjString *));
+    }
 
-    /* String interning table — começa com 64 slots */
-    gc->string_capacity = 64;
-    gc->string_count    = 0;
-    gc->strings = (ObjString**)calloc(gc->string_capacity, sizeof(ObjString*));
-}
+    /* =========================================================
+    ** Alocação de objectos — regista na linked list do GC.
+    ** ========================================================= */
 
-/* =========================================================
-** Alocação de objectos — regista na linked list do GC.
-** ========================================================= */
+    static Obj *alloc_obj(GC *gc, size_t size, ObjType type)
+    {
+        Obj *obj = (Obj *)zen_alloc(gc, size);
+        obj->type = type;
+        obj->color = GC_WHITE;
+        obj->hash = 0;
+        obj->gc_next = gc->objects;
+        gc->objects = obj;
+        return obj;
+    }
 
-static Obj* alloc_obj(GC* gc, size_t size, ObjType type) {
-    Obj* obj = (Obj*)zen_alloc(gc, size);
-    obj->type    = type;
-    obj->color   = GC_WHITE;
-    obj->hash    = 0;
-    obj->gc_next = gc->objects;
-    gc->objects  = obj;
-    return obj;
-}
+    /* =========================================================
+    ** Strings — interned, hash pré-calculado, buffer inline.
+    ** ========================================================= */
 
-/* =========================================================
-** Strings — interned, hash pré-calculado, buffer inline.
-** ========================================================= */
+    ObjString *find_interned(GC *gc, const char *chars, int length, uint32_t hash)
+    {
+        if (gc->string_count == 0)
+            return nullptr;
 
-ObjString* find_interned(GC* gc, const char* chars, int length, uint32_t hash) {
-    if (gc->string_count == 0) return nullptr;
-
-    uint32_t idx = hash & (gc->string_capacity - 1);
-    for (;;) {
-        ObjString* s = gc->strings[idx];
-        if (s == nullptr) return nullptr;
-        if (s->obj.hash == hash && s->length == length &&
-            memcmp(s->chars, chars, length) == 0) {
-            return s;
+        uint32_t idx = hash & (gc->string_capacity - 1);
+        for (;;)
+        {
+            ObjString *s = gc->strings[idx];
+            if (s == nullptr)
+                return nullptr;
+            if (s->obj.hash == hash && s->length == length &&
+                memcmp(s->chars, chars, length) == 0)
+            {
+                return s;
+            }
+            idx = (idx + 1) & (gc->string_capacity - 1);
         }
-        idx = (idx + 1) & (gc->string_capacity - 1);
-    }
-}
-
-static void intern_table_grow(GC* gc) {
-    int new_cap = gc->string_capacity * 2;
-    ObjString** new_table = (ObjString**)calloc(new_cap, sizeof(ObjString*));
-
-    /* re-hash tudo */
-    for (int i = 0; i < gc->string_capacity; i++) {
-        ObjString* s = gc->strings[i];
-        if (s == nullptr) continue;
-        uint32_t idx = s->obj.hash & (new_cap - 1);
-        while (new_table[idx] != nullptr)
-            idx = (idx + 1) & (new_cap - 1);
-        new_table[idx] = s;
     }
 
-    free(gc->strings);
-    gc->strings = new_table;
-    gc->string_capacity = new_cap;
-}
+    static void intern_table_grow(GC *gc)
+    {
+        int new_cap = gc->string_capacity * 2;
+        ObjString **new_table = (ObjString **)calloc(new_cap, sizeof(ObjString *));
 
-ObjString* intern_string(GC* gc, const char* chars, int length, uint32_t hash) {
-    /* Já existe? */
-    ObjString* existing = find_interned(gc, chars, length, hash);
-    if (existing) return existing;
-
-    /* Grow se >75% — multiplication avoids division */
-    if ((gc->string_count + 1) * 4 > gc->string_capacity * 3) {
-        intern_table_grow(gc);
-    }
-
-    /* Aloca: header + length bytes + '\0' */
-    size_t total = sizeof(ObjString) + length + 1;
-    ObjString* str = (ObjString*)alloc_obj(gc, total, OBJ_STRING);
-    str->length = length;
-    memcpy(str->chars, chars, length);
-    str->chars[length] = '\0';
-    str->obj.hash = hash;
-
-    /* Insere na tabela */
-    uint32_t idx = hash & (gc->string_capacity - 1);
-    while (gc->strings[idx] != nullptr)
-        idx = (idx + 1) & (gc->string_capacity - 1);
-    gc->strings[idx] = str;
-    gc->string_count++;
-
-    return str;
-}
-
-ObjString* new_string(GC* gc, const char* chars, int length) {
-    uint32_t hash = hash_string(chars, length);
-    return intern_string(gc, chars, length, hash);
-}
-
-ObjString* new_string_concat(GC* gc, ObjString* a, ObjString* b) {
-    int length = a->length + b->length;
-    /* buffer temporário no stack para strings pequenas */
-    char buf[256];
-    char* tmp = (length < 256) ? buf : (char*)malloc(length + 1);
-    memcpy(tmp, a->chars, a->length);
-    memcpy(tmp + a->length, b->chars, b->length);
-    tmp[length] = '\0';
-
-    ObjString* result = new_string(gc, tmp, length);
-    if (tmp != buf) free(tmp);
-    return result;
-}
-
-/* =========================================================
-** Criação de objectos compostos
-** ========================================================= */
-
-ObjFunc* new_func(GC* gc) {
-    ObjFunc* fn = (ObjFunc*)alloc_obj(gc, sizeof(ObjFunc), OBJ_FUNC);
-    fn->arity       = 0;
-    fn->num_regs    = 0;
-    fn->code_count  = 0;
-    fn->const_count = 0;
-    fn->code        = nullptr;
-    fn->constants   = nullptr;
-    fn->name        = nullptr;
-    return fn;
-}
-
-ObjNative* new_native(GC* gc, NativeFn fn, int arity, ObjString* name) {
-    ObjNative* nat = (ObjNative*)alloc_obj(gc, sizeof(ObjNative), OBJ_NATIVE);
-    nat->fn    = fn;
-    nat->arity = arity;
-    nat->name  = name;
-    return nat;
-}
-
-ObjArray* new_array(GC* gc) {
-    ObjArray* arr = (ObjArray*)alloc_obj(gc, sizeof(ObjArray), OBJ_ARRAY);
-    arr->data    = nullptr;
-    arr->end     = nullptr;
-    arr->cap_end = nullptr;
-    return arr;
-}
-
-ObjMap* new_map(GC* gc) {
-    ObjMap* map = (ObjMap*)alloc_obj(gc, sizeof(ObjMap), OBJ_MAP);
-    map->count        = 0;
-    map->capacity     = 0;
-    map->bucket_count = 0;
-    map->free_head    = -1;
-    map->buckets      = nullptr;
-    map->nodes        = nullptr;
-    return map;
-}
-
-/* =========================================================
-** Array Operations — end-pointer layout for minimal push cost.
-** Growth: power-of-2, initial cap 8, doubles each time.
-** ========================================================= */
-
-static inline int32_t grow_capacity(int32_t capacity, int32_t min_cap) {
-    int32_t cap = capacity < min_cap ? min_cap : capacity;
-    if (cap < 8) return 8;
-    cap--;
-    cap |= cap >> 1;
-    cap |= cap >> 2;
-    cap |= cap >> 4;
-    cap |= cap >> 8;
-    cap |= cap >> 16;
-    cap++;
-    return cap;
-}
-
-static inline void array_ensure_cap(GC* gc, ObjArray* arr, int32_t needed) {
-    int32_t cur_cap = arr_capacity(arr);
-    if (needed <= cur_cap) return;
-    int32_t count   = arr_count(arr);
-    int32_t new_cap = grow_capacity(cur_cap, needed);
-    arr->data    = (Value*)zen_realloc(gc, arr->data,
-                                       sizeof(Value) * cur_cap,
-                                       sizeof(Value) * new_cap);
-    arr->end     = arr->data + count;
-    arr->cap_end = arr->data + new_cap;
-}
-
-void array_push_slow(GC* gc, ObjArray* arr, Value val) {
-    int32_t count   = arr_count(arr);
-    int32_t old_cap = arr_capacity(arr);
-    int32_t new_cap = grow_capacity(old_cap, count + 1);
-    arr->data    = (Value*)zen_realloc(gc, arr->data,
-                                       sizeof(Value) * old_cap,
-                                       sizeof(Value) * new_cap);
-    arr->end     = arr->data + count;
-    arr->cap_end = arr->data + new_cap;
-    *arr->end++ = val;
-    if (__builtin_expect(val.type == VAL_OBJ, 0))
-        gc_write_barrier(gc, (Obj*)arr, val.as.obj);
-}
-
-void array_set(GC* gc, ObjArray* arr, int32_t index, Value val) {
-    if ((uint32_t)index >= (uint32_t)arr_count(arr)) return;
-    arr->data[index] = val;
-    if (is_obj(val))
-        gc_write_barrier(gc, (Obj*)arr, val.as.obj);
-}
-
-Value array_pop(ObjArray* arr) {
-    if (arr->end == arr->data) return val_nil();
-    return *--arr->end;
-}
-
-void array_insert(GC* gc, ObjArray* arr, int32_t index, Value val) {
-    int32_t count = arr_count(arr);
-    if (index < 0) index = 0;
-    if (index > count) index = count;
-    array_ensure_cap(gc, arr, count + 1);
-    /* memmove is overlap-safe */
-    if (index < count) {
-        memmove(arr->data + index + 1, arr->data + index,
-                (size_t)(count - index) * sizeof(Value));
-    }
-    arr->data[index] = val;
-    arr->end++;
-    if (is_obj(val))
-        gc_write_barrier(gc, (Obj*)arr, val.as.obj);
-}
-
-void array_remove(ObjArray* arr, int32_t index) {
-    int32_t count = arr_count(arr);
-    if ((uint32_t)index >= (uint32_t)count) return;
-    int32_t remaining = count - index - 1;
-    if (remaining > 0) {
-        memmove(arr->data + index, arr->data + index + 1,
-                (size_t)remaining * sizeof(Value));
-    }
-    arr->end--;
-}
-
-void array_clear(ObjArray* arr) {
-    arr->end = arr->data;
-}
-
-void array_reserve(GC* gc, ObjArray* arr, int32_t cap) {
-    int32_t cur_cap = arr_capacity(arr);
-    if (cap <= cur_cap) return;
-    int32_t count = arr_count(arr);
-    arr->data    = (Value*)zen_realloc(gc, arr->data,
-                                       sizeof(Value) * cur_cap,
-                                       sizeof(Value) * cap);
-    arr->end     = arr->data + count;
-    arr->cap_end = arr->data + cap;
-}
-
-int32_t array_find(ObjArray* arr, Value val) {
-    int32_t count = arr_count(arr);
-    for (int32_t i = 0; i < count; i++) {
-        if (values_equal(arr->data[i], val)) return i;
-    }
-    return -1;
-}
-
-int32_t array_find_int(ObjArray* arr, int32_t target) {
-    const Value* data = arr->data;
-    const int32_t n   = arr_count(arr);
-    int32_t i = 0;
-    for (; i + 8 <= n; i += 8) {
-        __builtin_prefetch(data + i + 16, 0, 1);
-        if (data[i+0].as.integer == target) return i+0;
-        if (data[i+1].as.integer == target) return i+1;
-        if (data[i+2].as.integer == target) return i+2;
-        if (data[i+3].as.integer == target) return i+3;
-        if (data[i+4].as.integer == target) return i+4;
-        if (data[i+5].as.integer == target) return i+5;
-        if (data[i+6].as.integer == target) return i+6;
-        if (data[i+7].as.integer == target) return i+7;
-    }
-    for (; i < n; i++)
-        if (data[i].as.integer == target) return i;
-    return -1;
-}
-
-bool array_contains(ObjArray* arr, Value val) {
-    return array_find(arr, val) >= 0;
-}
-
-void array_reverse(ObjArray* arr) {
-    Value* lo = arr->data;
-    Value* hi = arr->end - 1;
-    while (lo + 4 <= hi) {
-        Value t0 = lo[0]; lo[0] = hi[ 0]; hi[ 0] = t0;
-        Value t1 = lo[1]; lo[1] = hi[-1]; hi[-1] = t1;
-        lo += 2; hi -= 2;
-    }
-    while (lo < hi) {
-        Value t = *lo; *lo = *hi; *hi = t;
-        lo++; hi--;
-    }
-}
-
-/* Introsort: insertion sort for small partitions, quicksort for large */
-static void isort_int(Value* data, int32_t n) {
-    for (int32_t i = 1; i < n; i++) {
-        Value key = data[i];
-        int32_t j = i - 1;
-        while (j >= 0 && data[j].as.integer > key.as.integer) {
-            data[j + 1] = data[j];
-            j--;
+        /* re-hash tudo */
+        for (int i = 0; i < gc->string_capacity; i++)
+        {
+            ObjString *s = gc->strings[i];
+            if (s == nullptr)
+                continue;
+            uint32_t idx = s->obj.hash & (new_cap - 1);
+            while (new_table[idx] != nullptr)
+                idx = (idx + 1) & (new_cap - 1);
+            new_table[idx] = s;
         }
-        data[j + 1] = key;
-    }
-}
 
-static void qsort_int(Value* data, int32_t lo, int32_t hi) {
-    while (lo < hi) {
-        if (hi - lo < 16) {
-            isort_int(data + lo, hi - lo + 1);
+        free(gc->strings);
+        gc->strings = new_table;
+        gc->string_capacity = new_cap;
+    }
+
+    ObjString *intern_string(GC *gc, const char *chars, int length, uint32_t hash)
+    {
+        /* Já existe? */
+        ObjString *existing = find_interned(gc, chars, length, hash);
+        if (existing)
+            return existing;
+
+        /* Grow se >75% — multiplication avoids division */
+        if ((gc->string_count + 1) * 4 > gc->string_capacity * 3)
+        {
+            intern_table_grow(gc);
+        }
+
+        /* Aloca: header + length bytes + '\0' */
+        size_t total = sizeof(ObjString) + length + 1;
+        ObjString *str = (ObjString *)alloc_obj(gc, total, OBJ_STRING);
+        str->length = length;
+        memcpy(str->chars, chars, length);
+        str->chars[length] = '\0';
+        str->obj.hash = hash;
+
+        /* Insere na tabela */
+        uint32_t idx = hash & (gc->string_capacity - 1);
+        while (gc->strings[idx] != nullptr)
+            idx = (idx + 1) & (gc->string_capacity - 1);
+        gc->strings[idx] = str;
+        gc->string_count++;
+
+        return str;
+    }
+
+    ObjString *new_string(GC *gc, const char *chars, int length)
+    {
+        uint32_t hash = hash_string(chars, length);
+        return intern_string(gc, chars, length, hash);
+    }
+
+    ObjString *new_string_concat(GC *gc, ObjString *a, ObjString *b)
+    {
+        int length = a->length + b->length;
+        /* buffer temporário no stack para strings pequenas */
+        char buf[256];
+        char *tmp = (length < 256) ? buf : (char *)malloc(length + 1);
+        memcpy(tmp, a->chars, a->length);
+        memcpy(tmp + a->length, b->chars, b->length);
+        tmp[length] = '\0';
+
+        ObjString *result = new_string(gc, tmp, length);
+        if (tmp != buf)
+            free(tmp);
+        return result;
+    }
+
+    /* =========================================================
+    ** Criação de objectos compostos
+    ** ========================================================= */
+
+    ObjFunc *new_func(GC *gc)
+    {
+        ObjFunc *fn = (ObjFunc *)alloc_obj(gc, sizeof(ObjFunc), OBJ_FUNC);
+        fn->arity = 0;
+        fn->num_regs = 0;
+        fn->code_count = 0;
+        fn->code_capacity = 0;
+        fn->const_count = 0;
+        fn->const_capacity = 0;
+        fn->code = nullptr;
+        fn->lines = nullptr;
+        fn->constants = nullptr;
+        fn->name = nullptr;
+        fn->source = nullptr;
+        return fn;
+    }
+
+    ObjNative *new_native(GC *gc, NativeFn fn, int arity, ObjString *name)
+    {
+        ObjNative *nat = (ObjNative *)alloc_obj(gc, sizeof(ObjNative), OBJ_NATIVE);
+        nat->fn = fn;
+        nat->arity = arity;
+        nat->name = name;
+        return nat;
+    }
+
+    ObjArray *new_array(GC *gc)
+    {
+        ObjArray *arr = (ObjArray *)alloc_obj(gc, sizeof(ObjArray), OBJ_ARRAY);
+        arr->data = nullptr;
+        arr->end = nullptr;
+        arr->cap_end = nullptr;
+        return arr;
+    }
+
+    ObjMap *new_map(GC *gc)
+    {
+        ObjMap *map = (ObjMap *)alloc_obj(gc, sizeof(ObjMap), OBJ_MAP);
+        map->count = 0;
+        map->capacity = 0;
+        map->bucket_count = 0;
+        map->free_head = -1;
+        map->buckets = nullptr;
+        map->nodes = nullptr;
+        return map;
+    }
+
+    /* =========================================================
+    ** Array Operations — end-pointer layout for minimal push cost.
+    ** Growth: power-of-2, initial cap 8, doubles each time.
+    ** ========================================================= */
+
+    static inline int32_t grow_capacity(int32_t capacity, int32_t min_cap)
+    {
+        int32_t cap = capacity < min_cap ? min_cap : capacity;
+        if (cap < 8)
+            return 8;
+        cap--;
+        cap |= cap >> 1;
+        cap |= cap >> 2;
+        cap |= cap >> 4;
+        cap |= cap >> 8;
+        cap |= cap >> 16;
+        cap++;
+        return cap;
+    }
+
+    static inline void array_ensure_cap(GC *gc, ObjArray *arr, int32_t needed)
+    {
+        int32_t cur_cap = arr_capacity(arr);
+        if (needed <= cur_cap)
             return;
-        }
-        /* median-of-three pivot */
-        int32_t mid = lo + (hi - lo) / 2;
-        if (data[mid].as.integer < data[lo].as.integer) {
-            Value t = data[lo]; data[lo] = data[mid]; data[mid] = t;
-        }
-        if (data[hi].as.integer < data[lo].as.integer) {
-            Value t = data[lo]; data[lo] = data[hi]; data[hi] = t;
-        }
-        if (data[mid].as.integer < data[hi].as.integer) {
-            Value t = data[mid]; data[mid] = data[hi]; data[hi] = t;
-        }
-        int32_t pivot = data[hi].as.integer;
-        int32_t i = lo - 1, j = hi;
-        for (;;) {
-            do { i++; } while (data[i].as.integer < pivot);
-            do { j--; } while (j > lo && data[j].as.integer > pivot);
-            if (i >= j) break;
-            Value t = data[i]; data[i] = data[j]; data[j] = t;
-        }
-        Value t = data[i]; data[i] = data[hi]; data[hi] = t;
-        /* Recurse smaller partition, iterate larger */
-        if (i - lo < hi - i) {
-            qsort_int(data, lo, i - 1);
-            lo = i + 1;
-        } else {
-            qsort_int(data, i + 1, hi);
-            hi = i - 1;
-        }
-    }
-}
-
-void array_sort_int(ObjArray* arr) {
-    int32_t count = arr_count(arr);
-    if (count < 2) return;
-    qsort_int(arr->data, 0, count - 1);
-}
-
-void array_copy(GC* gc, ObjArray* dst, ObjArray* src) {
-    int32_t n = arr_count(src);
-    array_reserve(gc, dst, n);
-    memcpy(dst->data, src->data, (size_t)n * sizeof(Value));
-    dst->end = dst->data + n;
-}
-
-void array_push_n(GC* gc, ObjArray* arr, const Value* vals, int32_t n) {
-    int32_t count     = arr_count(arr);
-    int32_t new_count = count + n;
-    int32_t cur_cap   = arr_capacity(arr);
-    if (__builtin_expect(new_count > cur_cap, 0)) {
-        int32_t new_cap = grow_capacity(cur_cap, new_count);
-        arr->data    = (Value*)zen_realloc(gc, arr->data,
-                                           sizeof(Value) * cur_cap,
-                                           sizeof(Value) * new_cap);
-        arr->end     = arr->data + count;
+        int32_t count = arr_count(arr);
+        int32_t new_cap = grow_capacity(cur_cap, needed);
+        arr->data = (Value *)zen_realloc(gc, arr->data,
+                                         sizeof(Value) * cur_cap,
+                                         sizeof(Value) * new_cap);
+        arr->end = arr->data + count;
         arr->cap_end = arr->data + new_cap;
     }
-    memcpy(arr->end, vals, (size_t)n * sizeof(Value));
-    arr->end += n;
-    for (int32_t i = 0; i < n; i++)
-        if (__builtin_expect(vals[i].type == VAL_OBJ, 0))
-            gc_write_barrier(gc, (Obj*)arr, vals[i].as.obj);
-}
 
-void array_append(GC* gc, ObjArray* dst, ObjArray* src) {
-    array_push_n(gc, dst, src->data, arr_count(src));
-}
+    void array_push_slow(GC *gc, ObjArray *arr, Value val)
+    {
+        int32_t count = arr_count(arr);
+        int32_t old_cap = arr_capacity(arr);
+        int32_t new_cap = grow_capacity(old_cap, count + 1);
+        arr->data = (Value *)zen_realloc(gc, arr->data,
+                                         sizeof(Value) * old_cap,
+                                         sizeof(Value) * new_cap);
+        arr->end = arr->data + count;
+        arr->cap_end = arr->data + new_cap;
+        *arr->end++ = val;
+        if (__builtin_expect(val.type == VAL_OBJ, 0))
+            gc_write_barrier(gc, (Obj *)arr, val.as.obj);
+    }
 
+    void array_set(GC *gc, ObjArray *arr, int32_t index, Value val)
+    {
+        if ((uint32_t)index >= (uint32_t)arr_count(arr))
+            return;
+        arr->data[index] = val;
+        if (is_obj(val))
+            gc_write_barrier(gc, (Obj *)arr, val.as.obj);
+    }
 
-/* =========================================================
-** Map/Set — Chained hash table with node pool.
-** Bucket array (int32_t[]) + flat node array.
-** Free nodes marked with hash == 0xFFFFFFFF sentinel.
-** Load factor ≤ 1.0 → grow when count >= bucket_count.
-** ========================================================= */
+    Value array_pop(ObjArray *arr)
+    {
+        if (arr->end == arr->data)
+            return val_nil();
+        return *--arr->end;
+    }
 
-static inline uint32_t hash_value(Value v) {
-    uint32_t h;
-    /* Fast path for the common case (int keys) — no branch */
-    if (__builtin_expect(v.type == VAL_INT, 1)) {
-        h = (uint32_t)v.as.integer * 2654435761u;
-    } else {
-        switch (v.type) {
-            case VAL_NIL:   h = 0x9e3779b9u; break;
-            case VAL_BOOL:  h = v.as.boolean ? 0x9e3779bbu : 0x9e3779b9u; break;
-            case VAL_INT:   __builtin_unreachable();
-            case VAL_FLOAT: {
+    void array_insert(GC *gc, ObjArray *arr, int32_t index, Value val)
+    {
+        int32_t count = arr_count(arr);
+        if (index < 0)
+            index = 0;
+        if (index > count)
+            index = count;
+        array_ensure_cap(gc, arr, count + 1);
+        /* memmove is overlap-safe */
+        if (index < count)
+        {
+            memmove(arr->data + index + 1, arr->data + index,
+                    (size_t)(count - index) * sizeof(Value));
+        }
+        arr->data[index] = val;
+        arr->end++;
+        if (is_obj(val))
+            gc_write_barrier(gc, (Obj *)arr, val.as.obj);
+    }
+
+    void array_remove(ObjArray *arr, int32_t index)
+    {
+        int32_t count = arr_count(arr);
+        if ((uint32_t)index >= (uint32_t)count)
+            return;
+        int32_t remaining = count - index - 1;
+        if (remaining > 0)
+        {
+            memmove(arr->data + index, arr->data + index + 1,
+                    (size_t)remaining * sizeof(Value));
+        }
+        arr->end--;
+    }
+
+    void array_clear(ObjArray *arr)
+    {
+        arr->end = arr->data;
+    }
+
+    void array_reserve(GC *gc, ObjArray *arr, int32_t cap)
+    {
+        int32_t cur_cap = arr_capacity(arr);
+        if (cap <= cur_cap)
+            return;
+        int32_t count = arr_count(arr);
+        arr->data = (Value *)zen_realloc(gc, arr->data,
+                                         sizeof(Value) * cur_cap,
+                                         sizeof(Value) * cap);
+        arr->end = arr->data + count;
+        arr->cap_end = arr->data + cap;
+    }
+
+    int32_t array_find(ObjArray *arr, Value val)
+    {
+        int32_t count = arr_count(arr);
+        for (int32_t i = 0; i < count; i++)
+        {
+            if (values_equal(arr->data[i], val))
+                return i;
+        }
+        return -1;
+    }
+
+    int32_t array_find_int(ObjArray *arr, int32_t target)
+    {
+        const Value *data = arr->data;
+        const int32_t n = arr_count(arr);
+        int32_t i = 0;
+        for (; i + 8 <= n; i += 8)
+        {
+            __builtin_prefetch(data + i + 16, 0, 1);
+            if (data[i + 0].as.integer == target)
+                return i + 0;
+            if (data[i + 1].as.integer == target)
+                return i + 1;
+            if (data[i + 2].as.integer == target)
+                return i + 2;
+            if (data[i + 3].as.integer == target)
+                return i + 3;
+            if (data[i + 4].as.integer == target)
+                return i + 4;
+            if (data[i + 5].as.integer == target)
+                return i + 5;
+            if (data[i + 6].as.integer == target)
+                return i + 6;
+            if (data[i + 7].as.integer == target)
+                return i + 7;
+        }
+        for (; i < n; i++)
+            if (data[i].as.integer == target)
+                return i;
+        return -1;
+    }
+
+    bool array_contains(ObjArray *arr, Value val)
+    {
+        return array_find(arr, val) >= 0;
+    }
+
+    void array_reverse(ObjArray *arr)
+    {
+        int32_t count = arr_count(arr);
+        if (count < 2)
+            return;
+        Value *lo = arr->data;
+        Value *hi = arr->end - 1;
+        while (lo + 4 <= hi)
+        {
+            Value t0 = lo[0];
+            lo[0] = hi[0];
+            hi[0] = t0;
+            Value t1 = lo[1];
+            lo[1] = hi[-1];
+            hi[-1] = t1;
+            lo += 2;
+            hi -= 2;
+        }
+        while (lo < hi)
+        {
+            Value t = *lo;
+            *lo = *hi;
+            *hi = t;
+            lo++;
+            hi--;
+        }
+    }
+
+    /* Introsort: insertion sort for small partitions, quicksort for large */
+    static void isort_int(Value *data, int32_t n)
+    {
+        for (int32_t i = 1; i < n; i++)
+        {
+            Value key = data[i];
+            int32_t j = i - 1;
+            while (j >= 0 && data[j].as.integer > key.as.integer)
+            {
+                data[j + 1] = data[j];
+                j--;
+            }
+            data[j + 1] = key;
+        }
+    }
+
+    static void qsort_int(Value *data, int32_t lo, int32_t hi)
+    {
+        while (lo < hi)
+        {
+            if (hi - lo < 16)
+            {
+                isort_int(data + lo, hi - lo + 1);
+                return;
+            }
+            /* median-of-three pivot */
+            int32_t mid = lo + (hi - lo) / 2;
+            if (data[mid].as.integer < data[lo].as.integer)
+            {
+                Value t = data[lo];
+                data[lo] = data[mid];
+                data[mid] = t;
+            }
+            if (data[hi].as.integer < data[lo].as.integer)
+            {
+                Value t = data[lo];
+                data[lo] = data[hi];
+                data[hi] = t;
+            }
+            if (data[mid].as.integer < data[hi].as.integer)
+            {
+                Value t = data[mid];
+                data[mid] = data[hi];
+                data[hi] = t;
+            }
+            int32_t pivot = data[hi].as.integer;
+            int32_t i = lo - 1, j = hi;
+            for (;;)
+            {
+                do
+                {
+                    i++;
+                } while (data[i].as.integer < pivot);
+                do
+                {
+                    j--;
+                } while (j > lo && data[j].as.integer > pivot);
+                if (i >= j)
+                    break;
+                Value t = data[i];
+                data[i] = data[j];
+                data[j] = t;
+            }
+            Value t = data[i];
+            data[i] = data[hi];
+            data[hi] = t;
+            /* Recurse smaller partition, iterate larger */
+            if (i - lo < hi - i)
+            {
+                qsort_int(data, lo, i - 1);
+                lo = i + 1;
+            }
+            else
+            {
+                qsort_int(data, i + 1, hi);
+                hi = i - 1;
+            }
+        }
+    }
+
+    void array_sort_int(ObjArray *arr)
+    {
+        int32_t count = arr_count(arr);
+        if (count < 2)
+            return;
+        qsort_int(arr->data, 0, count - 1);
+    }
+
+    void array_copy(GC *gc, ObjArray *dst, ObjArray *src)
+    {
+        int32_t n = arr_count(src);
+        array_reserve(gc, dst, n);
+        memcpy(dst->data, src->data, (size_t)n * sizeof(Value));
+        dst->end = dst->data + n;
+    }
+
+    void array_push_n(GC *gc, ObjArray *arr, const Value *vals, int32_t n)
+    {
+        int32_t count = arr_count(arr);
+        int32_t new_count = count + n;
+        int32_t cur_cap = arr_capacity(arr);
+        if (__builtin_expect(new_count > cur_cap, 0))
+        {
+            int32_t new_cap = grow_capacity(cur_cap, new_count);
+            arr->data = (Value *)zen_realloc(gc, arr->data,
+                                             sizeof(Value) * cur_cap,
+                                             sizeof(Value) * new_cap);
+            arr->end = arr->data + count;
+            arr->cap_end = arr->data + new_cap;
+        }
+        memcpy(arr->end, vals, (size_t)n * sizeof(Value));
+        arr->end += n;
+        for (int32_t i = 0; i < n; i++)
+            if (__builtin_expect(vals[i].type == VAL_OBJ, 0))
+                gc_write_barrier(gc, (Obj *)arr, vals[i].as.obj);
+    }
+
+    void array_append(GC *gc, ObjArray *dst, ObjArray *src)
+    {
+        array_push_n(gc, dst, src->data, arr_count(src));
+    }
+
+    /* =========================================================
+    ** Map/Set — Chained hash table with node pool.
+    ** Bucket array (int32_t[]) + flat node array.
+    ** Free nodes marked with hash == 0xFFFFFFFF sentinel.
+    ** Load factor ≤ 1.0 → grow when count >= bucket_count.
+    ** ========================================================= */
+
+    static inline uint32_t hash_value(Value v)
+    {
+        uint32_t h;
+        /* Fast path for the common case (int keys) — no branch */
+        if (__builtin_expect(v.type == VAL_INT, 1))
+        {
+            h = (uint32_t)v.as.integer * 2654435761u;
+        }
+        else
+        {
+            switch (v.type)
+            {
+            case VAL_NIL:
+                h = 0x9e3779b9u;
+                break;
+            case VAL_BOOL:
+                h = v.as.boolean ? 0x9e3779bbu : 0x9e3779b9u;
+                break;
+            case VAL_INT:
+                __builtin_unreachable();
+            case VAL_FLOAT:
+            {
                 uint64_t bits;
                 memcpy(&bits, &v.as.number, sizeof(bits));
                 h = (uint32_t)((bits ^ (bits >> 32)) * 2654435761ULL);
                 break;
             }
-            case VAL_OBJ:   h = v.as.obj->hash; break;
-            default:        h = 0; break;
+            case VAL_OBJ:
+                h = v.as.obj->hash;
+                break;
+            default:
+                h = 0;
+                break;
+            }
+        }
+        /* 0xFFFFFFFF is the free-node sentinel — never return it */
+        return h + (h == 0xFFFFFFFFu);
+    }
+
+    /* ===== MAP (chained hash table with node pool) ===== */
+
+    static void map_rebuild_buckets(ObjMap *map)
+    {
+        int32_t mask = map->bucket_count - 1;
+        memset(map->buckets, 0xFF, sizeof(int32_t) * map->bucket_count); /* -1 fill */
+        for (int32_t i = 0; i < map->capacity; i++)
+        {
+            MapNode *n = &map->nodes[i];
+            if (n->hash == 0xFFFFFFFFu)
+                continue; /* free node sentinel */
+            int32_t b = (int32_t)(n->hash & (uint32_t)mask);
+            n->next = map->buckets[b];
+            map->buckets[b] = i;
         }
     }
-    /* 0xFFFFFFFF is the free-node sentinel — never return it */
-    return h + (h == 0xFFFFFFFFu);
-}
 
-/* ===== MAP (chained hash table with node pool) ===== */
-
-static void map_rebuild_buckets(ObjMap* map) {
-    int32_t mask = map->bucket_count - 1;
-    memset(map->buckets, 0xFF, sizeof(int32_t) * map->bucket_count); /* -1 fill */
-    for (int32_t i = 0; i < map->capacity; i++) {
-        MapNode* n = &map->nodes[i];
-        if (n->hash == 0xFFFFFFFFu) continue; /* free node sentinel */
-        int32_t b = (int32_t)(n->hash & (uint32_t)mask);
-        n->next = map->buckets[b];
-        map->buckets[b] = i;
+    static void map_grow_buckets(GC *gc, ObjMap *map)
+    {
+        int32_t old_bc = map->bucket_count;
+        int32_t new_bc = old_bc == 0 ? 16 : old_bc * 2;
+        size_t old_bytes = sizeof(int32_t) * old_bc;
+        size_t new_bytes = sizeof(int32_t) * new_bc;
+        map->buckets = (int32_t *)realloc(map->buckets, new_bytes);
+        gc->bytes_allocated += new_bytes - old_bytes;
+        map->bucket_count = new_bc;
+        map_rebuild_buckets(map);
     }
-}
 
-static void map_grow_buckets(GC* gc, ObjMap* map) {
-    int32_t old_bc = map->bucket_count;
-    int32_t new_bc = old_bc == 0 ? 16 : old_bc * 2;
-    size_t old_bytes = sizeof(int32_t) * old_bc;
-    size_t new_bytes = sizeof(int32_t) * new_bc;
-    map->buckets = (int32_t*)realloc(map->buckets, new_bytes);
-    gc->bytes_allocated += new_bytes - old_bytes;
-    map->bucket_count = new_bc;
-    map_rebuild_buckets(map);
-}
+    static void map_grow_nodes(GC *gc, ObjMap *map)
+    {
+        int32_t old_cap = map->capacity;
+        int32_t new_cap = old_cap == 0 ? 16 : old_cap * 2;
+        size_t old_bytes = sizeof(MapNode) * old_cap;
+        size_t new_bytes = sizeof(MapNode) * new_cap;
+        map->nodes = (MapNode *)realloc(map->nodes, new_bytes);
+        gc->bytes_allocated += new_bytes - old_bytes;
 
-static void map_grow_nodes(GC* gc, ObjMap* map) {
-    int32_t old_cap = map->capacity;
-    int32_t new_cap = old_cap == 0 ? 16 : old_cap * 2;
-    size_t old_bytes = sizeof(MapNode) * old_cap;
-    size_t new_bytes = sizeof(MapNode) * new_cap;
-    map->nodes = (MapNode*)realloc(map->nodes, new_bytes);
-    gc->bytes_allocated += new_bytes - old_bytes;
-
-    /* Link new slots into free list */
-    for (int32_t i = old_cap; i < new_cap; i++) {
-        map->nodes[i].hash = 0xFFFFFFFFu;
-        map->nodes[i].next = (i + 1 < new_cap) ? i + 1 : map->free_head;
-    }
-    map->free_head = old_cap;
-    map->capacity = new_cap;
-}
-
-static inline int32_t map_alloc_node(GC* gc, ObjMap* map) {
-    if (__builtin_expect(map->free_head == -1, 0))
-        map_grow_nodes(gc, map);
-    int32_t idx = map->free_head;
-    map->free_head = map->nodes[idx].next;
-    return idx;
-}
-
-static inline void map_free_node(ObjMap* map, int32_t idx) {
-    map->nodes[idx].key = val_nil();
-    map->nodes[idx].hash = 0xFFFFFFFFu; /* free sentinel */
-    map->nodes[idx].next = map->free_head;
-    map->free_head = idx;
-}
-
-bool map_set(GC* gc, ObjMap* map, Value key, Value val) {
-    /* Ensure we have buckets */
-    if (__builtin_expect(map->bucket_count == 0, 0)) {
-        map_grow_nodes(gc, map);
-        map_grow_buckets(gc, map);
-    }
-    /* Grow buckets if load factor > 0.875 (count*8 >= bucket_count*7) */
-    if (__builtin_expect(map->count * 8 >= map->bucket_count * 7, 0))
-        map_grow_buckets(gc, map);
-
-    uint32_t h = hash_value(key);
-    int32_t mask = map->bucket_count - 1;
-    int32_t bucket = (int32_t)(h & (uint32_t)mask);
-    int32_t idx = map->buckets[bucket];
-
-    /* Walk chain looking for existing key */
-    while (idx != -1) {
-        MapNode* n = &map->nodes[idx];
-        if (n->hash == h && values_equal(n->key, key)) {
-            n->value = val;
-            if (__builtin_expect(val.type == VAL_OBJ, 0))
-                gc_write_barrier(gc, (Obj*)map, val.as.obj);
-            return false; /* updated existing */
+        /* Link new slots into free list */
+        for (int32_t i = old_cap; i < new_cap; i++)
+        {
+            map->nodes[i].hash = 0xFFFFFFFFu;
+            map->nodes[i].next = (i + 1 < new_cap) ? i + 1 : map->free_head;
         }
-        idx = n->next;
+        map->free_head = old_cap;
+        map->capacity = new_cap;
     }
 
-    /* Not found — insert new node at head of chain */
-    int32_t ni = map_alloc_node(gc, map);
-    MapNode* node = &map->nodes[ni];
-    node->key   = key;
-    node->value = val;
-    node->hash  = h;
-    node->next  = map->buckets[bucket];
-    map->buckets[bucket] = ni;
-    map->count++;
+    static inline int32_t map_alloc_node(GC *gc, ObjMap *map)
+    {
+        if (__builtin_expect(map->free_head == -1, 0))
+            map_grow_nodes(gc, map);
+        int32_t idx = map->free_head;
+        map->free_head = map->nodes[idx].next;
+        return idx;
+    }
 
-    if (__builtin_expect(key.type == VAL_OBJ, 0))
-        gc_write_barrier(gc, (Obj*)map, key.as.obj);
-    if (__builtin_expect(val.type == VAL_OBJ, 0))
-        gc_write_barrier(gc, (Obj*)map, val.as.obj);
-    return true; /* new entry */
-}
+    static inline void map_free_node(ObjMap *map, int32_t idx)
+    {
+        map->nodes[idx].key = val_nil();
+        map->nodes[idx].hash = 0xFFFFFFFFu; /* free sentinel */
+        map->nodes[idx].next = map->free_head;
+        map->free_head = idx;
+    }
 
-Value map_get(ObjMap* map, Value key, bool* found) {
-    if (__builtin_expect(map->count == 0, 0)) { *found = false; return val_nil(); }
-    uint32_t h = hash_value(key);
-    int32_t mask = map->bucket_count - 1;
-    int32_t idx = map->buckets[(int32_t)(h & (uint32_t)mask)];
-
-    while (idx != -1) {
-        MapNode* n = &map->nodes[idx];
-        if (n->hash == h && values_equal(n->key, key)) {
-            *found = true;
-            return n->value;
+    bool map_set(GC *gc, ObjMap *map, Value key, Value val)
+    {
+        /* Ensure we have buckets */
+        if (__builtin_expect(map->bucket_count == 0, 0))
+        {
+            map_grow_nodes(gc, map);
+            map_grow_buckets(gc, map);
         }
-        idx = n->next;
-    }
-    *found = false;
-    return val_nil();
-}
+        /* Grow buckets if load factor > 0.875 (count*8 >= bucket_count*7) */
+        if (__builtin_expect(map->count * 8 >= map->bucket_count * 7, 0))
+            map_grow_buckets(gc, map);
 
-bool map_delete(ObjMap* map, Value key) {
-    if (map->count == 0) return false;
-    uint32_t h = hash_value(key);
-    int32_t mask = map->bucket_count - 1;
-    int32_t bucket = (int32_t)(h & (uint32_t)mask);
-    int32_t idx = map->buckets[bucket];
-    int32_t prev = -1;
+        uint32_t h = hash_value(key);
+        int32_t mask = map->bucket_count - 1;
+        int32_t bucket = (int32_t)(h & (uint32_t)mask);
+        int32_t idx = map->buckets[bucket];
 
-    while (idx != -1) {
-        MapNode* n = &map->nodes[idx];
-        if (n->hash == h && values_equal(n->key, key)) {
-            /* Unlink from chain */
-            if (prev == -1)
-                map->buckets[bucket] = n->next;
-            else
-                map->nodes[prev].next = n->next;
-            map_free_node(map, idx);
-            map->count--;
-            return true;
+        /* Walk chain looking for existing key */
+        while (idx != -1)
+        {
+            MapNode *n = &map->nodes[idx];
+            if (n->hash == h && values_equal(n->key, key))
+            {
+                n->value = val;
+                if (__builtin_expect(val.type == VAL_OBJ, 0))
+                    gc_write_barrier(gc, (Obj *)map, val.as.obj);
+                return false; /* updated existing */
+            }
+            idx = n->next;
         }
-        prev = idx;
-        idx = n->next;
-    }
-    return false;
-}
 
-bool map_contains(ObjMap* map, Value key) {
-    if (map->count == 0) return false;
-    uint32_t h = hash_value(key);
-    int32_t mask = map->bucket_count - 1;
-    int32_t idx = map->buckets[(int32_t)(h & (uint32_t)mask)];
+        /* Not found — insert new node at head of chain */
+        int32_t ni = map_alloc_node(gc, map);
+        MapNode *node = &map->nodes[ni];
+        node->key = key;
+        node->value = val;
+        node->hash = h;
+        node->next = map->buckets[bucket];
+        map->buckets[bucket] = ni;
+        map->count++;
 
-    while (idx != -1) {
-        MapNode* n = &map->nodes[idx];
-        if (n->hash == h && values_equal(n->key, key))
-            return true;
-        idx = n->next;
-    }
-    return false;
-}
-
-int32_t map_count(ObjMap* map) { return map->count; }
-
-void map_clear(GC* gc, ObjMap* map) {
-    if (map->buckets) {
-        gc->bytes_allocated -= sizeof(int32_t) * map->bucket_count;
-        free(map->buckets);
-    }
-    if (map->nodes) {
-        gc->bytes_allocated -= sizeof(MapNode) * map->capacity;
-        free(map->nodes);
-    }
-    map->buckets = nullptr;
-    map->nodes = nullptr;
-    map->count = 0; map->capacity = 0; map->bucket_count = 0;
-    map->free_head = -1;
-}
-
-void map_keys(GC* gc, ObjMap* map, ObjArray* out) {
-    for (int32_t i = 0; i < map->capacity; i++)
-        if (map->nodes[i].hash != 0xFFFFFFFFu)
-            array_push(gc, out, map->nodes[i].key);
-}
-
-void map_values(GC* gc, ObjMap* map, ObjArray* out) {
-    for (int32_t i = 0; i < map->capacity; i++)
-        if (map->nodes[i].hash != 0xFFFFFFFFu)
-            array_push(gc, out, map->nodes[i].value);
-}
-
-/* ===== SET (chained hash table with node pool) ===== */
-
-ObjSet* new_set(GC* gc) {
-    ObjSet* s = (ObjSet*)alloc_obj(gc, sizeof(ObjSet), OBJ_SET);
-    s->count        = 0;
-    s->capacity     = 0;
-    s->bucket_count = 0;
-    s->free_head    = -1;
-    s->buckets      = nullptr;
-    s->nodes        = nullptr;
-    return s;
-}
-
-static void set_rebuild_buckets(ObjSet* set) {
-    int32_t mask = set->bucket_count - 1;
-    memset(set->buckets, 0xFF, sizeof(int32_t) * set->bucket_count);
-    for (int32_t i = 0; i < set->capacity; i++) {
-        SetNode* n = &set->nodes[i];
-        if (n->hash == 0xFFFFFFFFu) continue;
-        int32_t b = (int32_t)(n->hash & (uint32_t)mask);
-        n->next = set->buckets[b];
-        set->buckets[b] = i;
-    }
-}
-
-static void set_grow_buckets(GC* gc, ObjSet* set) {
-    int32_t old_bc = set->bucket_count;
-    int32_t new_bc = old_bc == 0 ? 16 : old_bc * 2;
-    size_t old_bytes = sizeof(int32_t) * old_bc;
-    size_t new_bytes = sizeof(int32_t) * new_bc;
-    set->buckets = (int32_t*)realloc(set->buckets, new_bytes);
-    gc->bytes_allocated += new_bytes - old_bytes;
-    set->bucket_count = new_bc;
-    set_rebuild_buckets(set);
-}
-
-static void set_grow_nodes(GC* gc, ObjSet* set) {
-    int32_t old_cap = set->capacity;
-    int32_t new_cap = old_cap == 0 ? 16 : old_cap * 2;
-    size_t old_bytes = sizeof(SetNode) * old_cap;
-    size_t new_bytes = sizeof(SetNode) * new_cap;
-    set->nodes = (SetNode*)realloc(set->nodes, new_bytes);
-    gc->bytes_allocated += new_bytes - old_bytes;
-
-    for (int32_t i = old_cap; i < new_cap; i++) {
-        set->nodes[i].hash = 0xFFFFFFFFu;
-        set->nodes[i].next = (i + 1 < new_cap) ? i + 1 : set->free_head;
-    }
-    set->free_head = old_cap;
-    set->capacity = new_cap;
-}
-
-static inline int32_t set_alloc_node(GC* gc, ObjSet* set) {
-    if (__builtin_expect(set->free_head == -1, 0))
-        set_grow_nodes(gc, set);
-    int32_t idx = set->free_head;
-    set->free_head = set->nodes[idx].next;
-    return idx;
-}
-
-static inline void set_free_node(ObjSet* set, int32_t idx) {
-    set->nodes[idx].key = val_nil();
-    set->nodes[idx].hash = 0xFFFFFFFFu;
-    set->nodes[idx].next = set->free_head;
-    set->free_head = idx;
-}
-
-bool set_add(GC* gc, ObjSet* set, Value key) {
-    if (__builtin_expect(set->bucket_count == 0, 0)) {
-        set_grow_nodes(gc, set);
-        set_grow_buckets(gc, set);
-    }
-    /* Grow buckets if load factor > 0.875 */
-    if (__builtin_expect(set->count * 8 >= set->bucket_count * 7, 0))
-        set_grow_buckets(gc, set);
-
-    uint32_t h = hash_value(key);
-    int32_t mask = set->bucket_count - 1;
-    int32_t bucket = (int32_t)(h & (uint32_t)mask);
-    int32_t idx = set->buckets[bucket];
-
-    while (idx != -1) {
-        SetNode* n = &set->nodes[idx];
-        if (n->hash == h && values_equal(n->key, key))
-            return false; /* already exists */
-        idx = n->next;
+        if (__builtin_expect(key.type == VAL_OBJ, 0))
+            gc_write_barrier(gc, (Obj *)map, key.as.obj);
+        if (__builtin_expect(val.type == VAL_OBJ, 0))
+            gc_write_barrier(gc, (Obj *)map, val.as.obj);
+        return true; /* new entry */
     }
 
-    int32_t ni = set_alloc_node(gc, set);
-    SetNode* node = &set->nodes[ni];
-    node->key  = key;
-    node->hash = h;
-    node->next = set->buckets[bucket];
-    set->buckets[bucket] = ni;
-    set->count++;
-
-    if (__builtin_expect(key.type == VAL_OBJ, 0))
-        gc_write_barrier(gc, (Obj*)set, key.as.obj);
-    return true;
-}
-
-bool set_contains(ObjSet* set, Value key) {
-    if (__builtin_expect(set->count == 0, 0)) return false;
-    uint32_t h = hash_value(key);
-    int32_t mask = set->bucket_count - 1;
-    int32_t idx = set->buckets[(int32_t)(h & (uint32_t)mask)];
-
-    while (idx != -1) {
-        SetNode* n = &set->nodes[idx];
-        if (n->hash == h && values_equal(n->key, key))
-            return true;
-        idx = n->next;
-    }
-    return false;
-}
-
-bool set_remove(ObjSet* set, Value key) {
-    if (set->count == 0) return false;
-    uint32_t h = hash_value(key);
-    int32_t mask = set->bucket_count - 1;
-    int32_t bucket = (int32_t)(h & (uint32_t)mask);
-    int32_t idx = set->buckets[bucket];
-    int32_t prev = -1;
-
-    while (idx != -1) {
-        SetNode* n = &set->nodes[idx];
-        if (n->hash == h && values_equal(n->key, key)) {
-            if (prev == -1)
-                set->buckets[bucket] = n->next;
-            else
-                set->nodes[prev].next = n->next;
-            set_free_node(set, idx);
-            set->count--;
-            return true;
+    Value map_get(ObjMap *map, Value key, bool *found)
+    {
+        if (__builtin_expect(map->count == 0, 0))
+        {
+            *found = false;
+            return val_nil();
         }
-        prev = idx;
-        idx = n->next;
+        uint32_t h = hash_value(key);
+        int32_t mask = map->bucket_count - 1;
+        int32_t idx = map->buckets[(int32_t)(h & (uint32_t)mask)];
+
+        while (idx != -1)
+        {
+            MapNode *n = &map->nodes[idx];
+            if (n->hash == h && values_equal(n->key, key))
+            {
+                *found = true;
+                return n->value;
+            }
+            idx = n->next;
+        }
+        *found = false;
+        return val_nil();
     }
-    return false;
-}
 
-void set_clear(GC* gc, ObjSet* set) {
-    if (set->buckets) {
-        gc->bytes_allocated -= sizeof(int32_t) * set->bucket_count;
-        free(set->buckets);
+    bool map_delete(ObjMap *map, Value key)
+    {
+        if (map->count == 0)
+            return false;
+        uint32_t h = hash_value(key);
+        int32_t mask = map->bucket_count - 1;
+        int32_t bucket = (int32_t)(h & (uint32_t)mask);
+        int32_t idx = map->buckets[bucket];
+        int32_t prev = -1;
+
+        while (idx != -1)
+        {
+            MapNode *n = &map->nodes[idx];
+            if (n->hash == h && values_equal(n->key, key))
+            {
+                /* Unlink from chain */
+                if (prev == -1)
+                    map->buckets[bucket] = n->next;
+                else
+                    map->nodes[prev].next = n->next;
+                map_free_node(map, idx);
+                map->count--;
+                return true;
+            }
+            prev = idx;
+            idx = n->next;
+        }
+        return false;
     }
-    if (set->nodes) {
-        gc->bytes_allocated -= sizeof(SetNode) * set->capacity;
-        free(set->nodes);
+
+    bool map_contains(ObjMap *map, Value key)
+    {
+        if (map->count == 0)
+            return false;
+        uint32_t h = hash_value(key);
+        int32_t mask = map->bucket_count - 1;
+        int32_t idx = map->buckets[(int32_t)(h & (uint32_t)mask)];
+
+        while (idx != -1)
+        {
+            MapNode *n = &map->nodes[idx];
+            if (n->hash == h && values_equal(n->key, key))
+                return true;
+            idx = n->next;
+        }
+        return false;
     }
-    set->buckets = nullptr;
-    set->nodes = nullptr;
-    set->count = 0; set->capacity = 0; set->bucket_count = 0;
-    set->free_head = -1;
-}
 
-int32_t set_count(ObjSet* set) { return set->count; }
+    int32_t map_count(ObjMap *map) { return map->count; }
 
-ObjClass* new_class(GC* gc, ObjString* name, ObjClass* parent) {
-    ObjClass* cls = (ObjClass*)alloc_obj(gc, sizeof(ObjClass), OBJ_CLASS);
-    cls->name        = name;
-    cls->parent      = parent;
-    cls->methods     = new_map(gc);
-    cls->num_fields  = 0;
-    cls->field_names = nullptr;
-    return cls;
-}
-
-ObjInstance* new_instance(GC* gc, ObjClass* klass) {
-    ObjInstance* inst = (ObjInstance*)alloc_obj(gc, sizeof(ObjInstance), OBJ_INSTANCE);
-    inst->klass = klass;
-    int nf = klass->num_fields;
-    if (nf > 0) {
-        inst->fields = (Value*)zen_alloc(gc, sizeof(Value) * nf);
-        for (int i = 0; i < nf; i++) inst->fields[i] = val_nil();
-    } else {
-        inst->fields = nullptr;
+    void map_clear(GC *gc, ObjMap *map)
+    {
+        if (map->buckets)
+        {
+            gc->bytes_allocated -= sizeof(int32_t) * map->bucket_count;
+            free(map->buckets);
+        }
+        if (map->nodes)
+        {
+            gc->bytes_allocated -= sizeof(MapNode) * map->capacity;
+            free(map->nodes);
+        }
+        map->buckets = nullptr;
+        map->nodes = nullptr;
+        map->count = 0;
+        map->capacity = 0;
+        map->bucket_count = 0;
+        map->free_head = -1;
     }
-    return inst;
-}
 
-/* =========================================================
-** GC — Tri-color Mark & Sweep
-** ========================================================= */
-
-void gc_mark_obj(GC* gc, Obj* obj) {
-    if (obj == nullptr) return;
-    if (obj->color != GC_WHITE) return;  /* já visitado */
-
-    obj->color = GC_GRAY;
-
-    /* Adiciona ao gray list */
-    if (gc->gray_count >= gc->gray_capacity) {
-        gc->gray_capacity = gc->gray_capacity < 8 ? 8 : gc->gray_capacity * 2;
-        gc->gray_list = (Obj**)realloc(gc->gray_list,
-                                       sizeof(Obj*) * gc->gray_capacity);
+    void map_keys(GC *gc, ObjMap *map, ObjArray *out)
+    {
+        for (int32_t i = 0; i < map->capacity; i++)
+            if (map->nodes[i].hash != 0xFFFFFFFFu)
+                array_push(gc, out, map->nodes[i].key);
     }
-    gc->gray_list[gc->gray_count++] = obj;
-}
 
-void gc_mark_value(GC* gc, Value v) {
-    if (is_obj(v)) gc_mark_obj(gc, v.as.obj);
-}
+    void map_values(GC *gc, ObjMap *map, ObjArray *out)
+    {
+        for (int32_t i = 0; i < map->capacity; i++)
+            if (map->nodes[i].hash != 0xFFFFFFFFu)
+                array_push(gc, out, map->nodes[i].value);
+    }
 
-/* Processa um objecto gray → marca os filhos, torna-o black */
-static void gc_blacken(GC* gc, Obj* obj) {
-    obj->color = GC_BLACK;
+    /* ===== SET (chained hash table with node pool) ===== */
 
-    switch (obj->type) {
+    ObjSet *new_set(GC *gc)
+    {
+        ObjSet *s = (ObjSet *)alloc_obj(gc, sizeof(ObjSet), OBJ_SET);
+        s->count = 0;
+        s->capacity = 0;
+        s->bucket_count = 0;
+        s->free_head = -1;
+        s->buckets = nullptr;
+        s->nodes = nullptr;
+        return s;
+    }
+
+    static void set_rebuild_buckets(ObjSet *set)
+    {
+        int32_t mask = set->bucket_count - 1;
+        memset(set->buckets, 0xFF, sizeof(int32_t) * set->bucket_count);
+        for (int32_t i = 0; i < set->capacity; i++)
+        {
+            SetNode *n = &set->nodes[i];
+            if (n->hash == 0xFFFFFFFFu)
+                continue;
+            int32_t b = (int32_t)(n->hash & (uint32_t)mask);
+            n->next = set->buckets[b];
+            set->buckets[b] = i;
+        }
+    }
+
+    static void set_grow_buckets(GC *gc, ObjSet *set)
+    {
+        int32_t old_bc = set->bucket_count;
+        int32_t new_bc = old_bc == 0 ? 16 : old_bc * 2;
+        size_t old_bytes = sizeof(int32_t) * old_bc;
+        size_t new_bytes = sizeof(int32_t) * new_bc;
+        set->buckets = (int32_t *)realloc(set->buckets, new_bytes);
+        gc->bytes_allocated += new_bytes - old_bytes;
+        set->bucket_count = new_bc;
+        set_rebuild_buckets(set);
+    }
+
+    static void set_grow_nodes(GC *gc, ObjSet *set)
+    {
+        int32_t old_cap = set->capacity;
+        int32_t new_cap = old_cap == 0 ? 16 : old_cap * 2;
+        size_t old_bytes = sizeof(SetNode) * old_cap;
+        size_t new_bytes = sizeof(SetNode) * new_cap;
+        set->nodes = (SetNode *)realloc(set->nodes, new_bytes);
+        gc->bytes_allocated += new_bytes - old_bytes;
+
+        for (int32_t i = old_cap; i < new_cap; i++)
+        {
+            set->nodes[i].hash = 0xFFFFFFFFu;
+            set->nodes[i].next = (i + 1 < new_cap) ? i + 1 : set->free_head;
+        }
+        set->free_head = old_cap;
+        set->capacity = new_cap;
+    }
+
+    static inline int32_t set_alloc_node(GC *gc, ObjSet *set)
+    {
+        if (__builtin_expect(set->free_head == -1, 0))
+            set_grow_nodes(gc, set);
+        int32_t idx = set->free_head;
+        set->free_head = set->nodes[idx].next;
+        return idx;
+    }
+
+    static inline void set_free_node(ObjSet *set, int32_t idx)
+    {
+        set->nodes[idx].key = val_nil();
+        set->nodes[idx].hash = 0xFFFFFFFFu;
+        set->nodes[idx].next = set->free_head;
+        set->free_head = idx;
+    }
+
+    bool set_add(GC *gc, ObjSet *set, Value key)
+    {
+        if (__builtin_expect(set->bucket_count == 0, 0))
+        {
+            set_grow_nodes(gc, set);
+            set_grow_buckets(gc, set);
+        }
+        /* Grow buckets if load factor > 0.875 */
+        if (__builtin_expect(set->count * 8 >= set->bucket_count * 7, 0))
+            set_grow_buckets(gc, set);
+
+        uint32_t h = hash_value(key);
+        int32_t mask = set->bucket_count - 1;
+        int32_t bucket = (int32_t)(h & (uint32_t)mask);
+        int32_t idx = set->buckets[bucket];
+
+        while (idx != -1)
+        {
+            SetNode *n = &set->nodes[idx];
+            if (n->hash == h && values_equal(n->key, key))
+                return false; /* already exists */
+            idx = n->next;
+        }
+
+        int32_t ni = set_alloc_node(gc, set);
+        SetNode *node = &set->nodes[ni];
+        node->key = key;
+        node->hash = h;
+        node->next = set->buckets[bucket];
+        set->buckets[bucket] = ni;
+        set->count++;
+
+        if (__builtin_expect(key.type == VAL_OBJ, 0))
+            gc_write_barrier(gc, (Obj *)set, key.as.obj);
+        return true;
+    }
+
+    bool set_contains(ObjSet *set, Value key)
+    {
+        if (__builtin_expect(set->count == 0, 0))
+            return false;
+        uint32_t h = hash_value(key);
+        int32_t mask = set->bucket_count - 1;
+        int32_t idx = set->buckets[(int32_t)(h & (uint32_t)mask)];
+
+        while (idx != -1)
+        {
+            SetNode *n = &set->nodes[idx];
+            if (n->hash == h && values_equal(n->key, key))
+                return true;
+            idx = n->next;
+        }
+        return false;
+    }
+
+    bool set_remove(ObjSet *set, Value key)
+    {
+        if (set->count == 0)
+            return false;
+        uint32_t h = hash_value(key);
+        int32_t mask = set->bucket_count - 1;
+        int32_t bucket = (int32_t)(h & (uint32_t)mask);
+        int32_t idx = set->buckets[bucket];
+        int32_t prev = -1;
+
+        while (idx != -1)
+        {
+            SetNode *n = &set->nodes[idx];
+            if (n->hash == h && values_equal(n->key, key))
+            {
+                if (prev == -1)
+                    set->buckets[bucket] = n->next;
+                else
+                    set->nodes[prev].next = n->next;
+                set_free_node(set, idx);
+                set->count--;
+                return true;
+            }
+            prev = idx;
+            idx = n->next;
+        }
+        return false;
+    }
+
+    void set_clear(GC *gc, ObjSet *set)
+    {
+        if (set->buckets)
+        {
+            gc->bytes_allocated -= sizeof(int32_t) * set->bucket_count;
+            free(set->buckets);
+        }
+        if (set->nodes)
+        {
+            gc->bytes_allocated -= sizeof(SetNode) * set->capacity;
+            free(set->nodes);
+        }
+        set->buckets = nullptr;
+        set->nodes = nullptr;
+        set->count = 0;
+        set->capacity = 0;
+        set->bucket_count = 0;
+        set->free_head = -1;
+    }
+
+    int32_t set_count(ObjSet *set) { return set->count; }
+
+    ObjClass *new_class(GC *gc, ObjString *name, ObjClass *parent)
+    {
+        ObjClass *cls = (ObjClass *)alloc_obj(gc, sizeof(ObjClass), OBJ_CLASS);
+        cls->name = name;
+        cls->parent = parent;
+        cls->methods = new_map(gc);
+        cls->num_fields = 0;
+        cls->field_names = nullptr;
+        return cls;
+    }
+
+    ObjInstance *new_instance(GC *gc, ObjClass *klass)
+    {
+        ObjInstance *inst = (ObjInstance *)alloc_obj(gc, sizeof(ObjInstance), OBJ_INSTANCE);
+        inst->klass = klass;
+        int nf = klass->num_fields;
+        if (nf > 0)
+        {
+            inst->fields = (Value *)zen_alloc(gc, sizeof(Value) * nf);
+            for (int i = 0; i < nf; i++)
+                inst->fields[i] = val_nil();
+        }
+        else
+        {
+            inst->fields = nullptr;
+        }
+        return inst;
+    }
+
+    /* =========================================================
+    ** GC — Tri-color Mark & Sweep
+    ** ========================================================= */
+
+    void gc_mark_obj(GC *gc, Obj *obj)
+    {
+        if (obj == nullptr)
+            return;
+        if (obj->color != GC_WHITE)
+            return; /* já visitado */
+
+        obj->color = GC_GRAY;
+
+        /* Adiciona ao gray list */
+        if (gc->gray_count >= gc->gray_capacity)
+        {
+            gc->gray_capacity = gc->gray_capacity < 8 ? 8 : gc->gray_capacity * 2;
+            gc->gray_list = (Obj **)realloc(gc->gray_list,
+                                            sizeof(Obj *) * gc->gray_capacity);
+        }
+        gc->gray_list[gc->gray_count++] = obj;
+    }
+
+    void gc_mark_value(GC *gc, Value v)
+    {
+        if (is_obj(v))
+            gc_mark_obj(gc, v.as.obj);
+    }
+
+    /* Processa um objecto gray → marca os filhos, torna-o black */
+    static void gc_blacken(GC *gc, Obj *obj)
+    {
+        obj->color = GC_BLACK;
+
+        switch (obj->type)
+        {
         case OBJ_STRING:
             /* strings não têm referências filhas */
             break;
 
-        case OBJ_FUNC: {
-            ObjFunc* fn = (ObjFunc*)obj;
-            gc_mark_obj(gc, (Obj*)fn->name);
+        case OBJ_FUNC:
+        {
+            ObjFunc *fn = (ObjFunc *)obj;
+            gc_mark_obj(gc, (Obj *)fn->name);
             for (int i = 0; i < fn->const_count; i++)
                 gc_mark_value(gc, fn->constants[i]);
             break;
         }
 
-        case OBJ_NATIVE: {
-            ObjNative* nat = (ObjNative*)obj;
-            gc_mark_obj(gc, (Obj*)nat->name);
+        case OBJ_NATIVE:
+        {
+            ObjNative *nat = (ObjNative *)obj;
+            gc_mark_obj(gc, (Obj *)nat->name);
             break;
         }
 
-        case OBJ_ARRAY: {
-            ObjArray* arr = (ObjArray*)obj;
+        case OBJ_ARRAY:
+        {
+            ObjArray *arr = (ObjArray *)obj;
             int32_t n = arr_count(arr);
             for (int i = 0; i < n; i++)
                 gc_mark_value(gc, arr->data[i]);
             break;
         }
 
-        case OBJ_MAP: {
-            ObjMap* map = (ObjMap*)obj;
-            for (int i = 0; i < map->capacity; i++) {
-                if (map->nodes[i].hash != 0xFFFFFFFFu) {
+        case OBJ_MAP:
+        {
+            ObjMap *map = (ObjMap *)obj;
+            for (int i = 0; i < map->capacity; i++)
+            {
+                if (map->nodes[i].hash != 0xFFFFFFFFu)
+                {
                     gc_mark_value(gc, map->nodes[i].key);
                     gc_mark_value(gc, map->nodes[i].value);
                 }
@@ -883,158 +1087,199 @@ static void gc_blacken(GC* gc, Obj* obj) {
             break;
         }
 
-        case OBJ_SET: {
-            ObjSet* set = (ObjSet*)obj;
-            for (int i = 0; i < set->capacity; i++) {
+        case OBJ_SET:
+        {
+            ObjSet *set = (ObjSet *)obj;
+            for (int i = 0; i < set->capacity; i++)
+            {
                 if (set->nodes[i].hash != 0xFFFFFFFFu)
                     gc_mark_value(gc, set->nodes[i].key);
             }
             break;
         }
 
-        case OBJ_CLASS: {
-            ObjClass* cls = (ObjClass*)obj;
-            gc_mark_obj(gc, (Obj*)cls->name);
-            gc_mark_obj(gc, (Obj*)cls->parent);
-            gc_mark_obj(gc, (Obj*)cls->methods);
+        case OBJ_CLASS:
+        {
+            ObjClass *cls = (ObjClass *)obj;
+            gc_mark_obj(gc, (Obj *)cls->name);
+            gc_mark_obj(gc, (Obj *)cls->parent);
+            gc_mark_obj(gc, (Obj *)cls->methods);
             break;
         }
 
-        case OBJ_INSTANCE: {
-            ObjInstance* inst = (ObjInstance*)obj;
-            gc_mark_obj(gc, (Obj*)inst->klass);
+        case OBJ_INSTANCE:
+        {
+            ObjInstance *inst = (ObjInstance *)obj;
+            gc_mark_obj(gc, (Obj *)inst->klass);
             int nf = inst->klass->num_fields;
             for (int i = 0; i < nf; i++)
                 gc_mark_value(gc, inst->fields[i]);
             break;
         }
+        }
     }
-}
 
-/* Trace: processa todos os grays */
-static void gc_trace_refs(GC* gc) {
-    while (gc->gray_count > 0) {
-        Obj* obj = gc->gray_list[--gc->gray_count];
-        gc_blacken(gc, obj);
+    /* Trace: processa todos os grays */
+    static void gc_trace_refs(GC *gc)
+    {
+        while (gc->gray_count > 0)
+        {
+            Obj *obj = gc->gray_list[--gc->gray_count];
+            gc_blacken(gc, obj);
+        }
     }
-}
 
-/* Calcula tamanho de um objecto para desalocar */
-static size_t obj_size(Obj* obj) {
-    switch (obj->type) {
-        case OBJ_STRING:   return sizeof(ObjString) + ((ObjString*)obj)->length + 1;
-        case OBJ_FUNC:     return sizeof(ObjFunc);
-        case OBJ_NATIVE:   return sizeof(ObjNative);
-        case OBJ_ARRAY:    return sizeof(ObjArray);
-        case OBJ_MAP:      return sizeof(ObjMap);
-        case OBJ_SET:      return sizeof(ObjSet);
-        case OBJ_CLASS:    return sizeof(ObjClass);
-        case OBJ_INSTANCE: return sizeof(ObjInstance);
+    /* Calcula tamanho de um objecto para desalocar */
+    static size_t obj_size(Obj *obj)
+    {
+        switch (obj->type)
+        {
+        case OBJ_STRING:
+            return sizeof(ObjString) + ((ObjString *)obj)->length + 1;
+        case OBJ_FUNC:
+            return sizeof(ObjFunc);
+        case OBJ_NATIVE:
+            return sizeof(ObjNative);
+        case OBJ_ARRAY:
+            return sizeof(ObjArray);
+        case OBJ_MAP:
+            return sizeof(ObjMap);
+        case OBJ_SET:
+            return sizeof(ObjSet);
+        case OBJ_CLASS:
+            return sizeof(ObjClass);
+        case OBJ_INSTANCE:
+            return sizeof(ObjInstance);
+        }
+        return 0;
     }
-    return 0;
-}
 
-/* Liberta um objecto e os seus buffers internos */
-static void free_obj(GC* gc, Obj* obj) {
-    switch (obj->type) {
+    /* Liberta um objecto e os seus buffers internos */
+    static void free_obj(GC *gc, Obj *obj)
+    {
+        switch (obj->type)
+        {
         case OBJ_STRING:
             /* nada extra — chars[] está inline */
             break;
-        case OBJ_FUNC: {
-            ObjFunc* fn = (ObjFunc*)obj;
-            if (fn->code) zen_free(gc, fn->code, sizeof(Instruction) * fn->code_count);
-            if (fn->constants) zen_free(gc, fn->constants, sizeof(Value) * fn->const_count);
+        case OBJ_FUNC:
+        {
+            ObjFunc *fn = (ObjFunc *)obj;
+            if (fn->code)
+                zen_free(gc, fn->code, sizeof(Instruction) * fn->code_count);
+            if (fn->constants)
+                zen_free(gc, fn->constants, sizeof(Value) * fn->const_count);
             break;
         }
         case OBJ_NATIVE:
             break;
-        case OBJ_ARRAY: {
-            ObjArray* arr = (ObjArray*)obj;
-            if (arr->data) zen_free(gc, arr->data, sizeof(Value) * arr_capacity(arr));
+        case OBJ_ARRAY:
+        {
+            ObjArray *arr = (ObjArray *)obj;
+            if (arr->data)
+                zen_free(gc, arr->data, sizeof(Value) * arr_capacity(arr));
             break;
         }
-        case OBJ_MAP: {
-            ObjMap* map = (ObjMap*)obj;
-            if (map->buckets) {
+        case OBJ_MAP:
+        {
+            ObjMap *map = (ObjMap *)obj;
+            if (map->buckets)
+            {
                 gc->bytes_allocated -= sizeof(int32_t) * map->bucket_count;
                 free(map->buckets);
             }
-            if (map->nodes) {
+            if (map->nodes)
+            {
                 gc->bytes_allocated -= sizeof(MapNode) * map->capacity;
                 free(map->nodes);
             }
             break;
         }
-        case OBJ_SET: {
-            ObjSet* set = (ObjSet*)obj;
-            if (set->buckets) {
+        case OBJ_SET:
+        {
+            ObjSet *set = (ObjSet *)obj;
+            if (set->buckets)
+            {
                 gc->bytes_allocated -= sizeof(int32_t) * set->bucket_count;
                 free(set->buckets);
             }
-            if (set->nodes) {
+            if (set->nodes)
+            {
                 gc->bytes_allocated -= sizeof(SetNode) * set->capacity;
                 free(set->nodes);
             }
             break;
         }
-        case OBJ_CLASS: {
-            ObjClass* cls = (ObjClass*)obj;
+        case OBJ_CLASS:
+        {
+            ObjClass *cls = (ObjClass *)obj;
             if (cls->field_names)
-                zen_free(gc, cls->field_names, sizeof(ObjString*) * cls->num_fields);
+                zen_free(gc, cls->field_names, sizeof(ObjString *) * cls->num_fields);
             break;
         }
-        case OBJ_INSTANCE: {
-            ObjInstance* inst = (ObjInstance*)obj;
+        case OBJ_INSTANCE:
+        {
+            ObjInstance *inst = (ObjInstance *)obj;
             if (inst->fields)
                 zen_free(gc, inst->fields, sizeof(Value) * inst->klass->num_fields);
             break;
         }
+        }
+        zen_free(gc, obj, obj_size(obj));
     }
-    zen_free(gc, obj, obj_size(obj));
-}
 
-/* Sweep: percorre TODOS os objectos, free os WHITE */
-static void gc_sweep(GC* gc) {
-    Obj** ptr = &gc->objects;
-    while (*ptr) {
-        if ((*ptr)->color == GC_WHITE) {
-            Obj* dead = *ptr;
-            *ptr = dead->gc_next;
+    /* Sweep: percorre TODOS os objectos, free os WHITE */
+    static void gc_sweep(GC *gc)
+    {
+        Obj **ptr = &gc->objects;
+        while (*ptr)
+        {
+            if ((*ptr)->color == GC_WHITE)
+            {
+                Obj *dead = *ptr;
+                *ptr = dead->gc_next;
 
-            /* Remove da intern table se for string */
-            if (dead->type == OBJ_STRING) {
-                ObjString* s = (ObjString*)dead;
-                uint32_t idx = s->obj.hash & (gc->string_capacity - 1);
-                while (gc->strings[idx] != s) {
-                    if (gc->strings[idx] == nullptr) break;
-                    idx = (idx + 1) & (gc->string_capacity - 1);
+                /* Remove da intern table se for string */
+                if (dead->type == OBJ_STRING)
+                {
+                    ObjString *s = (ObjString *)dead;
+                    uint32_t idx = s->obj.hash & (gc->string_capacity - 1);
+                    while (gc->strings[idx] != s)
+                    {
+                        if (gc->strings[idx] == nullptr)
+                            break;
+                        idx = (idx + 1) & (gc->string_capacity - 1);
+                    }
+                    if (gc->strings[idx] == s)
+                    {
+                        gc->strings[idx] = nullptr;
+                        gc->string_count--;
+                        /* NOTA: tombstone simplificado — pode degradar.
+                           Para produção: rehash periódico. */
+                    }
                 }
-                if (gc->strings[idx] == s) {
-                    gc->strings[idx] = nullptr;
-                    gc->string_count--;
-                    /* NOTA: tombstone simplificado — pode degradar.
-                       Para produção: rehash periódico. */
-                }
+
+                free_obj(gc, dead);
             }
-
-            free_obj(gc, dead);
-        } else {
-            /* Sobreviveu: repinta WHITE para o próximo ciclo */
-            (*ptr)->color = GC_WHITE;
-            ptr = &(*ptr)->gc_next;
+            else
+            {
+                /* Sobreviveu: repinta WHITE para o próximo ciclo */
+                (*ptr)->color = GC_WHITE;
+                ptr = &(*ptr)->gc_next;
+            }
         }
     }
-}
 
-/* gc_collect — chamado pelo VM quando bytes_allocated > next_gc */
-void gc_collect(VM* vm) {
-    (void)vm; /* TODO: mark raízes do VM (stack, globals, frames) */
+    /* gc_collect — chamado pelo VM quando bytes_allocated > next_gc */
+    void gc_collect(VM *vm)
+    {
+        (void)vm; /* TODO: mark raízes do VM (stack, globals, frames) */
 
-    /* Por agora, placeholder — será completado quando VM estiver pronta */
-    /* gc_mark_roots(vm);
-       gc_trace_refs(&vm->gc);
-       gc_sweep(&vm->gc);
-       vm->gc.next_gc = vm->gc.bytes_allocated * kGCGrowFactor; */
-}
+        /* Por agora, placeholder — será completado quando VM estiver pronta */
+        /* gc_mark_roots(vm);
+           gc_trace_refs(&vm->gc);
+           gc_sweep(&vm->gc);
+           vm->gc.next_gc = vm->gc.bytes_allocated * kGCGrowFactor; */
+    }
 
 } /* namespace zen */
