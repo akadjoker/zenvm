@@ -132,8 +132,8 @@ run_test "escape backslash" \
 run_test "escape quote" \
     'print("say \"hi\"");' 'say "hi"'
 
-run_test "escape null char (truncates print)" \
-    'print("ab\0cd");' 'ab'
+run_test "escape null char (length preserved)" \
+    'print(len("ab\0cd"));' '5'
 
 run_test "escape hex \\x41 = A" \
     'print("\x41");' 'A'

@@ -194,9 +194,10 @@ run_test "escape sequences in strings" \
     "a	b
 c"
 
+# NOTA: zen strings são length-based, print não trunca no \0
 run_test "null byte in string" \
-    'var s = "a\x00b"; print(s);' \
-    "a"
+    'var s = "a\x00b"; print(len(s));' \
+    "3"
 
 # --- Comparison operators ---
 run_test "all comparison operators" \
