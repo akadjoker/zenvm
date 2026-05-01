@@ -1,0 +1,17 @@
+cmake_minimum_required(VERSION 3.10)
+project(test_functions LANGUAGES CXX)
+
+# Executável que testa o padrão ScriptComponent O(1)
+add_executable(test_script_component main.cpp)
+target_include_directories(test_script_component PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_script_component zen_static)
+if(NOT WIN32)
+    target_link_options(test_script_component PRIVATE -rdynamic)
+endif()
+
+# Copiar scripts .zen para build dir
+file(GLOB ZEN_SCRIPTS "${CMAKE_CURRENT_SOURCE_DIR}/*.zen")
+foreach(script ${ZEN_SCRIPTS})
+    get_filename_component(name ${script} NAME)
+    configure_file(${script} ${CMAKE_CURRENT_BINARY_DIR}/${name} COPYONLY)
+endforeach()

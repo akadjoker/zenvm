@@ -108,6 +108,9 @@ set_target_properties(zen_shared PROPERTIES OUTPUT_NAME zen)
 # --- CLI (zen executable) ---
 add_subdirectory(cli)
 
+# --- Test functions (ScriptComponent O(1) pattern) ---
+add_subdirectory(test_functions)
+
 # --- VM test harness (old handcoded bytecode tests) ---
 add_executable(zen_test_vm src/main.cpp)
 target_link_libraries(zen_test_vm zen_static)
