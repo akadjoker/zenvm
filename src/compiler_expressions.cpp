@@ -28,6 +28,7 @@ namespace zen
         case TOK_PIPE:
             return PREC_BITWISE_OR;
         case TOK_CARET:
+        case TOK_XOR:
             return PREC_BITWISE_XOR;
         case TOK_AMP:
             return PREC_BITWISE_AND;
@@ -248,6 +249,7 @@ namespace zen
         case TOK_AMP:
         case TOK_PIPE:
         case TOK_CARET:
+        case TOK_XOR:
             return binary(op, left, dest);
 
         /* Short-circuit logical */
@@ -811,6 +813,7 @@ namespace zen
             opcode = OP_BOR;
             break;
         case TOK_CARET:
+        case TOK_XOR:
             opcode = OP_BXOR;
             break;
         default:

@@ -454,6 +454,7 @@ TokenType Lexer::identifier_type() {
             break;
         case 'v': return check_keyword(1, 2, "ar", TOK_VAR);
         case 'w': return check_keyword(1, 4, "hile", TOK_WHILE);
+        case 'x': return check_keyword(1, 2, "or", TOK_XOR);
         case 'y': return check_keyword(1, 4, "ield", TOK_YIELD);
         case '_':
             if (current_ - start_ == 1) return TOK_UNDERSCORE;

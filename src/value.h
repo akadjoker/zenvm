@@ -113,6 +113,8 @@ namespace zen
             return v.as.integer;
         if (v.type == VAL_FLOAT)
             return (int64_t)v.as.number;
+        if (v.type == VAL_BOOL)
+            return v.as.boolean ? 1 : 0;
         return 0;
     }
 

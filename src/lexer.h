@@ -83,6 +83,7 @@ namespace zen
         TOK_AND,
         TOK_OR,
         TOK_NOT,
+        TOK_XOR,
         TOK_FRAME,
         TOK_PRINT,
         TOK_IMPORT,
