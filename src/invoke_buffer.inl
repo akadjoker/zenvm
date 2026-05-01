@@ -11,11 +11,21 @@ if (mlen == 3 && memcmp(mname, "len", 3) == 0)
 }
 else if (mlen == 4 && memcmp(mname, "fill", 4) == 0)
 {
-    if (arg_count != 1) { runtime_error("fill() expects 1 argument"); return; }
+    if (arg_count != 1)
+    {
+        runtime_error("fill() expects 1 argument");
+        return;
+    }
     double v = 0;
-    if (is_int(args[0])) v = (double)args[0].as.integer;
-    else if (is_float(args[0])) v = args[0].as.number;
-    else { runtime_error("fill() expects a number"); return; }
+    if (is_int(args[0]))
+        v = (double)args[0].as.integer;
+    else if (is_float(args[0]))
+        v = args[0].as.number;
+    else
+    {
+        runtime_error("fill() expects a number");
+        return;
+    }
     buffer_fill(buf, v);
     R[base] = receiver;
 }

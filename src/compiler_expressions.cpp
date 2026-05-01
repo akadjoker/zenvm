@@ -324,7 +324,8 @@ namespace zen
         /* Skip quotes: token.start+1, token.length-2 */
         state_->emitter.clear_escape_error();
         int ki = state_->emitter.add_escaped_string_constant(token.start + 1, token.length - 2);
-        if (state_->emitter.has_escape_error()) {
+        if (state_->emitter.has_escape_error())
+        {
             error(state_->emitter.escape_error());
         }
         state_->emitter.emit_abx(OP_LOADK, reg, ki, token.line);
@@ -479,7 +480,8 @@ namespace zen
                        reference this same local (e.g. b = a % b). */
                     int save_reg = state_->next_reg;
                     int rhs = expression(-1);
-                    if (rhs != local_reg) {
+                    if (rhs != local_reg)
+                    {
                         emit_move(local_reg, rhs);
                     }
                     /* Restore next_reg — we don't want to permanently consume
@@ -721,17 +723,23 @@ namespace zen
 
     int Compiler::match_buffer_type(Token token)
     {
-        struct { const char *name; int len; BufferType type; } types[] = {
-            {"Int8Array",    9, BUF_INT8},
-            {"Int16Array",  10, BUF_INT16},
-            {"Int32Array",  10, BUF_INT32},
-            {"Uint8Array",  10, BUF_UINT8},
+        struct
+        {
+            const char *name;
+            int len;
+            BufferType type;
+        } types[] = {
+            {"Int8Array", 9, BUF_INT8},
+            {"Int16Array", 10, BUF_INT16},
+            {"Int32Array", 10, BUF_INT32},
+            {"Uint8Array", 10, BUF_UINT8},
             {"Uint16Array", 11, BUF_UINT16},
             {"Uint32Array", 11, BUF_UINT32},
-            {"Float32Array",12, BUF_FLOAT32},
-            {"Float64Array",12, BUF_FLOAT64},
+            {"Float32Array", 12, BUF_FLOAT32},
+            {"Float64Array", 12, BUF_FLOAT64},
         };
-        for (int i = 0; i < 8; i++) {
+        for (int i = 0; i < 8; i++)
+        {
             if (token.length == types[i].len &&
                 memcmp(token.start, types[i].name, types[i].len) == 0)
                 return (int)types[i].type;
@@ -747,7 +755,8 @@ namespace zen
         consume(TOK_RPAREN, "Expected ')' after buffer constructor argument.");
         int reg = dest >= 0 ? dest : alloc_reg();
         state_->emitter.emit_abc(OP_NEWBUFFER, reg, arg_reg, (int)btype, previous_.line);
-        if (arg_reg != reg) free_reg(arg_reg);
+        if (arg_reg != reg)
+            free_reg(arg_reg);
         return reg;
     }
 
@@ -1179,22 +1188,54 @@ namespace zen
         OpCode op;
         switch (token.type)
         {
-        case TOK_SIN:   op = OP_SIN;   break;
-        case TOK_COS:   op = OP_COS;   break;
-        case TOK_TAN:   op = OP_TAN;   break;
-        case TOK_ASIN:  op = OP_ASIN;  break;
-        case TOK_ACOS:  op = OP_ACOS;  break;
-        case TOK_ATAN:  op = OP_ATAN;  break;
-        case TOK_SQRT:  op = OP_SQRT;  break;
-        case TOK_LOG:   op = OP_LOG;   break;
-        case TOK_ABS:   op = OP_ABS;   break;
-        case TOK_FLOOR: op = OP_FLOOR; break;
-        case TOK_CEIL:  op = OP_CEIL;  break;
-        case TOK_DEG:   op = OP_DEG;   break;
-        case TOK_RAD:   op = OP_RAD;   break;
-        case TOK_EXP:   op = OP_EXP;   break;
-        case TOK_LEN:   op = OP_LEN;   break;
-        default:        op = OP_SIN;   break; /* unreachable */
+        case TOK_SIN:
+            op = OP_SIN;
+            break;
+        case TOK_COS:
+            op = OP_COS;
+            break;
+        case TOK_TAN:
+            op = OP_TAN;
+            break;
+        case TOK_ASIN:
+            op = OP_ASIN;
+            break;
+        case TOK_ACOS:
+            op = OP_ACOS;
+            break;
+        case TOK_ATAN:
+            op = OP_ATAN;
+            break;
+        case TOK_SQRT:
+            op = OP_SQRT;
+            break;
+        case TOK_LOG:
+            op = OP_LOG;
+            break;
+        case TOK_ABS:
+            op = OP_ABS;
+            break;
+        case TOK_FLOOR:
+            op = OP_FLOOR;
+            break;
+        case TOK_CEIL:
+            op = OP_CEIL;
+            break;
+        case TOK_DEG:
+            op = OP_DEG;
+            break;
+        case TOK_RAD:
+            op = OP_RAD;
+            break;
+        case TOK_EXP:
+            op = OP_EXP;
+            break;
+        case TOK_LEN:
+            op = OP_LEN;
+            break;
+        default:
+            op = OP_SIN;
+            break; /* unreachable */
         }
         state_->emitter.emit_abc(op, reg, arg, 0, token.line);
         free_reg(arg);
@@ -1204,11 +1245,13 @@ namespace zen
     /* =========================================================
     ** spawn expr  → OP_NEWFIBER  R[A] = Fiber.new(R[B])
     ** ========================================================= */
-    int Compiler::spawn_expression(int dest) {
+    int Compiler::spawn_expression(int dest)
+    {
         int reg = (dest >= 0) ? dest : alloc_reg();
         int closure_reg = expression(-1);
         state_->emitter.emit_abc(OP_NEWFIBER, reg, closure_reg, 0, previous_.line);
-        if (closure_reg != reg) free_reg(closure_reg);
+        if (closure_reg != reg)
+            free_reg(closure_reg);
         return reg;
     }
 
@@ -1216,14 +1259,18 @@ namespace zen
     ** resume(fiber, val)  → OP_RESUME  R[A] = R[B].resume(R[C])
     ** resume(fiber)       → resume with nil
     ** ========================================================= */
-    int Compiler::resume_expression(int dest) {
+    int Compiler::resume_expression(int dest)
+    {
         int reg = (dest >= 0) ? dest : alloc_reg();
         consume(TOK_LPAREN, "Expected '(' after 'resume'.");
         int fiber_reg = expression(-1);
         int val_reg;
-        if (match(TOK_COMMA)) {
+        if (match(TOK_COMMA))
+        {
             val_reg = expression(-1);
-        } else {
+        }
+        else
+        {
             val_reg = alloc_reg();
             state_->emitter.emit_abc(OP_LOADNIL, val_reg, 0, 0, previous_.line);
         }
@@ -1239,42 +1286,48 @@ namespace zen
     **   Yields R[B] to caller. On resume, R[A] = value sent by caller.
     **   yield;  → yield nil
     ** ========================================================= */
-    int Compiler::yield_expression(int dest) {
+    int Compiler::yield_expression(int dest)
+    {
         int reg = (dest >= 0) ? dest : alloc_reg();
         int val_reg;
         /* Check if there's an expression to yield or just semicolon */
-        if (check(TOK_SEMICOLON) || check(TOK_EOF)) {
+        if (check(TOK_SEMICOLON) || check(TOK_EOF))
+        {
             val_reg = alloc_reg();
             state_->emitter.emit_abc(OP_LOADNIL, val_reg, 0, 0, previous_.line);
-        } else {
+        }
+        else
+        {
             val_reg = expression(-1);
         }
         state_->emitter.emit_abc(OP_YIELD, reg, val_reg, 0, previous_.line);
-        if (val_reg != reg) free_reg(val_reg);
+        if (val_reg != reg)
+            free_reg(val_reg);
         return reg;
     }
 
     /* =========================================================
     ** def(params) { body } — anonymous function expression
     ** ========================================================= */
-    int Compiler::anonymous_function(int dest) {
+    int Compiler::anonymous_function(int dest)
+    {
         int reg = (dest >= 0) ? dest : alloc_reg();
 
         CompilerState fn_state;
-        fn_state.parent       = state_;
-        fn_state.function     = new_func(gc_);
-        fn_state.emitter      = Emitter(gc_);
-        fn_state.local_count  = 0;
-        fn_state.scope_depth  = 0;
-        fn_state.next_reg     = 0;
-        fn_state.max_reg      = 0;
+        fn_state.parent = state_;
+        fn_state.function = new_func(gc_);
+        fn_state.emitter = Emitter(gc_);
+        fn_state.local_count = 0;
+        fn_state.scope_depth = 0;
+        fn_state.next_reg = 0;
+        fn_state.max_reg = 0;
         fn_state.upvalue_count = 0;
-        fn_state.loop_depth   = 0;
-        fn_state.is_method    = false;
+        fn_state.loop_depth = 0;
+        fn_state.is_method = false;
 
         fn_state.emitter.begin("<anon>", 0, "<anon>");
 
-        CompilerState* enclosing = state_;
+        CompilerState *enclosing = state_;
         state_ = &fn_state;
 
         begin_scope();
@@ -1282,8 +1335,10 @@ namespace zen
         /* Parameters */
         consume(TOK_LPAREN, "Expected '(' after 'def'.");
         int arity = 0;
-        if (!check(TOK_RPAREN)) {
-            do {
+        if (!check(TOK_RPAREN))
+        {
+            do
+            {
                 consume(TOK_IDENTIFIER, "Expected parameter name.");
                 add_local(previous_);
                 arity++;
@@ -1299,15 +1354,17 @@ namespace zen
         state_->emitter.emit_abc(OP_LOADNIL, 0, 0, 0, previous_.line);
         state_->emitter.emit_abc(OP_RETURN, 0, 1, 0, previous_.line);
 
-        ObjFunc* fn = state_->emitter.end(state_->max_reg);
+        ObjFunc *fn = state_->emitter.end(state_->max_reg);
         fn->arity = arity;
 
         /* Copy upvalue descriptors */
         int nuv = state_->upvalue_count;
         fn->upvalue_count = nuv;
-        if (nuv > 0) {
-            fn->upval_descs = (UpvalDesc*)zen_alloc(gc_, nuv * sizeof(UpvalDesc));
-            for (int i = 0; i < nuv; i++) {
+        if (nuv > 0)
+        {
+            fn->upval_descs = (UpvalDesc *)zen_alloc(gc_, nuv * sizeof(UpvalDesc));
+            for (int i = 0; i < nuv; i++)
+            {
                 fn->upval_descs[i].index = (uint8_t)state_->upvalues[i].index;
                 fn->upval_descs[i].is_local = state_->upvalues[i].is_local ? 1 : 0;
             }
@@ -1315,7 +1372,7 @@ namespace zen
 
         state_ = enclosing;
 
-        int ki = state_->emitter.add_constant(val_obj((Obj*)fn));
+        int ki = state_->emitter.add_constant(val_obj((Obj *)fn));
         state_->emitter.emit_abx(OP_CLOSURE, reg, ki, previous_.line);
         return reg;
     }

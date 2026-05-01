@@ -52,10 +52,14 @@ static char *read_file(const char *path)
 
 static bool g_disassemble = false;
 static bool g_dis_only = false;
+static const char *g_search_paths[16];
+static int g_num_search_paths = 0;
 
 static int run_source(const char *source, const char *filename)
 {
     VM vm;
+    for (int i = 0; i < g_num_search_paths; i++)
+        vm.add_search_path(g_search_paths[i]);
 
     Compiler compiler;
     ObjFunc *fn = compiler.compile(&vm.get_gc(), &vm, source, filename);
@@ -164,6 +168,13 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "-e") == 0 && i + 1 < argc)
         {
             source_code = argv[++i];
+        }
+        else if ((strcmp(argv[i], "-I") == 0 || strcmp(argv[i], "--include") == 0) && i + 1 < argc)
+        {
+            if (g_num_search_paths < 16)
+                g_search_paths[g_num_search_paths++] = argv[++i];
+            else
+                i++; /* skip silently */
         }
         else if (argv[i][0] != '-')
         {

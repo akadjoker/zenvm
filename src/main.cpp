@@ -737,7 +737,7 @@ static bool test_script_call()
     /* Register as global */
     ObjClosure *cl_double = (ObjClosure *)zen_alloc(&vm.get_gc(), sizeof(ObjClosure));
     cl_double->obj.type = OBJ_CLOSURE;
-    cl_double->obj.color = GC_WHITE;
+    cl_double->obj.color = GC_BLACK;
     cl_double->obj.hash = 0;
     cl_double->obj.gc_next = vm.get_gc().objects;
     vm.get_gc().objects = (Obj *)cl_double;
@@ -850,7 +850,7 @@ static ObjClosure *wrap_closure(GC *gc, ObjFunc *fn)
 {
     ObjClosure *cl = (ObjClosure *)zen_alloc(gc, sizeof(ObjClosure));
     cl->obj.type = OBJ_CLOSURE;
-    cl->obj.color = GC_WHITE;
+    cl->obj.color = GC_BLACK;
     cl->obj.hash = 0;
     cl->obj.gc_next = gc->objects;
     gc->objects = (Obj *)cl;

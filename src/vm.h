@@ -93,12 +93,18 @@ namespace zen
         ObjFiber *new_fiber(ObjClosure *closure, int stack_size = 256);
         Value resume_fiber(ObjFiber *fiber, Value val);
 
+        /* --- File I/O (for include/import) --- */
+        void add_search_path(const char *dir);
+        char *read_file(const char *path, const char *relative_to, long *out_size,
+                        char *resolved_path = nullptr, int resolved_max = 0);
+
         /* --- Strings (para embedding — internadas) --- */
         ObjString *make_string(const char *str, int length = -1);
 
         /* --- GC --- */
         GC &get_gc() { return gc_; }
         void collect();
+        void gc_mark_roots(); /* mark all VM roots for GC */
 
     private:
 /*
@@ -139,6 +145,11 @@ namespace zen
         ObjFiber *current_fiber_; /* fiber actualmente a executar */
         int fiber_depth_;         /* current nested execute() depth */
         bool had_error_;          /* runtime error occurred */
+
+        /* Search paths for include/import */
+        static const int MAX_SEARCH_PATHS = 16;
+        char *search_paths_[MAX_SEARCH_PATHS];
+        int num_search_paths_;
 
     public:
         bool had_error() const { return had_error_; }

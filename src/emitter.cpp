@@ -102,9 +102,12 @@ namespace zen
 
     static int hex_digit(char c)
     {
-        if (c >= '0' && c <= '9') return c - '0';
-        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        if (c >= '0' && c <= '9')
+            return c - '0';
+        if (c >= 'a' && c <= 'f')
+            return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F')
+            return c - 'A' + 10;
         return -1;
     }
 
@@ -171,101 +174,133 @@ namespace zen
 
             switch (str[i])
             {
-                case 'n':  buf[out++] = '\n'; break;
-                case 't':  buf[out++] = '\t'; break;
-                case 'r':  buf[out++] = '\r'; break;
-                case '\\': buf[out++] = '\\'; break;
-                case '"':  buf[out++] = '"';  break;
-                case '\'': buf[out++] = '\''; break;
-                case '0':  buf[out++] = '\0'; break;
-                case 'a':  buf[out++] = '\a'; break;
-                case 'b':  buf[out++] = '\b'; break;
-                case 'f':  buf[out++] = '\f'; break;
-                case 'v':  buf[out++] = '\v'; break;
-                case 'e':  buf[out++] = '\x1B'; break;
-                case 'x':
+            case 'n':
+                buf[out++] = '\n';
+                break;
+            case 't':
+                buf[out++] = '\t';
+                break;
+            case 'r':
+                buf[out++] = '\r';
+                break;
+            case '\\':
+                buf[out++] = '\\';
+                break;
+            case '"':
+                buf[out++] = '"';
+                break;
+            case '\'':
+                buf[out++] = '\'';
+                break;
+            case '0':
+                buf[out++] = '\0';
+                break;
+            case 'a':
+                buf[out++] = '\a';
+                break;
+            case 'b':
+                buf[out++] = '\b';
+                break;
+            case 'f':
+                buf[out++] = '\f';
+                break;
+            case 'v':
+                buf[out++] = '\v';
+                break;
+            case 'e':
+                buf[out++] = '\x1B';
+                break;
+            case 'x':
+            {
+                /* \xHH — exactly 2 hex digits */
+                if (i + 2 < len)
                 {
-                    /* \xHH — exactly 2 hex digits */
-                    if (i + 2 < len)
+                    int h1 = hex_digit(str[i + 1]);
+                    int h2 = hex_digit(str[i + 2]);
+                    if (h1 >= 0 && h2 >= 0)
                     {
-                        int h1 = hex_digit(str[i + 1]);
-                        int h2 = hex_digit(str[i + 2]);
-                        if (h1 >= 0 && h2 >= 0)
+                        buf[out++] = (char)((h1 << 4) | h2);
+                        i += 2;
+                        break;
+                    }
+                }
+                /* Invalid hex escape */
+                snprintf(escape_error_, sizeof(escape_error_),
+                         "Invalid \\x escape: expected 2 hex digits.");
+                buf[out++] = '?';
+                break;
+            }
+            case 'u':
+            {
+                /* \uHHHH — exactly 4 hex digits → UTF-8 */
+                if (i + 4 < len)
+                {
+                    uint32_t cp = 0;
+                    bool valid = true;
+                    for (int j = 1; j <= 4; j++)
+                    {
+                        int d = hex_digit(str[i + j]);
+                        if (d < 0)
                         {
-                            buf[out++] = (char)((h1 << 4) | h2);
-                            i += 2;
+                            valid = false;
                             break;
                         }
+                        cp = (cp << 4) | (uint32_t)d;
                     }
-                    /* Invalid hex escape */
-                    snprintf(escape_error_, sizeof(escape_error_),
-                             "Invalid \\x escape: expected 2 hex digits.");
-                    buf[out++] = '?';
-                    break;
-                }
-                case 'u':
-                {
-                    /* \uHHHH — exactly 4 hex digits → UTF-8 */
-                    if (i + 4 < len)
+                    if (valid)
                     {
-                        uint32_t cp = 0;
-                        bool valid = true;
-                        for (int j = 1; j <= 4; j++)
+                        /* Reject surrogate codepoints (invalid in UTF-8) */
+                        if (cp >= 0xD800 && cp <= 0xDFFF)
                         {
-                            int d = hex_digit(str[i + j]);
-                            if (d < 0) { valid = false; break; }
-                            cp = (cp << 4) | (uint32_t)d;
+                            out += encode_utf8(0xFFFD, buf + out);
                         }
-                        if (valid)
-                        {
-                            /* Reject surrogate codepoints (invalid in UTF-8) */
-                            if (cp >= 0xD800 && cp <= 0xDFFF)
-                            {
-                                out += encode_utf8(0xFFFD, buf + out);
-                            }
-                            else
-                            {
-                                out += encode_utf8(cp, buf + out);
-                            }
-                            i += 4;
-                            break;
-                        }
-                    }
-                    snprintf(escape_error_, sizeof(escape_error_),
-                             "Invalid \\u escape: expected 4 hex digits.");
-                    buf[out++] = '?';
-                    break;
-                }
-                case 'U':
-                {
-                    /* \UHHHHHHHH — exactly 8 hex digits → UTF-8 */
-                    if (i + 8 < len)
-                    {
-                        uint32_t cp = 0;
-                        bool valid = true;
-                        for (int j = 1; j <= 8; j++)
-                        {
-                            int d = hex_digit(str[i + j]);
-                            if (d < 0) { valid = false; break; }
-                            cp = (cp << 4) | (uint32_t)d;
-                        }
-                        if (valid && cp <= 0x10FFFF)
+                        else
                         {
                             out += encode_utf8(cp, buf + out);
-                            i += 8;
+                        }
+                        i += 4;
+                        break;
+                    }
+                }
+                snprintf(escape_error_, sizeof(escape_error_),
+                         "Invalid \\u escape: expected 4 hex digits.");
+                buf[out++] = '?';
+                break;
+            }
+            case 'U':
+            {
+                /* \UHHHHHHHH — exactly 8 hex digits → UTF-8 */
+                if (i + 8 < len)
+                {
+                    uint32_t cp = 0;
+                    bool valid = true;
+                    for (int j = 1; j <= 8; j++)
+                    {
+                        int d = hex_digit(str[i + j]);
+                        if (d < 0)
+                        {
+                            valid = false;
                             break;
                         }
+                        cp = (cp << 4) | (uint32_t)d;
                     }
-                    snprintf(escape_error_, sizeof(escape_error_),
-                             "Invalid \\U escape: expected 8 hex digits.");
-                    buf[out++] = '?';
-                    break;
+                    if (valid && cp <= 0x10FFFF)
+                    {
+                        out += encode_utf8(cp, buf + out);
+                        i += 8;
+                        break;
+                    }
                 }
-                default:
-                    snprintf(escape_error_, sizeof(escape_error_),
-                             "Unknown escape sequence '\\%c'.", str[i]);
-                    buf[out++] = '?';
-                    break;
+                snprintf(escape_error_, sizeof(escape_error_),
+                         "Invalid \\U escape: expected 8 hex digits.");
+                buf[out++] = '?';
+                break;
+            }
+            default:
+                snprintf(escape_error_, sizeof(escape_error_),
+                         "Unknown escape sequence '\\%c'.", str[i]);
+                buf[out++] = '?';
+                break;
             }
         }
 

@@ -96,6 +96,7 @@ namespace zen
     {
     public:
         Compiler();
+        ~Compiler();
 
         /* Compile source to a top-level script function */
         ObjFunc *compile(GC *gc, VM *vm, const char *source, const char *filename = "<script>");
@@ -138,6 +139,7 @@ namespace zen
         void print_statement();
         void block();
         void import_statement();
+        void include_statement();
 
         /* --- Expressions (Pratt parser) --- */
         int expression(int dest = -1); /* returns register with result */
@@ -206,6 +208,16 @@ namespace zen
         CompilerState *state_; /* current function being compiled */
         bool had_error_;
         bool panic_mode_;
+        const char *current_file_; /* path of file being compiled */
+
+        /* Include file memory management */
+        static const int MAX_INCLUDES = 64;
+        static const int MAX_INCLUDE_DEPTH = 16;
+        char *include_sources_[MAX_INCLUDES];
+        char *include_paths_[MAX_INCLUDES]; /* resolved paths (for circular detection) */
+        int include_count_;
+        const char *include_stack_[MAX_INCLUDE_DEPTH];
+        int include_depth_;
     };
 
 } /* namespace zen */

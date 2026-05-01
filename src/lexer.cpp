@@ -13,6 +13,14 @@ void Lexer::init(const char* source) {
     pending_error_ = nullptr;
 }
 
+void Lexer::set_source(const char* source) {
+    source_     = source;
+    start_      = source;
+    current_    = source;
+    line_       = 1;
+    has_peeked_ = false;
+}
+
 /* =========================================================
 ** Character helpers
 ** ========================================================= */
@@ -385,6 +393,7 @@ TokenType Lexer::identifier_type() {
                 switch (start_[1]) {
                     case 'f': if (current_ - start_ == 2) return TOK_IF; break;
                     case 'n': if (current_ - start_ == 2) return TOK_IN;
+                              if (current_ - start_ == 7 && start_[2] == 'c') return check_keyword(2, 5, "clude", TOK_INCLUDE);
                               return check_keyword(2, 4, "port", TOK_IMPORT);
                     break;
                 }

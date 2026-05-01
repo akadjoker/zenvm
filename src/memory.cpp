@@ -1,7 +1,10 @@
 #include "memory.h"
+#include "vm.h"
 
 namespace zen
 {
+    /* Forward declare for GC trigger */
+    void gc_collect(VM *vm);
 
     /* =========================================================
     ** Allocator base — wrapper fino sobre malloc/realloc/free.
@@ -10,12 +13,17 @@ namespace zen
 
     void *zen_alloc(GC *gc, size_t size)
     {
+        /* Trigger GC BEFORE allocation (so new objects won't be swept) */
+        if (gc->vm && gc->bytes_allocated > gc->next_gc)
+            gc_collect((VM *)gc->vm);
         gc->bytes_allocated += size;
         return malloc(size);
     }
 
     void *zen_realloc(GC *gc, void *ptr, size_t old_size, size_t new_size)
     {
+        if (gc->vm && gc->bytes_allocated > gc->next_gc)
+            gc_collect((VM *)gc->vm);
         gc->bytes_allocated += new_size - old_size;
         if (new_size == 0)
         {
@@ -43,6 +51,7 @@ namespace zen
         gc->gray_capacity = 0;
         gc->bytes_allocated = 0;
         gc->next_gc = kGCInitThreshold;
+        gc->vm = nullptr;
 
         /* String interning table — começa com 64 slots */
         gc->string_capacity = 64;
@@ -59,7 +68,7 @@ namespace zen
     {
         Obj *obj = (Obj *)zen_alloc(gc, size);
         obj->type = type;
-        obj->color = GC_WHITE;
+        obj->color = GC_BLACK; /* born BLACK: survives current GC cycle */
         obj->interned = 0;
         obj->hash = 0;
         obj->gc_next = gc->objects;
@@ -1254,6 +1263,58 @@ namespace zen
                 gc_mark_value(gc, inst->fields[i]);
             break;
         }
+
+        case OBJ_CLOSURE:
+        {
+            ObjClosure *cl = (ObjClosure *)obj;
+            gc_mark_obj(gc, (Obj *)cl->func);
+            for (int i = 0; i < cl->upvalue_count; i++)
+                gc_mark_obj(gc, (Obj *)cl->upvalues[i]);
+            break;
+        }
+
+        case OBJ_UPVALUE:
+        {
+            ObjUpvalue *uv = (ObjUpvalue *)obj;
+            gc_mark_value(gc, uv->closed);
+            break;
+        }
+
+        case OBJ_FIBER:
+        {
+            ObjFiber *fiber = (ObjFiber *)obj;
+            /* Mark stack values */
+            for (Value *v = fiber->stack; v < fiber->stack_top; v++)
+                gc_mark_value(gc, *v);
+            /* Mark call frame closures */
+            for (int i = 0; i < fiber->frame_count; i++)
+            {
+                if (fiber->frames[i].closure)
+                    gc_mark_obj(gc, (Obj *)fiber->frames[i].closure);
+            }
+            /* Mark open upvalues */
+            ObjUpvalue *uv = fiber->open_upvalues;
+            while (uv)
+            {
+                gc_mark_obj(gc, (Obj *)uv);
+                uv = uv->next;
+            }
+            /* Mark caller fiber */
+            if (fiber->caller)
+                gc_mark_obj(gc, (Obj *)fiber->caller);
+            /* Mark error string */
+            if (fiber->error)
+                gc_mark_obj(gc, (Obj *)fiber->error);
+            break;
+        }
+
+        case OBJ_STRUCT:
+            /* Struct definition — field names are interned strings */
+            break;
+
+        case OBJ_PROCESS:
+            /* TODO: when process system is implemented */
+            break;
         }
     }
 
@@ -1282,6 +1343,12 @@ namespace zen
             return sizeof(ObjFunc);
         case OBJ_NATIVE:
             return sizeof(ObjNative);
+        case OBJ_CLOSURE:
+            return sizeof(ObjClosure);
+        case OBJ_UPVALUE:
+            return sizeof(ObjUpvalue);
+        case OBJ_FIBER:
+            return sizeof(ObjFiber);
         case OBJ_ARRAY:
             return sizeof(ObjArray);
         case OBJ_MAP:
@@ -1290,10 +1357,14 @@ namespace zen
             return sizeof(ObjSet);
         case OBJ_BUFFER:
             return sizeof(ObjBuffer);
+        case OBJ_STRUCT:
+            return sizeof(ObjStructDef);
         case OBJ_CLASS:
             return sizeof(ObjClass);
         case OBJ_INSTANCE:
             return sizeof(ObjInstance);
+        case OBJ_PROCESS:
+            return 0; /* TODO */
         }
         return 0;
     }
@@ -1375,6 +1446,35 @@ namespace zen
                 zen_free(gc, inst->fields, sizeof(Value) * inst->klass->num_fields);
             break;
         }
+        case OBJ_CLOSURE:
+        {
+            ObjClosure *cl = (ObjClosure *)obj;
+            if (cl->upvalues)
+                zen_free(gc, cl->upvalues, sizeof(ObjUpvalue *) * cl->upvalue_count);
+            break;
+        }
+        case OBJ_UPVALUE:
+            /* No extra allocs — closed value is inline */
+            break;
+        case OBJ_FIBER:
+        {
+            ObjFiber *fiber = (ObjFiber *)obj;
+            if (fiber->stack)
+                zen_free(gc, fiber->stack, sizeof(Value) * fiber->stack_capacity);
+            if (fiber->frames)
+                zen_free(gc, fiber->frames, sizeof(CallFrame) * fiber->frame_capacity);
+            break;
+        }
+        case OBJ_STRUCT:
+        {
+            ObjStructDef *def = (ObjStructDef *)obj;
+            if (def->field_names)
+                zen_free(gc, def->field_names, sizeof(ObjString *) * def->num_fields);
+            break;
+        }
+        case OBJ_PROCESS:
+            /* TODO */
+            break;
         }
         zen_free(gc, obj, obj_size(obj));
     }
@@ -1421,16 +1521,49 @@ namespace zen
         }
     }
 
+    /* GC constants */
+    static const size_t kGCMinThreshold = 1024 * 64;  /* 64 KB */
+    static const size_t kGCMaxThreshold = 1024 * 1024 * 256; /* 256 MB */
+
     /* gc_collect — chamado pelo VM quando bytes_allocated > next_gc */
     void gc_collect(VM *vm)
     {
-        (void)vm; /* TODO: mark raízes do VM (stack, globals, frames) */
+        GC *gc = &vm->get_gc();
 
-        /* Por agora, placeholder — será completado quando VM estiver pronta */
-        /* gc_mark_roots(vm);
-           gc_trace_refs(&vm->gc);
-           gc_sweep(&vm->gc);
-           vm->gc.next_gc = vm->gc.bytes_allocated * kGCGrowFactor; */
+        /* Prevent re-entrant GC */
+        void *saved_vm = gc->vm;
+        gc->vm = nullptr;
+
+#ifdef ZEN_DEBUG_GC
+        size_t before = gc->bytes_allocated;
+#endif
+
+        /* Reset gray list */
+        gc->gray_count = 0;
+
+        /* Mark roots */
+        vm->gc_mark_roots();
+
+        /* Trace references */
+        gc_trace_refs(gc);
+
+        /* Sweep dead objects */
+        gc_sweep(gc);
+
+        /* Adjust next threshold */
+        gc->next_gc = (size_t)(gc->bytes_allocated * kGCGrowFactor);
+        if (gc->next_gc < kGCMinThreshold)
+            gc->next_gc = kGCMinThreshold;
+        if (gc->next_gc > kGCMaxThreshold)
+            gc->next_gc = kGCMaxThreshold;
+
+#ifdef ZEN_DEBUG_GC
+        fprintf(stderr, "[GC] collected %zu bytes (%zu -> %zu), next at %zu\n",
+                before - gc->bytes_allocated, before, gc->bytes_allocated, gc->next_gc);
+#endif
+
+        /* Re-enable GC trigger */
+        gc->vm = saved_vm;
     }
 
 } /* namespace zen */

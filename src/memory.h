@@ -42,6 +42,9 @@ namespace zen
         ObjString **strings;
         int string_count;
         int string_capacity;
+
+        /* Back-pointer to VM (for GC trigger from zen_alloc) */
+        void *vm;
     };
 
     /* API de memória — substitui new/delete/malloc/free */

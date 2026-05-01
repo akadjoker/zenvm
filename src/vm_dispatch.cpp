@@ -626,7 +626,7 @@ namespace zen
             int nuv = fn->upvalue_count;
             ObjClosure *cl = (ObjClosure *)zen_alloc(&gc_, sizeof(ObjClosure));
             cl->obj.type = OBJ_CLOSURE;
-            cl->obj.color = GC_WHITE;
+            cl->obj.color = GC_BLACK;
             cl->obj.interned = 0;
             cl->obj.hash = 0;
             cl->obj.gc_next = gc_.objects;

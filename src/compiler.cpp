@@ -20,10 +20,19 @@ namespace zen
 
     Compiler::Compiler()
         : gc_(nullptr), vm_(nullptr), state_(nullptr),
-          had_error_(false), panic_mode_(false)
+          had_error_(false), panic_mode_(false), current_file_(nullptr), include_count_(0), include_depth_(0)
     {
         current_.type = TOK_EOF;
         previous_.type = TOK_EOF;
+    }
+
+    Compiler::~Compiler()
+    {
+        for (int i = 0; i < include_count_; i++)
+        {
+            free(include_sources_[i]);
+            free(include_paths_[i]);
+        }
     }
 
     /* =========================================================
@@ -36,6 +45,7 @@ namespace zen
         vm_ = vm;
         had_error_ = false;
         panic_mode_ = false;
+        current_file_ = filename;
 
         lexer_.init(source);
 

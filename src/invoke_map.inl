@@ -10,14 +10,22 @@ ObjMap *map = as_map(receiver);
 if (mlen == 3 && memcmp(mname, "set", 3) == 0)
 {
     /* map.set(key, val) → sets key, returns val */
-    if (arg_count != 2) { runtime_error("set() expects (key, value)"); return; }
+    if (arg_count != 2)
+    {
+        runtime_error("set() expects (key, value)");
+        return;
+    }
     map_set(&gc_, map, args[0], args[1]);
     R[base] = args[1];
 }
 else if (mlen == 3 && memcmp(mname, "get", 3) == 0)
 {
     /* map.get(key) or map.get(key, default) → value or nil/default */
-    if (arg_count < 1) { runtime_error("get() expects a key"); return; }
+    if (arg_count < 1)
+    {
+        runtime_error("get() expects a key");
+        return;
+    }
     bool found;
     Value result = map_get(map, args[0], &found);
     if (found)
@@ -28,13 +36,21 @@ else if (mlen == 3 && memcmp(mname, "get", 3) == 0)
 else if (mlen == 3 && memcmp(mname, "has", 3) == 0)
 {
     /* map.has(key) → bool */
-    if (arg_count != 1) { runtime_error("has() expects a key"); return; }
+    if (arg_count != 1)
+    {
+        runtime_error("has() expects a key");
+        return;
+    }
     R[base] = val_bool(map_contains(map, args[0]));
 }
 else if (mlen == 6 && memcmp(mname, "delete", 6) == 0)
 {
     /* map.delete(key) → removes key, returns true if existed */
-    if (arg_count != 1) { runtime_error("delete() expects a key"); return; }
+    if (arg_count != 1)
+    {
+        runtime_error("delete() expects a key");
+        return;
+    }
     R[base] = val_bool(map_delete(map, args[0]));
 }
 else if (mlen == 4 && memcmp(mname, "keys", 4) == 0)

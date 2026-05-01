@@ -87,6 +87,7 @@ namespace zen
         TOK_FRAME,
         TOK_PRINT,
         TOK_IMPORT,
+        TOK_INCLUDE,
         TOK_STRUCT,
         TOK_YIELD,
         TOK_SPAWN,
@@ -134,6 +135,7 @@ namespace zen
 
     struct LexerState
     {
+        const char *source;
         const char *start;
         const char *current;
         int line;
@@ -147,6 +149,7 @@ namespace zen
     {
     public:
         void init(const char *source);
+        void set_source(const char *source);  /* for include: reset to new source */
 
         Token next_token();
         Token peek_token(); /* lookahead without consuming */
@@ -155,10 +158,11 @@ namespace zen
 
         LexerState save_state() const
         {
-            return {start_, current_, line_, peeked_, has_peeked_, in_interp_, interp_depth_};
+            return {source_, start_, current_, line_, peeked_, has_peeked_, in_interp_, interp_depth_};
         }
         void restore_state(const LexerState &s)
         {
+            source_ = s.source;
             start_ = s.start;
             current_ = s.current;
             line_ = s.line;
