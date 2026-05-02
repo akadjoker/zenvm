@@ -1,0 +1,73 @@
+import math;
+
+struct Color { r, g, b, a }
+
+process teste(a,b,c)
+{
+    print("_____________");
+    print(a);
+    print(b);
+    print(c);
+}
+
+process color_stress() {
+    loop {
+        var c = Color(math.random(255), math.random(255), math.random(255), 255);
+        print(c.r);
+        frame;
+    }
+}
+
+ 
+ 
+process bunny(x, y, vx, vy, life) {
+
+    var name ="Luis";
+    loop {
+        // gravity
+        vy = vy + 0.5;
+
+        x = x + vx;
+        y = y + vy;
+
+        // bounce off walls
+        if (x < 0) { x = 0; vx = -vx * 0.8; }
+        if (x > 1280) { x = 1280; vx = -vx * 0.8; }
+
+        // bounce off floor
+        if (y > 720) {
+            y = 720;
+            vy = -vy * 0.7;
+        }
+
+        // die when life runs out
+        life = life - 1;
+        if (life <= 0) 
+        {
+            break;
+        }
+        frame(1);
+    }
+    print("by by ",name);
+}
+
+process spawner() {
+    loop {
+        if (mouse_down(0)) {
+            var i = 0;
+            while (i < 20) 
+            {
+                bunny(mouse_x(), mouse_y(),
+                      math.random(10) - 5,
+                      math.random(10) - 10,
+                      math.random(1,2));
+                i = i + 1;
+            }
+        }
+        frame;
+    }
+}
+
+spawner();
+color_stress();
+teste(1,2,3);
