@@ -1,0 +1,385 @@
+import math;
+
+var render_enabled = true;
+var r_was_down = false;
+var gui_enabled = true;
+var g_was_down = false;
+
+def clamp(v, lo, hi) {
+    if (v < lo) { return lo; }
+    if (v > hi) { return hi; }
+    return v;
+}
+
+def hit(mx, my, x, y, w, h) {
+    return mx >= x && mx <= x + w && my >= y && my <= y + h;
+}
+
+def draw_box(x, y, w, h, fill, r, g, b, a) {
+    gui_rect(x, y, w, h, fill, r, g, b, a);
+}
+
+def draw_circle_shape(x, y, radius, fill, r, g, b, a) {
+    gui_circle(x, y, radius, fill, r, g, b, a);
+}
+
+class Sprite {
+    var sid;
+    var x;
+    var y;
+    var vx;
+    var vy;
+    var life;
+    var scale;
+    var r;
+    var g;
+    var b;
+
+    def init(sid, x, y) {
+        self.sid = sid;
+        self.x = x;
+        self.y = y;
+        self.vx = math.random(-120, 120) / 60.0;
+        self.vy = math.random(-180, 60) / 60.0;
+        self.life = math.random(160, 360);
+        self.scale = math.random(80, 130) / 100.0;
+        self.r = math.random(80, 255);
+        self.g = math.random(80, 255);
+        self.b = math.random(80, 255);
+    }
+
+    def update(dt, w, h, sprite_w, sprite_h) {
+        self.vy = self.vy + 32.0 * dt;
+        self.x = self.x + self.vx * 60.0 * dt;
+        self.y = self.y + self.vy * 60.0 * dt;
+
+        if (self.x < 0) {
+            self.x = 0;
+            self.vx = -self.vx * 0.82;
+        }
+
+        var right = w - sprite_w * self.scale;
+        if (self.x > right) {
+            self.x = right;
+            self.vx = -self.vx * 0.82;
+        }
+
+        var bottom = h - sprite_h * self.scale;
+        if (self.y > bottom) {
+            self.y = bottom;
+            self.vy = -self.vy * 0.72;
+            self.vx = self.vx * 0.995;
+        }
+
+        return self.life > 0;
+    }
+
+    def draw() {
+        draw_sprite(self.x, self.y, self.scale, self.r, self.g, self.b, 220);
+    }
+}
+
+class Scene {
+    var sprites;
+    var next_id;
+    var spawned;
+    var removed;
+    var frames;
+    var max_sprites;
+    var sprite_w;
+    var sprite_h;
+
+    def init(max_sprites) {
+        self.sprites = [];
+        self.next_id = 1;
+        self.spawned = 0;
+        self.removed = 0;
+        self.frames = 0;
+        self.max_sprites = max_sprites;
+        self.sprite_w = sprite_width();
+        self.sprite_h = sprite_height();
+    }
+
+    def add_sprite(x, y) {
+        var sprite = Sprite(self.next_id, x, y);
+        self.sprites.push(sprite);
+        self.next_id = self.next_id + 1;
+        self.spawned = self.spawned + 1;
+        return sprite;
+    }
+
+    def burst(x, y, count) {
+        var made = 0;
+        while (made < count) {
+            if (self.sprites.len() >= self.max_sprites) {
+                self.kill_sprite(0);
+            }
+            self.add_sprite(x, y);
+            made = made + 1;
+        }
+        return made;
+    }
+
+    def kill_sprite(i) {
+        var last = self.sprites.len() - 1;
+        if (i != last) {
+            self.sprites[i] = self.sprites[last];
+        }
+        self.sprites.pop();
+        self.removed = self.removed + 1;
+        return self.removed;
+    }
+
+    def update(dt) {
+        self.frames = self.frames + 1;
+
+        var r_down = key_down(82);
+        if (r_down && !r_was_down) {
+            render_enabled = !render_enabled;
+        }
+        r_was_down = r_down;
+
+        var w = screen_width();
+        var h = screen_height();
+        var i = 0;
+        while (i < self.sprites.len()) {
+            var sprite = self.sprites[i];
+            var alive = sprite.update(dt, w, h, self.sprite_w, self.sprite_h);
+            if (!alive || self.sprites.len() > self.max_sprites) {
+                self.kill_sprite(i);
+            } else {
+                i = i + 1;
+            }
+        }
+
+        return self.sprites.len();
+    }
+
+    def draw() {
+        if (render_enabled) {
+            var i = 0;
+            while (i < self.sprites.len()) {
+                self.sprites[i].draw();
+                i = i + 1;
+            }
+        }
+
+        draw_rect(0, 0, 430, 116, 0, 0, 0, 150);
+        draw_text("intern loop", 12, 10, 18, 255, 255, 255, 255);
+        draw_text("sprites: {self.sprites.len()} render: {render_enabled}", 12, 36, 18, 120, 235, 160, 255);
+        draw_text("spawned: {self.spawned} removed: {self.removed}", 12, 62, 18, 230, 220, 130, 255);
+        draw_text("fps: {get_fps()} frame: {self.frames}", 12, 88, 18, 190, 205, 255, 255);
+    }
+}
+
+class Button {
+    var x;
+    var y;
+    var w;
+    var h;
+    var label;
+    var action;
+    var hover;
+    var pressed;
+    var clicks;
+
+    def init(x, y, w, h, label, action) {
+        self.x = x;
+        self.y = y;
+        self.w = w;
+        self.h = h;
+        self.label = label;
+        self.action = action;
+        self.hover = false;
+        self.pressed = false;
+        self.clicks = 0;
+    }
+
+    def update(scene) {
+        var mx = mouse_x();
+        var my = mouse_y();
+        self.hover = hit(mx, my, self.x, self.y, self.w, self.h);
+
+        if (self.hover && mouse_pressed(0)) {
+            self.pressed = true;
+        }
+
+        if (self.pressed && mouse_released(0)) {
+            if (self.hover) {
+                self.clicks = self.clicks + 1;
+                if (self.action == "render") {
+                    render_enabled = !render_enabled;
+                } else {
+                    if (self.action == "clear") {
+                        scene.sprites.clear();
+                        scene.removed = scene.removed + 1;
+                    } else {
+                        if (self.action == "burst") {
+                            scene.burst(screen_width() / 2, screen_height() / 2, 1000);
+                        }
+                    }
+                }
+            }
+            self.pressed = false;
+        }
+
+        return self.hover;
+    }
+
+    def draw() {
+        var r = 58;
+        var g = 72;
+        var b = 86;
+        if (self.hover) {
+            r = 88;
+            g = 106;
+            b = 124;
+        }
+        if (self.pressed) {
+            r = 38;
+            g = 170;
+            b = 120;
+        }
+
+        draw_box(self.x, self.y, self.w, self.h, true, r, g, b, 230);
+        draw_box(self.x, self.y, self.w, self.h, false, 180, 205, 220, 255);
+
+        var tw = text_width(self.label, 16);
+        draw_text(self.label, self.x + (self.w - tw) / 2, self.y + 8, 16, 245, 248, 250, 255);
+    }
+}
+
+class Slider {
+    var x;
+    var y;
+    var w;
+    var label;
+    var min_v;
+    var max_v;
+    var value;
+    var dragging;
+
+    def init(x, y, w, label, min_v, max_v, value) {
+        self.x = x;
+        self.y = y;
+        self.w = w;
+        self.label = label;
+        self.min_v = min_v;
+        self.max_v = max_v;
+        self.value = value;
+        self.dragging = false;
+    }
+
+    def update() {
+        var mx = mouse_x();
+        var my = mouse_y();
+        var knob_x = self.x + ((self.value - self.min_v) * self.w) / (self.max_v - self.min_v);
+        var over = hit(mx, my, self.x - 8, self.y - 10, self.w + 16, 24);
+
+        if (over && mouse_pressed(0)) {
+            self.dragging = true;
+        }
+        if (mouse_released(0)) {
+            self.dragging = false;
+        }
+        if (self.dragging) {
+            var t = clamp((mx - self.x) / self.w, 0.0, 1.0);
+            self.value = self.min_v + (self.max_v - self.min_v) * t;
+        }
+
+        return self.value;
+    }
+
+    def draw() {
+        var knob_x = self.x + ((self.value - self.min_v) * self.w) / (self.max_v - self.min_v);
+        draw_text("{self.label}: {int(self.value)}", self.x, self.y - 24, 16, 230, 235, 240, 255);
+        draw_line(self.x, self.y, self.x + self.w, self.y, 4, 76, 88, 102, 255);
+        draw_line(self.x, self.y, knob_x, self.y, 4, 80, 220, 165, 255);
+        draw_circle_shape(knob_x, self.y, 8, true, 240, 250, 255, 255);
+        draw_circle_shape(knob_x, self.y, 8, false, 20, 30, 36, 255);
+    }
+}
+
+class GuiPanel {
+    var buttons;
+    var cap_slider;
+    var spawn_slider;
+    var pulse;
+
+    def init() {
+        self.buttons = [];
+        self.buttons.push(Button(18, 138, 108, 34, "Render", "render"));
+        self.buttons.push(Button(136, 138, 92, 34, "Burst", "burst"));
+        self.buttons.push(Button(238, 138, 92, 34, "Clear", "clear"));
+        self.cap_slider = Slider(24, 222, 280, "cap", 1000, 200000, 200000);
+        self.spawn_slider = Slider(24, 282, 280, "spawn", 10, 500, 100);
+        self.pulse = 0;
+    }
+
+    def update(scene) {
+        self.pulse = self.pulse + 1;
+        var i = 0;
+        while (i < self.buttons.len()) {
+            self.buttons[i].update(scene);
+            i = i + 1;
+        }
+
+        scene.max_sprites = int(self.cap_slider.update());
+        return int(self.spawn_slider.update());
+    }
+
+    def draw(scene) {
+        draw_box(10, 122, 340, 204, true, 18, 24, 32, 205);
+        draw_box(10, 122, 340, 204, false, 96, 126, 150, 255);
+        draw_text("gui stress", 22, 126, 18, 255, 255, 255, 255);
+
+        var i = 0;
+        while (i < self.buttons.len()) {
+            self.buttons[i].draw();
+            i = i + 1;
+        }
+
+        self.cap_slider.draw();
+        self.spawn_slider.draw();
+        draw_text("clicks: {self.buttons[0].clicks + self.buttons[1].clicks + self.buttons[2].clicks}", 22, 304, 14, 170, 220, 210, 255);
+        draw_circle_shape(326, 142, 6 + (self.pulse % 20) / 5, true, 90, 210, 255, 180);
+    }
+}
+
+if (init_raylib(1280, 720, "Zen script-owned raylib loop", "../assets/wabbit_alpha.png")) {
+    var scene = Scene(200000);
+    var gui = GuiPanel();
+    var spawn_amount = 100;
+    scene.burst(screen_width() / 2, screen_height() / 2, 800);
+
+    while (!window_should_close()) {
+        var dt = get_frame_time();
+        var g_down = key_down(71);
+        if (g_down && !g_was_down) {
+            gui_enabled = !gui_enabled;
+        }
+        g_was_down = g_down;
+
+        if (gui_enabled) {
+            spawn_amount = gui.update(scene);
+        }
+
+        if (mouse_down(0) && !gui_enabled) {
+            scene.burst(mouse_x(), mouse_y(), spawn_amount);
+        }
+
+        scene.update(dt);
+
+        begin_drawing();
+        clear(16, 18, 24, 255);
+        scene.draw();
+        if (gui_enabled) {
+            gui.draw(scene);
+        }
+        end_drawing();
+    }
+
+    close_raylib();
+} else {
+    print("failed to initialize raylib");
+}

@@ -41,7 +41,7 @@ else if (mlen == 6 && memcmp(mname, "values", 6) == 0)
     /* set.values() → array of all values */
     ObjArray *result = new_array(&gc_);
     for (int32_t si = 0; si < set->capacity; si++) {
-        if (!is_nil(set->nodes[si].key)) {
+        if (set->nodes[si].hash != 0xFFFFFFFFu) {
             array_push(&gc_, result, set->nodes[si].key);
         }
     }

@@ -1,5 +1,4 @@
-
-project(test_visual)
+project(test_visual_engine)
 cmake_policy(SET CMP0072 NEW)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
@@ -11,16 +10,16 @@ if(NOT TARGET raylib)
     add_subdirectory(${CMAKE_SOURCE_DIR}/vendor/raylib vendor/raylib EXCLUDE_FROM_ALL)
 endif()
 
-add_executable(test_visual main.cpp)
-target_link_libraries(test_visual PRIVATE zen_static raylib)
-target_include_directories(test_visual PRIVATE
+add_executable(test_visual_engine main.cpp)
+target_link_libraries(test_visual_engine PRIVATE zen_static raylib)
+target_include_directories(test_visual_engine PRIVATE
     ${CMAKE_SOURCE_DIR}/vendor/raylib/src
 )
-target_compile_definitions(test_visual PRIVATE
+target_compile_definitions(test_visual_engine PRIVATE
     ZENVM_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 
 # No sanitizers for visual test (raylib doesn't like them)
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    target_compile_options(test_visual PRIVATE -O2 -g -fno-sanitize=all)
+    target_compile_options(test_visual_engine PRIVATE -O2 -g -fno-sanitize=all)
 endif()

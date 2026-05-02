@@ -1,0 +1,191 @@
+import math;
+
+var render_enabled = true;
+var r_was_down = false;
+
+
+ 
+class Sprite {
+    var sid;
+    var x;
+    var y;
+    var vx;
+    var vy;
+    var life;
+    var radius;
+    var scale;
+    var r;
+    var g;
+    var b;
+
+    def init(sid, x, y) {
+        self.sid = sid;
+        self.x = x;
+        self.y = y;
+        self.vx = math.random(-120, 120) / 60.0;
+        self.vy = math.random(-180, 60) / 60.0;
+        self.life = math.random(160, 360);
+        self.radius = math.random(2, 5);
+        self.scale = math.random(80, 130) / 100.0;
+        self.r = math.random(80, 255);
+        self.g = math.random(80, 255);
+        self.b = math.random(80, 255);
+    }
+
+    def update(dt, w, h, sprite_w, sprite_h) {
+        self.vy = self.vy + 32.0 * dt;
+        self.x = self.x + self.vx * 60.0 * dt;
+        self.y = self.y + self.vy * 60.0 * dt;
+
+        if (self.x < 0) {
+            self.x = 0;
+            self.vx = -self.vx * 0.82;
+        }
+        var right = w - sprite_w * self.scale;
+        if (self.x > right) {
+            self.x = right;
+            self.vx = -self.vx * 0.82;
+        }
+        var bottom = h - sprite_h * self.scale;
+        if (self.y > bottom) {
+            self.y = bottom;
+            self.vy = -self.vy * 0.72;
+            self.vx = self.vx * 0.995;
+        }
+
+        //self.life = self.life - 1;
+        return self.life > 0;
+    }
+
+    def draw() {
+        draw_sprite(self.x, self.y, self.scale, self.r, self.g, self.b, 220);
+    }
+}
+
+class Scene {
+    var sprites;
+    var next_id;
+    var spawned;
+    var removed;
+    var frames;
+    var max_sprites;
+    var sprite_w;
+    var sprite_h;
+
+    def init(max_sprites) {
+        self.sprites = [];
+        self.next_id = 1;
+        self.spawned = 0;
+        self.removed = 0;
+        self.frames = 0;
+        self.max_sprites = max_sprites;
+        self.sprite_w = sprite_width();
+        self.sprite_h = sprite_height();
+    }
+
+    def add_sprite(x, y) {
+        var sprite = Sprite(self.next_id, x, y);
+        self.sprites.push(sprite);
+        self.next_id = self.next_id + 1;
+        self.spawned = self.spawned + 1;
+        return sprite;
+    }
+
+    def burst(x, y, count) 
+    {
+        var made = 0;
+        while (made < count && self.sprites.len() < self.max_sprites) 
+        //while (made < count) 
+        {
+            self.add_sprite(x, y);
+            made = made + 1;
+        }
+        return made;
+    }
+
+    def kill_sprite(i) {
+        var last = self.sprites.len() - 1;
+        if (i != last) 
+        {
+            self.sprites[i] = self.sprites[last];
+        }
+        self.sprites.pop();
+        self.removed = self.removed + 1;
+        return self.removed;
+    }
+
+    def update(dt) {
+        self.frames = self.frames + 1;
+
+        var r_down = key_down(82);
+        if (r_down && !r_was_down) 
+        {
+            render_enabled = !render_enabled;
+        }
+        r_was_down = r_down;
+
+
+        if (self.sprites.len() < 1200 || self.frames % 2 == 0) 
+        {
+          //  self.burst(math.random(40, screen_width() - 40), 40, 8);
+        }
+
+        if (mouse_down(0)) 
+        {
+            self.burst(mouse_x(), mouse_y(), 100);
+        }
+
+        var w = screen_width();
+        var h = screen_height();
+        var i = 0;
+        while (i < self.sprites.len()) {
+            var sprite = self.sprites[i];
+            var alive = sprite.update(dt, w, h, self.sprite_w, self.sprite_h);
+
+            if (!alive || self.sprites.len() > self.max_sprites) {
+                self.kill_sprite(i);
+            } else {
+                i = i + 1;
+            }
+        }
+
+        return self.sprites.len();
+    }
+
+    def draw() 
+    {
+       if (render_enabled) 
+       {
+        var i = 0;
+        while (i < self.sprites.len()) 
+        {
+            var sprite = self.sprites[i];
+            sprite.draw();
+            i = i + 1;
+        }
+    }
+
+        draw_rect(0, 0, 390, 96, 0, 0, 0, 150);
+        draw_text("sprites: {self.sprites.len()}", 12, 10, 20, 120, 235, 160, 255);
+        draw_text("spawned: {self.spawned}  removed: {self.removed}", 12, 36, 18, 230, 220, 130, 255);
+        draw_text("fps: {get_fps()}  frame: {self.frames}", 12, 60, 18, 190, 205, 255, 255);
+
+        return self.frames;
+    }
+}
+
+var scene = Scene(200000);
+
+def init() {
+    scene.burst(screen_width() / 2, screen_height() / 2, 800);
+}
+
+def update(dt) {
+    return scene.update(dt);
+}
+
+def draw() {
+    clear(16, 18, 24, 255);
+    return scene.draw();
+}
+

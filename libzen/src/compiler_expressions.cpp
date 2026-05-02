@@ -1259,7 +1259,7 @@ namespace zen
             }
         }
         /* Try to resolve class field index (self.x inside a method) */
-        if (field_idx < 0 && current_class_fields_ && state_->is_method)
+        if (field_idx < 0 && current_class_fields_ && state_->is_method && obj_reg == 0)
         {
             for (int i = 0; i < current_class_fields_->count; i++)
             {
@@ -1560,35 +1560,19 @@ namespace zen
 
     int Compiler::spawn_expression(int dest)
     {
-        /* spawn name(arg1, arg2, ...)
-        ** Compiles callee into reg, args into reg+1..reg+N,
-        ** then OP_SPAWN reg, N → R[reg] = process ID */
+        /* spawn expr
+        ** Compiles expr to a closure and wraps it in a Fiber.
+        ** Process declarations do not use this path: calling a process
+        ** closure already spawns a process in OP_CALL. */
         int reg = (dest >= 0) ? dest : alloc_reg();
 
-        /* Parse callee (identifier or expression) */
-        int callee_reg = expression(reg);
-        (void)callee_reg; /* should be == reg due to dest */
-
-        /* Parse arguments */
-        consume(TOK_LPAREN, "Expected '(' after spawn target.");
-        int nargs = 0;
-        if (!check(TOK_RPAREN))
+        int closure_reg = expression(reg);
+        if (closure_reg != reg)
         {
-            do
-            {
-                int arg_reg = alloc_reg();
-                expression(arg_reg);
-                state_->next_reg = arg_reg + 1;
-                nargs++;
-            } while (match(TOK_COMMA));
+            emit_move(reg, closure_reg);
+            free_reg(closure_reg);
         }
-        consume(TOK_RPAREN, "Expected ')' after spawn arguments.");
-
-        state_->emitter.emit_abc(OP_SPAWN, reg, nargs, 0, previous_.line);
-
-        /* Free arg regs */
-        for (int i = 0; i < nargs; i++)
-            free_reg(reg + nargs - i);
+        state_->emitter.emit_abc(OP_NEWFIBER, reg, reg, 0, previous_.line);
 
         return reg;
     }

@@ -33,6 +33,42 @@ namespace zen
         return len;
     }
 
+    static const char *value_debug_type(Value v)
+    {
+        switch (v.type)
+        {
+        case VAL_NIL: return "nil";
+        case VAL_BOOL: return "bool";
+        case VAL_INT: return "int";
+        case VAL_FLOAT: return "float";
+        case VAL_PTR: return "ptr";
+        case VAL_OBJ:
+            if (!v.as.obj) return "obj(null)";
+            switch (v.as.obj->type)
+            {
+            case OBJ_STRING: return "string";
+            case OBJ_FUNC: return "function";
+            case OBJ_NATIVE: return "native";
+            case OBJ_UPVALUE: return "upvalue";
+            case OBJ_CLOSURE: return "closure";
+            case OBJ_FIBER: return "fiber";
+            case OBJ_PROCESS: return "process";
+            case OBJ_ARRAY: return "array";
+            case OBJ_MAP: return "map";
+            case OBJ_SET: return "set";
+            case OBJ_BUFFER: return "buffer";
+            case OBJ_STRUCT_DEF: return "struct_def";
+            case OBJ_STRUCT: return "struct";
+            case OBJ_NATIVE_STRUCT_DEF: return "native_struct_def";
+            case OBJ_NATIVE_STRUCT: return "native_struct";
+            case OBJ_CLASS: return "class";
+            case OBJ_INSTANCE: return "instance";
+            }
+            return "obj(unknown)";
+        }
+        return "unknown";
+    }
+
     void VM::execute(ObjFiber *fiber)
     {
         /* Cache hot state em locals */
@@ -735,6 +771,10 @@ namespace zen
             }
 
             fiber->stack_top = caller_base + caller_frame->func->num_regs;
+            if (external_call_stop_depth_ >= 0 && fiber->frame_count <= external_call_stop_depth_)
+            {
+                return;
+            }
             LOAD_STATE();
             DISPATCH();
         }
@@ -755,10 +795,15 @@ namespace zen
             cl->obj.gc_next = gc_.objects;
             gc_.objects = (Obj *)cl;
             cl->func = fn;
-            cl->upvalue_count = nuv;
+            cl->upvalues = nullptr;
+            cl->upvalue_count = 0;
+            R[a] = val_obj((Obj *)cl);
             if (nuv > 0)
             {
                 cl->upvalues = (ObjUpvalue **)zen_alloc(&gc_, nuv * sizeof(ObjUpvalue *));
+                for (int j = 0; j < nuv; j++)
+                    cl->upvalues[j] = nullptr;
+                cl->upvalue_count = nuv;
                 for (int j = 0; j < nuv; j++)
                 {
                     UpvalDesc &desc = fn->upval_descs[j];
@@ -776,10 +821,8 @@ namespace zen
             }
             else
             {
-                cl->upvalues = nullptr;
+                cl->upvalue_count = 0;
             }
-
-            R[a] = val_obj((Obj *)cl);
             NEXT();
         }
 
@@ -808,6 +851,11 @@ namespace zen
         CASE(OP_NEWFIBER)
         {
             uint32_t i = *ip;
+            if (!is_closure(R[ZEN_B(i)]))
+            {
+                runtime_error("spawn expects a function");
+                return;
+            }
             ObjClosure *cl = as_closure(R[ZEN_B(i)]);
             ObjFiber *f = new_fiber(cl, 256);
             R[ZEN_A(i)] = val_obj((Obj *)f);
@@ -819,6 +867,11 @@ namespace zen
             uint32_t i = *ip;
             int a = ZEN_A(i);
             int nargs = ZEN_B(i);
+            if (!is_closure(R[a]))
+            {
+                runtime_error("spawn expects a process function");
+                return;
+            }
             ObjClosure *cl = as_closure(R[a]);
             int pid = spawn_process(cl, &R[a + 1], nargs);
             R[a] = val_int(pid);
@@ -890,6 +943,11 @@ namespace zen
         CASE(OP_RESUME)
         {
             uint32_t i = *ip;
+            if (!is_fiber(R[ZEN_B(i)]))
+            {
+                runtime_error("resume expects a fiber");
+                return;
+            }
             ObjFiber *target = as_fiber(R[ZEN_B(i)]);
             Value send_val = R[ZEN_C(i)];
             ++ip;
@@ -1193,10 +1251,38 @@ namespace zen
             /* R[A] = R[B].fields[C] — O(1) direct index */
             uint32_t i = *ip;
             Value obj = R[ZEN_B(i)];
+            const int field_idx = ZEN_C(i);
             if (is_instance(obj))
-                R[ZEN_A(i)] = as_instance(obj)->fields[ZEN_C(i)];
+            {
+                ObjInstance *inst = as_instance(obj);
+                if (field_idx < 0 || field_idx >= inst->klass->num_fields)
+                {
+                    SAVE_IP();
+                    runtime_error("GETFIELD_IDX out of bounds: receiver=R%d class=%s field_index=%d field_count=%d",
+                                  ZEN_B(i), inst->klass->name->chars, field_idx, inst->klass->num_fields);
+                    return;
+                }
+                R[ZEN_A(i)] = inst->fields[field_idx];
+            }
+            else if (is_struct(obj))
+            {
+                ObjStruct *st = as_struct(obj);
+                if (field_idx < 0 || field_idx >= st->def->num_fields)
+                {
+                    SAVE_IP();
+                    runtime_error("GETFIELD_IDX out of bounds: receiver=R%d struct=%s field_index=%d field_count=%d",
+                                  ZEN_B(i), st->def->name->chars, field_idx, st->def->num_fields);
+                    return;
+                }
+                R[ZEN_A(i)] = st->fields[field_idx];
+            }
             else
-                R[ZEN_A(i)] = as_struct(obj)->fields[ZEN_C(i)];
+            {
+                SAVE_IP();
+                runtime_error("GETFIELD_IDX expected instance/struct: dst=R%d receiver=R%d receiver_type=%s field_index=%d",
+                              ZEN_A(i), ZEN_B(i), value_debug_type(obj), field_idx);
+                return;
+            }
             NEXT();
         }
         CASE(OP_SETFIELD_IDX)
@@ -1204,10 +1290,38 @@ namespace zen
             /* R[A].fields[B] = R[C] — O(1) direct index */
             uint32_t i = *ip;
             Value obj = R[ZEN_A(i)];
+            const int field_idx = ZEN_B(i);
             if (is_instance(obj))
-                as_instance(obj)->fields[ZEN_B(i)] = R[ZEN_C(i)];
+            {
+                ObjInstance *inst = as_instance(obj);
+                if (field_idx < 0 || field_idx >= inst->klass->num_fields)
+                {
+                    SAVE_IP();
+                    runtime_error("SETFIELD_IDX out of bounds: receiver=R%d class=%s field_index=%d field_count=%d value=R%d",
+                                  ZEN_A(i), inst->klass->name->chars, field_idx, inst->klass->num_fields, ZEN_C(i));
+                    return;
+                }
+                inst->fields[field_idx] = R[ZEN_C(i)];
+            }
+            else if (is_struct(obj))
+            {
+                ObjStruct *st = as_struct(obj);
+                if (field_idx < 0 || field_idx >= st->def->num_fields)
+                {
+                    SAVE_IP();
+                    runtime_error("SETFIELD_IDX out of bounds: receiver=R%d struct=%s field_index=%d field_count=%d value=R%d",
+                                  ZEN_A(i), st->def->name->chars, field_idx, st->def->num_fields, ZEN_C(i));
+                    return;
+                }
+                st->fields[field_idx] = R[ZEN_C(i)];
+            }
             else
-                as_struct(obj)->fields[ZEN_B(i)] = R[ZEN_C(i)];
+            {
+                SAVE_IP();
+                runtime_error("SETFIELD_IDX expected instance/struct: receiver=R%d receiver_type=%s field_index=%d value=R%d",
+                              ZEN_A(i), value_debug_type(obj), field_idx, ZEN_C(i));
+                return;
+            }
             NEXT();
         }
         CASE(OP_GETINDEX)

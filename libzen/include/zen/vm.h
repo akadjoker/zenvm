@@ -277,6 +277,7 @@ namespace zen
         ObjFiber *main_fiber_;
         ObjFiber *current_fiber_; /* fiber actualmente a executar */
         int fiber_depth_;         /* current nested execute() depth */
+        int external_call_stop_depth_; /* return to C++ when nested script call unwinds here */
         bool had_error_;          /* runtime error occurred */
 
         /* Search paths for include/import */

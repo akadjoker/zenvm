@@ -36,7 +36,15 @@ add_subdirectory(tests/test_class_api)
 option(ZEN_BUILD_VISUAL "Build visual benchmark (requires raylib)" ON)
 if(ZEN_BUILD_VISUAL)
     add_subdirectory(test_visual)
+    add_subdirectory(test_visual_loop)
+    add_subdirectory(test_visual_intern)
+    add_subdirectory(test_visual_engine)
+    
 endif()
+
+
+
+
 
 option(ZEN_BUILD_GFX "Build graphics engine prototype (requires raylib)" ON)
 if(ZEN_BUILD_GFX)

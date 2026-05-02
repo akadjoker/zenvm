@@ -19,7 +19,7 @@ namespace zen
     ** Construtor / Destrutor
     ** ========================================================= */
 
-    VM::VM() : on_process_start(nullptr), on_process_update(nullptr), on_process_end(nullptr), num_globals_(0), main_fiber_(nullptr), current_fiber_(nullptr), fiber_depth_(0), had_error_(false), num_search_paths_(0), num_libs_(0), num_plugins_(0), num_selectors_(0), pool_(nullptr), num_alive_(0), pool_capacity_(0), next_process_id_(1), current_process_id_(-1), current_slot_idx_(-1)
+    VM::VM() : on_process_start(nullptr), on_process_update(nullptr), on_process_end(nullptr), num_globals_(0), main_fiber_(nullptr), current_fiber_(nullptr), fiber_depth_(0), external_call_stop_depth_(-1), had_error_(false), num_search_paths_(0), num_libs_(0), num_plugins_(0), num_selectors_(0), pool_(nullptr), num_alive_(0), pool_capacity_(0), next_process_id_(1), current_process_id_(-1), current_slot_idx_(-1)
     {
         gc_init(&gc_);
         gc_.vm = this;
@@ -865,7 +865,10 @@ namespace zen
                 frame->base = base;
                 frame->ret_reg = 0;
                 frame->ret_count = 0;
+                int prev_stop_depth = external_call_stop_depth_;
+                external_call_stop_depth_ = fiber->frame_count - 1;
                 execute(fiber);
+                external_call_stop_depth_ = prev_stop_depth;
                 fiber->stack_top = base; /* restore stack */
                 fiber->state = FIBER_RUNNING; /* reset after FIBER_DONE */
             }
@@ -933,7 +936,10 @@ namespace zen
             frame->base = base;
             frame->ret_reg = 0;
             frame->ret_count = 1;
+            int prev_stop_depth = external_call_stop_depth_;
+            external_call_stop_depth_ = fiber->frame_count - 1;
             execute(fiber);
+            external_call_stop_depth_ = prev_stop_depth;
 
             Value result = base[0];
             fiber->stack_top = base; /* restore stack */
