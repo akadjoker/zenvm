@@ -113,6 +113,8 @@ namespace zen
             &&lbl_OP_FRAME,
             &&lbl_OP_FRAME_N,
             &&lbl_OP_SPAWN,
+            &&lbl_OP_PROC_GET,
+            &&lbl_OP_PROC_SET,
             &&lbl_OP_NEWARRAY,
             &&lbl_OP_NEWMAP,
             &&lbl_OP_NEWSET,
@@ -820,6 +822,78 @@ namespace zen
             ObjClosure *cl = as_closure(R[a]);
             int pid = spawn_process(cl, &R[a + 1], nargs);
             R[a] = val_int(pid);
+            NEXT();
+        }
+
+        CASE(OP_PROC_GET)
+        {
+            /* R[A] = process[mode].stack[C]
+            ** B: 0=self, 1=father, 2=son */
+            uint32_t i = *ip;
+            int a = ZEN_A(i);
+            int mode = ZEN_B(i);
+            int field = ZEN_C(i);
+            int target_id = -1;
+
+            if (mode == 1) /* father */
+            {
+                ProcessSlot *self = find_slot(current_process_id_);
+                if (self) target_id = self->parent_id;
+            }
+            else if (mode == 2) /* son */
+            {
+                ProcessSlot *self = find_slot(current_process_id_);
+                if (self) target_id = self->last_child_id;
+            }
+            else /* self */
+            {
+                target_id = current_process_id_;
+            }
+
+            ObjFiber *target = (target_id >= 0) ? get_process(target_id) : nullptr;
+            if (target && field < (int)(target->stack_top - target->stack))
+                R[a] = target->stack[field];
+            else
+                R[a] = val_nil();
+            NEXT();
+        }
+
+        CASE(OP_PROC_SET)
+        {
+            /* process[mode].stack[C] = R[A]
+            ** B: 0=self, 1=father, 2=son */
+            uint32_t i = *ip;
+            int a = ZEN_A(i);
+            int mode = ZEN_B(i);
+            int field = ZEN_C(i);
+            int target_id = -1;
+
+            if (mode == 1) /* father */
+            {
+                ProcessSlot *self = find_slot(current_process_id_);
+                if (self) target_id = self->parent_id;
+            }
+            else if (mode == 2) /* son */
+            {
+                ProcessSlot *self = find_slot(current_process_id_);
+                if (self) target_id = self->last_child_id;
+            }
+            else /* self */
+            {
+                target_id = current_process_id_;
+            }
+
+            ObjFiber *target = (target_id >= 0) ? get_process(target_id) : nullptr;
+            if (target && field < (int)(target->stack_top - target->stack))
+                target->stack[field] = R[a];
+            NEXT();
+        }
+
+        CASE(OP_PROC_ID)
+        {
+            uint32_t i = *ip;
+            int a = ZEN_A(i);
+            R[a] = val_int(fiber->process_id);
             NEXT();
         }
 

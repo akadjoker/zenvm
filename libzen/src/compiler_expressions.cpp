@@ -103,6 +103,9 @@ namespace zen
         case TOK_SPAWN:
         case TOK_RESUME:
         case TOK_YIELD:
+        case TOK_FATHER:
+        case TOK_SON:
+        case TOK_ID:
         case TOK_DEF:
             return true;
         default:
@@ -216,6 +219,15 @@ namespace zen
             return resume_expression(dest);
         case TOK_YIELD:
             return yield_expression(dest);
+        case TOK_FATHER:
+        case TOK_SON:
+            return process_field_expr(token, dest);
+        case TOK_ID:
+        {
+            int reg = (dest >= 0) ? dest : alloc_reg();
+            state_->emitter.emit_abc(OP_PROC_ID, reg, 0, 0, previous_.line);
+            return reg;
+        }
         case TOK_DEF:
             return anonymous_function(dest);
         default:
@@ -1454,6 +1466,44 @@ namespace zen
     /* =========================================================
     ** spawn expr  → OP_NEWFIBER  R[A] = Fiber.new(R[B])
     ** ========================================================= */
+    /* =========================================================
+    ** father.field / son.field → OP_PROC_GET / OP_PROC_SET
+    ** Resolves field name as a parameter register index in current scope.
+    ** ========================================================= */
+    int Compiler::process_field_expr(Token token, int dest)
+    {
+        int mode = (token.type == TOK_FATHER) ? 1 : 2;
+
+        consume(TOK_DOT, (mode == 1) ? "Expected '.' after 'father'."
+                                      : "Expected '.' after 'son'.");
+        consume(TOK_IDENTIFIER, "Expected field name.");
+
+        /* Resolve field name as a local register in current scope */
+        Token field_name = previous_;
+        int field_idx = resolve_local(state_, &field_name);
+        if (field_idx < 0)
+        {
+            error("Unknown process field.");
+            return dest >= 0 ? dest : alloc_reg();
+        }
+
+        int reg = (dest >= 0) ? dest : alloc_reg();
+
+        /* Check for assignment: father.x = expr */
+        if (match(TOK_EQ))
+        {
+            int val_reg = expression(reg);
+            if (val_reg != reg)
+                state_->emitter.emit_abc(OP_MOVE, reg, val_reg, 0, previous_.line);
+            state_->emitter.emit_abc(OP_PROC_SET, reg, mode, field_idx, previous_.line);
+            return reg;
+        }
+
+        /* Read: father.x */
+        state_->emitter.emit_abc(OP_PROC_GET, reg, mode, field_idx, previous_.line);
+        return reg;
+    }
+
     int Compiler::spawn_expression(int dest)
     {
         /* spawn name(arg1, arg2, ...)

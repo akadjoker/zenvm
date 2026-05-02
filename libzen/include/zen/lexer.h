@@ -95,6 +95,9 @@ namespace zen
         TOK_RESUME,
         TOK_PROCESS,
         TOK_SELF,
+        TOK_FATHER,
+        TOK_SON,
+        TOK_ID,
 
         /* Special */
         TOK_UNDERSCORE, /* _ (discard) */

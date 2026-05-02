@@ -82,6 +82,9 @@ namespace zen
 
         /* --- Processes (DIV-style) --- */
         OP_SPAWN,    /* R[A] = spawn R[A](R[A+1]..R[A+B]) → process ID */
+        OP_PROC_GET, /* R[A] = process[B_mode].stack[C]; B: 0=self,1=father,2=son */
+        OP_PROC_SET, /* process[B_mode].stack[C] = R[A]; B: 0=self,1=father,2=son */
+        OP_PROC_ID,  /* R[A] = current_fiber_->process_id */
 
         /* --- Objects --- */
         OP_NEWARRAY,  /* R[A] = []                               */

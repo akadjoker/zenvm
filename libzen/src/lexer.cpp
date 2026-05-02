@@ -378,7 +378,10 @@ TokenType Lexer::identifier_type() {
         case 'f':
             if (current_ - start_ > 1) {
                 switch (start_[1]) {
-                    case 'a': return check_keyword(2, 3, "lse", TOK_FALSE);
+                    case 'a':
+                        if (current_ - start_ == 5) return check_keyword(2, 3, "lse", TOK_FALSE);
+                        if (current_ - start_ == 6) return check_keyword(2, 4, "ther", TOK_FATHER);
+                        break;
                     case 'l': return check_keyword(2, 3, "oor", TOK_FLOOR);
                     case 'o':
                         if (current_ - start_ > 3 && start_[2] == 'r' && start_[3] == 'e')
@@ -391,6 +394,7 @@ TokenType Lexer::identifier_type() {
         case 'i':
             if (current_ - start_ > 1) {
                 switch (start_[1]) {
+                    case 'd': if (current_ - start_ == 2) return TOK_ID; break;
                     case 'f': if (current_ - start_ == 2) return TOK_IF; break;
                     case 'm': return check_keyword(2, 4, "port", TOK_IMPORT);
                     case 'n': if (current_ - start_ == 2) return TOK_IN;
@@ -453,6 +457,7 @@ TokenType Lexer::identifier_type() {
                 switch (start_[1]) {
                     case 'e': return check_keyword(2, 2, "lf", TOK_SELF);
                     case 'i': return check_keyword(2, 1, "n", TOK_SIN);
+                    case 'o': return check_keyword(2, 1, "n", TOK_SON);
                     case 'p': return check_keyword(2, 3, "awn", TOK_SPAWN);
                     case 'q': return check_keyword(2, 2, "rt", TOK_SQRT);
                     case 't': return check_keyword(2, 4, "ruct", TOK_STRUCT);

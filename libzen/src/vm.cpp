@@ -19,7 +19,7 @@ namespace zen
     ** Construtor / Destrutor
     ** ========================================================= */
 
-    VM::VM() : on_process_start(nullptr), on_process_update(nullptr), on_process_end(nullptr), num_globals_(0), main_fiber_(nullptr), current_fiber_(nullptr), fiber_depth_(0), had_error_(false), num_search_paths_(0), num_libs_(0), num_plugins_(0), num_selectors_(0), pool_(nullptr), num_alive_(0), pool_capacity_(0), next_process_id_(1)
+    VM::VM() : on_process_start(nullptr), on_process_update(nullptr), on_process_end(nullptr), num_globals_(0), main_fiber_(nullptr), current_fiber_(nullptr), fiber_depth_(0), had_error_(false), num_search_paths_(0), num_libs_(0), num_plugins_(0), num_selectors_(0), pool_(nullptr), num_alive_(0), pool_capacity_(0), next_process_id_(1), current_process_id_(-1)
     {
         gc_init(&gc_);
         gc_.vm = this;
@@ -97,6 +97,7 @@ namespace zen
         fiber->yield_dest = -1;
         fiber->frame_speed = 100;
         fiber->frame_accumulator = 0;
+        fiber->process_id = -1;
         fiber->error = nullptr;
 
         /* Link to GC list */
@@ -1205,6 +1206,7 @@ namespace zen
         fiber->yield_dest = -1;
         fiber->frame_speed = 100;
         fiber->frame_accumulator = 0;
+        fiber->process_id = -1;
         fiber->error = nullptr;
 
         /* Set up first frame */
@@ -1227,8 +1229,23 @@ namespace zen
         }
 
         int id = next_process_id_++;
-        pool_[num_alive_] = { fiber, id, 0 };
+        fiber->process_id = id;
+        int parent = current_process_id_; /* who is spawning me */
+        pool_[num_alive_] = { fiber, id, 0, parent, -1 };
         num_alive_++;
+
+        /* Update parent's last_child_id */
+        if (parent >= 0)
+        {
+            for (int i = 0; i < num_alive_ - 1; i++)
+            {
+                if (pool_[i].id == parent)
+                {
+                    pool_[i].last_child_id = id;
+                    break;
+                }
+            }
+        }
 
         return id;
     }
@@ -1270,6 +1287,16 @@ namespace zen
         return nullptr;
     }
 
+    VM::ProcessSlot *VM::find_slot(int id)
+    {
+        for (int i = 0; i < num_alive_; i++)
+        {
+            if (pool_[i].id == id)
+                return &pool_[i];
+        }
+        return nullptr;
+    }
+
     void VM::sort_processes()
     {
         /* qsort by z (lower z = first in array = drawn first) */
@@ -1279,6 +1306,64 @@ namespace zen
                   int zb = ((const ProcessSlot *)b)->z;
                   return za - zb;
               });
+    }
+
+    static void apply_signal(ObjFiber *fiber, int sig)
+    {
+        switch (sig)
+        {
+        case VM::SIG_KILL:   fiber->state = FIBER_DONE; break;
+        case VM::SIG_FREEZE: fiber->state = FIBER_FROZEN; break;
+        case VM::SIG_SLEEP:  fiber->state = FIBER_SLEEPING; break;
+        case VM::SIG_WAKEUP: fiber->state = FIBER_SUSPENDED; break;
+        }
+    }
+
+    void VM::signal_process(int id, int sig)
+    {
+        for (int i = 0; i < num_alive_; i++)
+        {
+            if (pool_[i].id == id)
+            {
+                apply_signal(pool_[i].fiber, sig);
+                break;
+            }
+        }
+    }
+
+    void VM::signal_type(ObjFunc *type, int sig)
+    {
+        for (int i = 0; i < num_alive_; i++)
+        {
+            if (pool_[i].fiber->frame_count > 0 &&
+                pool_[i].fiber->frames[0].func == type)
+            {
+                apply_signal(pool_[i].fiber, sig);
+            }
+        }
+    }
+
+    void VM::let_me_alone()
+    {
+        int my_id = current_process_id_;
+        for (int i = 0; i < num_alive_; i++)
+        {
+            if (pool_[i].id != my_id)
+                pool_[i].fiber->state = FIBER_DONE;
+        }
+    }
+
+    int VM::get_id_by_type(ObjFunc *type) const
+    {
+        for (int i = 0; i < num_alive_; i++)
+        {
+            if (pool_[i].fiber->frame_count > 0 &&
+                pool_[i].fiber->frames[0].func == type)
+            {
+                return pool_[i].id;
+            }
+        }
+        return 0; /* 0 = not found (IDs start at 1) */
     }
 
     int VM::tick_processes(float dt)
@@ -1306,6 +1391,13 @@ namespace zen
                 continue;
             }
 
+            /* Frozen/Sleeping? Skip execution */
+            if (proc->state == FIBER_FROZEN || proc->state == FIBER_SLEEPING)
+            {
+                i++;
+                continue;
+            }
+
             /* frame_speed gating: accumulate dt, skip if not enough */
             if (proc->state == FIBER_SUSPENDED && proc->frame_speed < 100)
             {
@@ -1325,7 +1417,9 @@ namespace zen
             {
                 proc->state = FIBER_RUNNING;
                 current_fiber_ = proc;
+                current_process_id_ = slot.id;
                 execute(proc);
+                current_process_id_ = -1;
                 current_fiber_ = main_fiber_;
 
                 /* If process caused error, kill all and stop */
@@ -1345,7 +1439,9 @@ namespace zen
             {
                 proc->state = FIBER_RUNNING;
                 current_fiber_ = proc;
+                current_process_id_ = slot.id;
                 execute(proc);
+                current_process_id_ = -1;
                 current_fiber_ = main_fiber_;
 
                 /* If process caused error, kill all and stop */

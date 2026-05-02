@@ -144,6 +144,8 @@ namespace zen
             ObjFiber *fiber;
             int id;
             int z;          /* z-order for sorting (lower = drawn first) */
+            int parent_id;  /* ID of spawning process (-1 = none) */
+            int last_child_id; /* ID of last spawned child (-1 = none) */
         };
 
         enum ProcessState : uint8_t
@@ -160,7 +162,16 @@ namespace zen
         int tick_processes(float dt = 0.016f);   /* returns number of alive processes */
         int num_processes() const { return num_alive_; }
         ObjFiber *get_process(int id) const;
+        ProcessSlot *find_slot(int id);
         void sort_processes(); /* sort by z-order */
+
+        /* Process signals */
+        enum Signal { SIG_KILL = 0, SIG_FREEZE = 1, SIG_SLEEP = 2, SIG_WAKEUP = 3 };
+        void signal_process(int id, int sig);
+        void signal_type(ObjFunc *type, int sig);
+        void let_me_alone();
+        int get_id_by_type(ObjFunc *type) const;
+        int current_process_id() const { return current_process_id_; }
 
         /* Iterate all alive processes (DIV-style: read privados via fiber->stack[reg]) */
         typedef void (*ProcessIterFn)(VM *vm, ObjFiber *proc, int id, void *userdata);
@@ -253,6 +264,7 @@ namespace zen
         int num_alive_;             /* count of alive entries in pool_ */
         int pool_capacity_;         /* allocated capacity */
         int next_process_id_;
+        int current_process_id_;    /* ID of currently executing process (-1 = main) */
 
     public:
         bool had_error() const { return had_error_; }

@@ -226,6 +226,8 @@ namespace zen
         FIBER_SUSPENDED,
         FIBER_DONE,
         FIBER_ERROR,
+        FIBER_FROZEN,    /* not executed, not rendered */
+        FIBER_SLEEPING,  /* not executed, but rendered */
     };
 
     struct CallFrame; /* forward — definido em vm.h */
@@ -263,6 +265,9 @@ namespace zen
         ** executa quando accumulator >= 100. */
         int32_t frame_speed;
         int32_t frame_accumulator;
+
+        /* Process ID (set by spawn_process, -1 for non-process fibers) */
+        int32_t process_id;
 
         /* Mensagem de erro (se state == FIBER_ERROR) */
         ObjString *error;

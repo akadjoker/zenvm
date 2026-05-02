@@ -180,6 +180,7 @@ namespace zen
         int spawn_expression(int dest);
         int resume_expression(int dest);
         int yield_expression(int dest);
+        int process_field_expr(Token token, int dest);
         int anonymous_function(int dest);
 
         /* --- Helpers --- */

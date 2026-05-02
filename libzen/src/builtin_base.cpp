@@ -796,6 +796,57 @@ namespace zen
     }
 
     /* =========================================================
+    ** Process control natives
+    ** ========================================================= */
+
+    /* signal(target, sig) — target can be int (process ID) or closure (type) */
+    static int nat_signal(VM *vm, Value *args, int nargs)
+    {
+        if (nargs < 2) return 0;
+        int sig = (int)to_integer(args[1]);
+        if (is_int(args[0]))
+        {
+            vm->signal_process((int)to_integer(args[0]), sig);
+        }
+        else if (is_closure(args[0]))
+        {
+            ObjClosure *cl = as_closure(args[0]);
+            vm->signal_type(cl->func, sig);
+        }
+        return 0;
+    }
+
+    /* let_me_alone() — kill all processes except the caller */
+    static int nat_let_me_alone(VM *vm, Value *args, int nargs)
+    {
+        (void)args; (void)nargs;
+        vm->let_me_alone();
+        return 0;
+    }
+
+    /* get_id(type) — returns ID of first process of that type, or 0 */
+    static int nat_get_id(VM *vm, Value *args, int nargs)
+    {
+        if (nargs < 1 || !is_closure(args[0]))
+        {
+            args[0] = val_int(0);
+            return 1;
+        }
+        ObjClosure *cl = as_closure(args[0]);
+        int id = vm->get_id_by_type(cl->func);
+        args[0] = val_int(id);
+        return 1;
+    }
+
+    /* get_my_id() — returns the ID of the calling process */
+    static int nat_get_my_id(VM *vm, Value *args, int nargs)
+    {
+        (void)nargs;
+        args[0] = val_int(vm->current_process_id());
+        return 1;
+    }
+
+    /* =========================================================
     ** Registration table
     ** ========================================================= */
 
@@ -823,14 +874,25 @@ namespace zen
         {"collect", nat_collect, 0},
         {"mem_used", nat_mem_used, 0},
         {"mem_info", nat_mem_info, 0},
+        {"signal", nat_signal, -1},
+        {"let_me_alone", nat_let_me_alone, 0},
+        {"get_id", nat_get_id, 1},
+        {"get_my_id", nat_get_my_id, 0},
+    };
+
+    static const NativeConst base_constants[] = {
+        {"S_KILL",   val_int(VM::SIG_KILL)},
+        {"S_FREEZE", val_int(VM::SIG_FREEZE)},
+        {"S_SLEEP",  val_int(VM::SIG_SLEEP)},
+        {"S_WAKEUP", val_int(VM::SIG_WAKEUP)},
     };
 
     const NativeLib zen_lib_base = {
         "base",
         base_functions,
-        23,   /* num_functions */
-        nullptr,
-        0,
+        27,   /* num_functions */
+        base_constants,
+        4,    /* num_constants */
     };
 
 } /* namespace zen */
