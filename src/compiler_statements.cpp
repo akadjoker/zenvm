@@ -516,12 +516,33 @@ namespace zen
         /* Build ObjClass now (compile-time, like structs) */
         ObjString *cls_name = intern_string(gc_, name_buf, nlen,
                                             hash_string(name_buf, nlen));
-        ObjClass *klass = new_class(gc_, cls_name, parent_class);
+
+        /* Hot reload: reuse existing class if already defined (patch in-place) */
+        ObjClass *klass = nullptr;
+        int existing_idx = vm_->find_global(name_buf);
+        if (existing_idx >= 0 && is_class(vm_->get_global(existing_idx)))
+        {
+            klass = as_class(vm_->get_global(existing_idx));
+            /* Clear vtable for rebuild — methods will be re-registered below */
+            for (int vi = 0; vi < klass->vtable_size; vi++)
+                klass->vtable[vi] = val_nil();
+            /* Clear methods map */
+            if (klass->methods)
+                map_clear(gc_, klass->methods);
+        }
+        else
+        {
+            klass = new_class(gc_, cls_name, parent_class);
+        }
 
         /* Set up field_names — parent fields first, then local */
         int parent_fields = parent_class ? parent_class->num_fields : 0;
         int total_fields = parent_fields + field_count;
+        /* Free old field_names on hot reload */
+        if (klass->field_names && klass->num_fields > 0)
+            zen_free(gc_, klass->field_names, sizeof(ObjString *) * klass->num_fields);
         klass->num_fields = total_fields;
+        klass->field_names = nullptr;
         if (total_fields > 0)
         {
             klass->field_names = (ObjString **)zen_alloc(gc_, sizeof(ObjString *) * total_fields);
