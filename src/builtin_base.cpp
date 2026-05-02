@@ -254,6 +254,44 @@ namespace zen
     }
 
     /* =========================================================
+    ** Type check builtins — direct tag comparison, no string alloc
+    ** ========================================================= */
+    static int nat_isNil(VM *vm, Value *args, int nargs)
+    { args[0] = val_bool(nargs >= 1 && is_nil(args[0])); return 1; }
+
+    static int nat_isBool(VM *vm, Value *args, int nargs)
+    { args[0] = val_bool(nargs >= 1 && is_bool(args[0])); return 1; }
+
+    static int nat_isInt(VM *vm, Value *args, int nargs)
+    { args[0] = val_bool(nargs >= 1 && is_int(args[0])); return 1; }
+
+    static int nat_isFloat(VM *vm, Value *args, int nargs)
+    { args[0] = val_bool(nargs >= 1 && is_float(args[0])); return 1; }
+
+    static int nat_isNumber(VM *vm, Value *args, int nargs)
+    { args[0] = val_bool(nargs >= 1 && (is_int(args[0]) || is_float(args[0]))); return 1; }
+
+    static int nat_isString(VM *vm, Value *args, int nargs)
+    { args[0] = val_bool(nargs >= 1 && is_string(args[0])); return 1; }
+
+    static int nat_isArray(VM *vm, Value *args, int nargs)
+    { args[0] = val_bool(nargs >= 1 && is_array(args[0])); return 1; }
+
+    static int nat_isMap(VM *vm, Value *args, int nargs)
+    { args[0] = val_bool(nargs >= 1 && is_map(args[0])); return 1; }
+
+    static int nat_isFunction(VM *vm, Value *args, int nargs)
+    {
+        if (nargs < 1) { args[0] = val_bool(false); return 1; }
+        Value v = args[0];
+        bool r = is_obj(v) && (v.as.obj->type == OBJ_FUNC ||
+                               v.as.obj->type == OBJ_CLOSURE ||
+                               v.as.obj->type == OBJ_NATIVE);
+        args[0] = val_bool(r);
+        return 1;
+    }
+
+    /* =========================================================
     ** typeof(val) → string ("nil","bool","int","float","string",
     **                        "array","map","function","class","instance")
     ** ========================================================= */
@@ -768,6 +806,15 @@ namespace zen
         {"char", nat_char, 1},
         {"ord", nat_ord, 1},
         {"typeof", nat_typeof, 1},
+        {"isNil", nat_isNil, 1},
+        {"isBool", nat_isBool, 1},
+        {"isInt", nat_isInt, 1},
+        {"isFloat", nat_isFloat, 1},
+        {"isNumber", nat_isNumber, 1},
+        {"isString", nat_isString, 1},
+        {"isArray", nat_isArray, 1},
+        {"isMap", nat_isMap, 1},
+        {"isFunction", nat_isFunction, 1},
         {"input", nat_input, -1},
         {"assert", nat_assert, -1},
         {"error", nat_error, 1},
@@ -781,7 +828,7 @@ namespace zen
     const NativeLib zen_lib_base = {
         "base",
         base_functions,
-        14,   /* num_functions */
+        23,   /* num_functions */
         nullptr,
         0,
     };
