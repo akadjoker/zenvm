@@ -9,7 +9,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_compile_options(-Wall -Wextra -Wno-unused-parameter)
 
 # --- Optional modules (disable with -DZEN_ENABLE_*=OFF) ---
-option(ZEN_ENABLE_REGEX  "Enable regex module (requires PCRE2)" ON)
+option(ZEN_ENABLE_REGEX  "Enable regex module (libregexp, zero deps)" ON)
 option(ZEN_ENABLE_ZIP    "Enable zip module (requires miniz)" ON)
 option(ZEN_ENABLE_NET    "Enable net module (POSIX sockets)" ON)
 option(ZEN_ENABLE_HTTP   "Enable http module (POSIX sockets)" ON)
@@ -25,14 +25,17 @@ set(ZEN_VENDOR_INCLUDES "")
 set(ZEN_DEFINITIONS "")
 
 if(ZEN_ENABLE_REGEX)
-    set(PCRE2_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-    set(PCRE2_BUILD_PCRE2GREP OFF CACHE BOOL "" FORCE)
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    set(PCRE2_SUPPORT_UNICODE ON CACHE BOOL "" FORCE)
-    add_subdirectory(vendor/pcre2 vendor/pcre2/build EXCLUDE_FROM_ALL)
-    list(APPEND ZEN_VENDOR_LIBS pcre2-8-static)
-    list(APPEND ZEN_VENDOR_INCLUDES ${CMAKE_BINARY_DIR}/vendor/pcre2)
-    list(APPEND ZEN_DEFINITIONS PCRE2_STATIC ZEN_ENABLE_REGEX)
+    # libregexp from QuickJS (Bellard) — zero external deps
+    enable_language(C)
+    add_library(libregexp STATIC
+        vendor/libregexp/libregexp.c
+        vendor/libregexp/libunicode.c
+    )
+    target_include_directories(libregexp PUBLIC vendor/libregexp)
+    target_compile_options(libregexp PRIVATE -w)  # suppress warnings in vendored code
+    list(APPEND ZEN_VENDOR_LIBS libregexp)
+    list(APPEND ZEN_VENDOR_INCLUDES ${CMAKE_SOURCE_DIR}/vendor/libregexp)
+    list(APPEND ZEN_DEFINITIONS ZEN_ENABLE_REGEX)
 else()
     list(APPEND ZEN_DEFINITIONS ZEN_NO_REGEX)
 endif()
@@ -90,6 +93,7 @@ file(GLOB CORE_SRCS src/*.cpp)
 list(FILTER CORE_SRCS EXCLUDE REGEX "src/main\\.cpp$")
 list(FILTER CORE_SRCS EXCLUDE REGEX "src/zen_main\\.cpp$")
 list(FILTER CORE_SRCS EXCLUDE REGEX "src/test_.*\\.cpp$")
+list(FILTER CORE_SRCS EXCLUDE REGEX "src/builtin_regex\\.cpp$")
 
 # --- libzen (static library) ---
 add_library(zen_static STATIC ${CORE_SRCS})
