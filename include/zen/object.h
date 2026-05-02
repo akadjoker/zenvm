@@ -520,6 +520,10 @@ namespace zen
     ** Herança: se method não existe no script, procura no parent (C++).
     ** ========================================================= */
 
+    /* Native class lifecycle callbacks */
+    typedef void *(*NativeClassCtor)(VM *vm, int argc, Value *args);
+    typedef void (*NativeClassDtor)(VM *vm, void *data);
+
     struct ObjClass
     {
         Obj obj;
@@ -528,19 +532,39 @@ namespace zen
         ObjMap *methods;         /* nome → ObjFunc/ObjNative */
         int32_t num_fields;      /* quantos fields declarados */
         ObjString **field_names; /* nomes dos fields (para init) */
+        Value *vtable;           /* flat array indexed by selector slot */
+        int32_t vtable_size;     /* allocated slots in vtable */
+        /* Native class binding */
+        NativeClassCtor native_ctor; /* returns void* userdata (NULL = no native ctor) */
+        NativeClassDtor native_dtor; /* called on GC free or explicit destroy (NULL = nop) */
+        bool persistent;             /* true = instances never collected by GC */
+        bool constructable;          /* false = script cannot call ClassName(), only C++ can */
     };
 
     struct ObjInstance
     {
         Obj obj;
         ObjClass *klass;
-        Value *fields; /* array de num_fields Values */
+        Value *fields;    /* array de num_fields Values */
+        void *native_data; /* C++ object pointer (from native_ctor), NULL for pure script */
     };
 
     inline bool is_class(Value v) { return is_obj_type(v, OBJ_CLASS); }
     inline bool is_instance(Value v) { return is_obj_type(v, OBJ_INSTANCE); }
     inline ObjClass *as_class(Value v) { return (ObjClass *)v.as.obj; }
     inline ObjInstance *as_instance(Value v) { return (ObjInstance *)v.as.obj; }
+
+    /* Get native C++ data from an instance Value */
+    template <typename T>
+    inline T *zen_instance_data(Value v) { return (T *)as_instance(v)->native_data; }
+
+    /* Check if value is instance of a specific class name */
+    inline bool val_is_instance_of(Value v, const char *name)
+    {
+        if (!is_instance(v)) return false;
+        ObjInstance *inst = as_instance(v);
+        return inst->klass && inst->klass->name && strcmp(inst->klass->name->chars, name) == 0;
+    }
 
 } /* namespace zen */
 

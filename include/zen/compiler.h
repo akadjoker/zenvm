@@ -51,6 +51,7 @@ namespace zen
         int reg;       /* register index */
         bool captured; /* captured by a closure? */
         ObjStructDef *struct_type; /* non-null if known to be a struct instance */
+        ObjClass *class_type;     /* non-null if known to be a class instance */
     };
 
     /* Upvalue descriptor (compile-time) */
@@ -236,6 +237,18 @@ namespace zen
 
         /* Struct type inference: set by call_expr when callee is a struct def */
         ObjStructDef *last_call_struct_def_;
+
+        /* Class type inference: set when callee is a class */
+        ObjClass *last_call_class_def_;
+
+        /* Class field indexing: set during method compilation */
+        struct ClassFieldInfo
+        {
+            char fields[64][64];
+            int count;
+            int parent_field_count; /* fields from parent come first */
+        };
+        ClassFieldInfo *current_class_fields_; /* non-null while compiling a method */
     };
 
 } /* namespace zen */

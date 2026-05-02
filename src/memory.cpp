@@ -1130,14 +1130,38 @@ namespace zen
         cls->methods = new_map(gc);
         cls->num_fields = 0;
         cls->field_names = nullptr;
+        cls->vtable = nullptr;
+        cls->vtable_size = 0;
+        cls->native_ctor = nullptr;
+        cls->native_dtor = nullptr;
+        cls->persistent = false;
+        cls->constructable = true;
         return cls;
     }
 
     ObjInstance *new_instance(GC *gc, ObjClass *klass)
     {
-        ObjInstance *inst = (ObjInstance *)alloc_obj(gc, sizeof(ObjInstance), OBJ_INSTANCE);
-        inst->klass = klass;
+        ObjInstance *inst;
         int nf = klass->num_fields;
+
+        if (klass->persistent)
+        {
+            /* Persistent: malloc directo, NUNCA entra na lista do GC.
+            ** C++ é dono da memória. Chama vm.destroy_instance() para libertar. */
+            inst = (ObjInstance *)malloc(sizeof(ObjInstance));
+            inst->obj.type = OBJ_INSTANCE;
+            inst->obj.color = GC_BLACK;
+            inst->obj.interned = 0;
+            inst->obj.hash = 0;
+            inst->obj.gc_next = nullptr; /* not in any list */
+        }
+        else
+        {
+            inst = (ObjInstance *)alloc_obj(gc, sizeof(ObjInstance), OBJ_INSTANCE);
+        }
+
+        inst->klass = klass;
+        inst->native_data = nullptr;
         if (nf > 0)
         {
             inst->fields = (Value *)zen_alloc(gc, sizeof(Value) * nf);
@@ -1149,6 +1173,29 @@ namespace zen
             inst->fields = nullptr;
         }
         return inst;
+    }
+
+    /* Destroy a persistent instance — C++ owns lifetime, calls this explicitly */
+    void destroy_instance(GC *gc, ObjInstance *inst)
+    {
+        if (!inst) return;
+        /* Call native destructor — walk parent chain */
+        if (inst->native_data)
+        {
+            ObjClass *dtor_src = inst->klass;
+            while (dtor_src && !dtor_src->native_dtor)
+                dtor_src = dtor_src->parent;
+            if (dtor_src && dtor_src->native_dtor)
+            {
+                dtor_src->native_dtor((VM *)gc->vm, inst->native_data);
+                inst->native_data = nullptr;
+            }
+        }
+        /* Free fields */
+        if (inst->fields)
+            zen_free(gc, inst->fields, sizeof(Value) * inst->klass->num_fields);
+        /* Free the instance itself (was malloc'd, not GC-tracked) */
+        free(inst);
     }
 
     /* =========================================================
@@ -1251,6 +1298,10 @@ namespace zen
             gc_mark_obj(gc, (Obj *)cls->name);
             gc_mark_obj(gc, (Obj *)cls->parent);
             gc_mark_obj(gc, (Obj *)cls->methods);
+            /* Mark vtable entries */
+            for (int32_t i = 0; i < cls->vtable_size; i++)
+                if (cls->vtable[i].type == VAL_OBJ)
+                    gc_mark_obj(gc, cls->vtable[i].as.obj);
             break;
         }
 
@@ -1464,11 +1515,25 @@ namespace zen
             ObjClass *cls = (ObjClass *)obj;
             if (cls->field_names)
                 zen_free(gc, cls->field_names, sizeof(ObjString *) * cls->num_fields);
+            if (cls->vtable)
+                zen_free(gc, cls->vtable, sizeof(Value) * cls->vtable_size);
             break;
         }
         case OBJ_INSTANCE:
         {
             ObjInstance *inst = (ObjInstance *)obj;
+            /* Call native destructor — walk parent chain to find dtor */
+            if (inst->native_data)
+            {
+                ObjClass *dtor_src = inst->klass;
+                while (dtor_src && !dtor_src->native_dtor)
+                    dtor_src = dtor_src->parent;
+                if (dtor_src && dtor_src->native_dtor)
+                {
+                    dtor_src->native_dtor((VM *)gc->vm, inst->native_data);
+                    inst->native_data = nullptr;
+                }
+            }
             if (inst->fields)
                 zen_free(gc, inst->fields, sizeof(Value) * inst->klass->num_fields);
             break;

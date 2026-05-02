@@ -58,6 +58,8 @@ namespace zen
         "SETFIELD_IDX",
         "GETINDEX",
         "SETINDEX",
+        "INVOKE",
+        "INVOKE_VT",
         "NEWCLASS",
         "NEWINSTANCE",
         "GETMETHOD",

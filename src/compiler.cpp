@@ -21,7 +21,8 @@ namespace zen
     Compiler::Compiler()
         : gc_(nullptr), vm_(nullptr), state_(nullptr),
           had_error_(false), panic_mode_(false), current_file_(nullptr), include_count_(0), include_depth_(0), num_imports_(0),
-          last_call_struct_def_(nullptr)
+          last_call_struct_def_(nullptr), current_class_fields_(nullptr),
+          last_call_class_def_(nullptr)
     {
         current_.type = TOK_EOF;
         previous_.type = TOK_EOF;
@@ -298,6 +299,7 @@ namespace zen
         local.reg = reg;
         local.captured = false;
         local.struct_type = nullptr;
+        local.class_type = nullptr;
         return reg;
     }
 

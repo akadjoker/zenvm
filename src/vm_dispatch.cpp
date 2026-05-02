@@ -125,6 +125,7 @@ namespace zen
             &&lbl_OP_GETINDEX,
             &&lbl_OP_SETINDEX,
             &&lbl_OP_INVOKE,
+            &&lbl_OP_INVOKE_VT,
             &&lbl_OP_NEWCLASS,
             &&lbl_OP_NEWINSTANCE,
             &&lbl_OP_GETMETHOD,
@@ -545,6 +546,76 @@ namespace zen
                 R[a] = val_obj((Obj *)ns);
                 DISPATCH();
             }
+            if (is_class(callee))
+            {
+                /* Class call → create instance + call init */
+                ObjClass *klass = as_class(callee);
+
+                /* Check if script is allowed to instantiate this class */
+                if (!klass->constructable)
+                {
+                    runtime_error("class '%s' cannot be instantiated from script",
+                                  klass->name->chars);
+                    return;
+                }
+
+                ObjInstance *inst = new_instance(&gc_, klass);
+                R[a] = val_obj((Obj *)inst);
+
+                /* Call native constructor if the class (or parent) has one */
+                ObjClass *ctor_src = klass;
+                while (ctor_src && !ctor_src->native_ctor)
+                    ctor_src = ctor_src->parent;
+                if (ctor_src && ctor_src->native_ctor)
+                {
+                    inst->native_data = ctor_src->native_ctor(this, nargs, &R[a + 1]);
+                }
+
+                /* Look for init method */
+                ObjString *s_init = intern_string(&gc_, "init", 4, hash_string("init", 4));
+
+                bool found;
+                Value init_method = map_get(klass->methods, val_obj((Obj *)s_init), &found);
+                if (!found && klass->parent)
+                    init_method = map_get(klass->parent->methods, val_obj((Obj *)s_init), &found);
+
+                if (found && is_closure(init_method))
+                {
+                    ObjClosure *cl = as_closure(init_method);
+                    ObjFunc *fn = cl->func;
+                    /* Check arity (init's arity = user params, self is implicit) */
+                    if (fn->arity >= 0 && nargs != fn->arity)
+                    {
+                        runtime_error("init() expects %d args but got %d", fn->arity, nargs);
+                        return;
+                    }
+                    /* Set up frame: R[a] = instance (self), args at R[a+1..] */
+                    if (fiber->frame_count >= kMaxFrames)
+                    {
+                        runtime_error("stack overflow");
+                        return;
+                    }
+                    CallFrame *new_frame = &fiber->frames[fiber->frame_count++];
+                    new_frame->closure = cl;
+                    new_frame->func = fn;
+                    new_frame->ip = fn->code;
+                    new_frame->base = &R[a]; /* self at base[0], args at base[1..] */
+                    new_frame->ret_reg = a;
+                    new_frame->ret_count = nresults;
+                    fiber->stack_top = new_frame->base + fn->num_regs;
+                    LOAD_STATE();
+                    DISPATCH();
+                }
+                else if (nargs > 0 && !ctor_src)
+                {
+                    /* Error only if no init AND no native_ctor handled the args */
+                    runtime_error("class '%s' has no init() but received %d args",
+                                  klass->name->chars, nargs);
+                    return;
+                }
+                /* No init and no args (or native_ctor consumed them) — just return the instance */
+                DISPATCH();
+            }
             runtime_error("attempt to call non-function");
             return;
         }
@@ -940,6 +1011,21 @@ namespace zen
                 runtime_error("native struct '%s' has no field '%s'", def->name->chars, name->chars);
                 return;
             }
+            if (is_instance(receiver))
+            {
+                ObjInstance *inst = as_instance(receiver);
+                ObjClass *klass = inst->klass;
+                for (int32_t fi = 0; fi < klass->num_fields; fi++)
+                {
+                    if (klass->field_names[fi] == name) /* pointer compare (interned) */
+                    {
+                        R[ZEN_A(i)] = inst->fields[fi];
+                        goto getfield_done;
+                    }
+                }
+                runtime_error("instance of '%s' has no field '%s'", klass->name->chars, name->chars);
+                return;
+            }
             runtime_error("cannot access field '%s' on this type", name->chars);
             return;
             getfield_done:
@@ -997,6 +1083,21 @@ namespace zen
                 runtime_error("native struct '%s' has no field '%s'", def->name->chars, name->chars);
                 return;
             }
+            if (is_instance(receiver))
+            {
+                ObjInstance *inst = as_instance(receiver);
+                ObjClass *klass = inst->klass;
+                for (int32_t fi = 0; fi < klass->num_fields; fi++)
+                {
+                    if (klass->field_names[fi] == name) /* pointer compare (interned) */
+                    {
+                        inst->fields[fi] = val;
+                        goto setfield_done;
+                    }
+                }
+                runtime_error("instance of '%s' has no field '%s'", klass->name->chars, name->chars);
+                return;
+            }
             runtime_error("cannot set field '%s' on this type", name->chars);
             return;
             setfield_done:
@@ -1006,16 +1107,22 @@ namespace zen
         {
             /* R[A] = R[B].fields[C] — O(1) direct index */
             uint32_t i = *ip;
-            ObjStruct *s = as_struct(R[ZEN_B(i)]);
-            R[ZEN_A(i)] = s->fields[ZEN_C(i)];
+            Value obj = R[ZEN_B(i)];
+            if (is_instance(obj))
+                R[ZEN_A(i)] = as_instance(obj)->fields[ZEN_C(i)];
+            else
+                R[ZEN_A(i)] = as_struct(obj)->fields[ZEN_C(i)];
             NEXT();
         }
         CASE(OP_SETFIELD_IDX)
         {
             /* R[A].fields[B] = R[C] — O(1) direct index */
             uint32_t i = *ip;
-            ObjStruct *s = as_struct(R[ZEN_A(i)]);
-            s->fields[ZEN_B(i)] = R[ZEN_C(i)];
+            Value obj = R[ZEN_A(i)];
+            if (is_instance(obj))
+                as_instance(obj)->fields[ZEN_B(i)] = R[ZEN_C(i)];
+            else
+                as_struct(obj)->fields[ZEN_B(i)] = R[ZEN_C(i)];
             NEXT();
         }
         CASE(OP_GETINDEX)
@@ -1117,9 +1224,128 @@ namespace zen
             {
                 #include "invoke_buffer.inl"
             }
+            else if (is_instance(receiver))
+            {
+                /* Method call on class instance */
+                ObjInstance *inst = as_instance(receiver);
+                ObjClass *klass = inst->klass;
+
+                /* Look up method in class hierarchy */
+                bool mfound = false;
+                Value mval;
+                ObjClass *search = klass;
+                while (search)
+                {
+                    mval = map_get(search->methods, val_obj((Obj *)method), &mfound);
+                    if (mfound) break;
+                    search = search->parent;
+                }
+
+                if (!mfound)
+                {
+                    runtime_error("'%s' has no method '%s'", klass->name->chars, mname);
+                    return;
+                }
+
+                if (is_closure(mval))
+                {
+                    ObjClosure *cl = as_closure(mval);
+                    ObjFunc *fn = cl->func;
+                    /* self goes at R[base], args at R[base+1..] */
+                    /* R[base] already has receiver (self) */
+                    if (fn->arity >= 0 && arg_count != fn->arity)
+                    {
+                        runtime_error("%s.%s() expects %d args but got %d",
+                                      klass->name->chars, mname, fn->arity, arg_count);
+                        return;
+                    }
+                    if (fiber->frame_count >= kMaxFrames)
+                    {
+                        runtime_error("stack overflow");
+                        return;
+                    }
+                    ++ip;
+                    SAVE_IP();
+                    CallFrame *new_frame = &fiber->frames[fiber->frame_count++];
+                    new_frame->closure = cl;
+                    new_frame->func = fn;
+                    new_frame->ip = fn->code;
+                    new_frame->base = &R[base]; /* base[0]=self, base[1..]=args */
+                    new_frame->ret_reg = base;
+                    new_frame->ret_count = 1;
+                    fiber->stack_top = new_frame->base + fn->num_regs;
+                    LOAD_STATE();
+                    DISPATCH();
+                }
+                else if (is_native(mval))
+                {
+                    ObjNative *nat = as_native(mval);
+                    int nret = nat->fn(this, &R[base], arg_count + 1); /* +1 for self */
+                    if (nret > 0)
+                        R[base] = R[base];
+                    else
+                        R[base] = val_nil();
+                }
+                else
+                {
+                    runtime_error("'%s.%s' is not callable", klass->name->chars, mname);
+                    return;
+                }
+            }
             else
             {
                 runtime_error("cannot invoke method '%s' on this type", mname);
+                return;
+            }
+            NEXT();
+        }
+
+        CASE(OP_INVOKE_VT)
+        {
+            /* Single-word vtable dispatch: A=base, B=arg_count, C=slot_idx */
+            uint32_t i = *ip;
+            uint8_t base = ZEN_A(i);
+            uint8_t arg_count = ZEN_B(i);
+            uint8_t slot = ZEN_C(i);
+
+            ObjInstance *inst = as_instance(R[base]);
+            ObjClass *klass = inst->klass;
+            Value mval = klass->vtable[slot];
+
+            if (is_closure(mval))
+            {
+                ObjClosure *cl = as_closure(mval);
+                ObjFunc *fn = cl->func;
+                if (fiber->frame_count >= kMaxFrames)
+                {
+                    runtime_error("stack overflow");
+                    return;
+                }
+                ++ip;
+                SAVE_IP();
+                CallFrame *new_frame = &fiber->frames[fiber->frame_count++];
+                new_frame->closure = cl;
+                new_frame->func = fn;
+                new_frame->ip = fn->code;
+                new_frame->base = &R[base]; /* base[0]=self, base[1..]=args */
+                new_frame->ret_reg = base;
+                new_frame->ret_count = 1;
+                fiber->stack_top = new_frame->base + fn->num_regs;
+                LOAD_STATE();
+                DISPATCH();
+            }
+            else if (is_native(mval))
+            {
+                ObjNative *nat = as_native(mval);
+                int nret = nat->fn(this, &R[base], arg_count + 1);
+                if (nret > 0)
+                    R[base] = R[base];
+                else
+                    R[base] = val_nil();
+            }
+            else
+            {
+                runtime_error("vtable slot %d is nil (method not found)", slot);
                 return;
             }
             NEXT();

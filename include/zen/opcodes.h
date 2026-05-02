@@ -94,6 +94,7 @@ namespace zen
         OP_GETINDEX, /* R[A] = R[B][R[C]]                       */
         OP_SETINDEX, /* R[A][R[B]] = R[C]                       */
         OP_INVOKE,   /* R[A].method(R[A+1]..R[A+B]) → R[A]; C=name_idx (2-word: word2=name_ki) */
+        OP_INVOKE_VT, /* R[A].vtable[C](R[A+1]..R[A+B]) → R[A]; single-word, O(1) */
 
         /* --- Classes --- */
         OP_NEWCLASS,    /* R[A] = new class (nome em constants[B]) */

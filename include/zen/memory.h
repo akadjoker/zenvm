@@ -62,6 +62,7 @@ namespace zen
     ObjMap *new_map(GC *gc);
     ObjClass *new_class(GC *gc, ObjString *name, ObjClass *parent);
     ObjInstance *new_instance(GC *gc, ObjClass *klass);
+    void destroy_instance(GC *gc, ObjInstance *inst); /* free persistent instance (C++ owned) */
 
     /* Array operations */
     void array_push_slow(GC *gc, ObjArray *arr, Value val); /* grow + push */

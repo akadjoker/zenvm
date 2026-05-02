@@ -19,7 +19,7 @@ namespace zen
     ** Construtor / Destrutor
     ** ========================================================= */
 
-    VM::VM() : num_globals_(0), main_fiber_(nullptr), current_fiber_(nullptr), fiber_depth_(0), had_error_(false), num_search_paths_(0), num_libs_(0), num_plugins_(0)
+    VM::VM() : num_globals_(0), main_fiber_(nullptr), current_fiber_(nullptr), fiber_depth_(0), had_error_(false), num_search_paths_(0), num_libs_(0), num_plugins_(0), num_selectors_(0)
     {
         gc_init(&gc_);
         gc_.vm = this;
@@ -27,6 +27,7 @@ namespace zen
         memset(global_names_, 0, sizeof(global_names_));
         memset(search_paths_, 0, sizeof(search_paths_));
         memset(plugin_handles_, 0, sizeof(plugin_handles_));
+        memset(selectors_, 0, sizeof(selectors_));
 
         /* Criar main fiber */
         main_fiber_ = new_fiber(nullptr, kMaxRegs * 4);
@@ -142,6 +143,10 @@ namespace zen
         current_fiber_ = main_fiber_;
 
         execute(main_fiber_);
+
+        /* Reset fiber state for subsequent C++ API calls */
+        main_fiber_->stack_top = main_fiber_->stack;
+        main_fiber_->state = FIBER_RUNNING;
     }
 
     Value VM::call_global(int idx, Value *args, int nargs)
@@ -237,6 +242,28 @@ namespace zen
         int idx = find_global(name);
         if (idx >= 0)
             globals_[idx] = val;
+    }
+
+    /* --- Method selector table (vtable slots) --- */
+
+    int VM::find_selector(const char *name, int len) const
+    {
+        for (int i = 0; i < num_selectors_; i++)
+        {
+            if (selectors_[i]->length == len &&
+                memcmp(selectors_[i]->chars, name, len) == 0)
+                return i;
+        }
+        return -1;
+    }
+
+    int VM::intern_selector(const char *name, int len)
+    {
+        int idx = find_selector(name, len);
+        if (idx >= 0) return idx;
+        idx = num_selectors_++;
+        selectors_[idx] = intern_string(&gc_, name, len, hash_string(name, len));
+        return idx;
     }
 
     int VM::def_native(const char *name, NativeFn fn, int arity)
@@ -632,8 +659,14 @@ namespace zen
 
     VM::ClassBuilder &VM::ClassBuilder::field(const char *name)
     {
-        (void)name; /* TODO: adicionar ao field_names array */
-        klass_->num_fields++;
+        int idx = klass_->num_fields++;
+        /* Grow field_names array */
+        klass_->field_names = (ObjString **)zen_realloc(
+            &vm_->gc_, klass_->field_names,
+            sizeof(ObjString *) * idx,
+            sizeof(ObjString *) * (idx + 1));
+        klass_->field_names[idx] = intern_string(&vm_->gc_, name, (int)strlen(name),
+                                                 hash_string(name, (int)strlen(name)));
         return *this;
     }
 
@@ -642,14 +675,219 @@ namespace zen
         ObjString *s = intern_string(&vm_->gc_, name, (int)strlen(name),
                                      hash_string(name, (int)strlen(name)));
         ObjNative *nat = new_native(&vm_->gc_, fn, arity, s);
-        (void)nat; /* TODO: map_set(klass_->methods, s, nat) */
+        map_set(&vm_->gc_, klass_->methods, val_obj((Obj *)s), val_obj((Obj *)nat));
+
+        /* Also register in vtable */
+        int slot = vm_->intern_selector(name, (int)strlen(name));
+        if (slot >= klass_->vtable_size)
+        {
+            int new_size = slot + 1;
+            Value *new_vt = (Value *)zen_alloc(&vm_->gc_, sizeof(Value) * new_size);
+            for (int i = 0; i < klass_->vtable_size; i++)
+                new_vt[i] = klass_->vtable[i];
+            for (int i = klass_->vtable_size; i < new_size; i++)
+                new_vt[i] = val_nil();
+            if (klass_->vtable)
+                zen_free(&vm_->gc_, klass_->vtable, sizeof(Value) * klass_->vtable_size);
+            klass_->vtable = new_vt;
+            klass_->vtable_size = new_size;
+        }
+        klass_->vtable[slot] = val_obj((Obj *)nat);
+        return *this;
+    }
+
+    VM::ClassBuilder &VM::ClassBuilder::ctor(NativeClassCtor fn)
+    {
+        klass_->native_ctor = fn;
+        return *this;
+    }
+
+    VM::ClassBuilder &VM::ClassBuilder::dtor(NativeClassDtor fn)
+    {
+        klass_->native_dtor = fn;
+        return *this;
+    }
+
+    VM::ClassBuilder &VM::ClassBuilder::persistent(bool p)
+    {
+        klass_->persistent = p;
+        return *this;
+    }
+
+    VM::ClassBuilder &VM::ClassBuilder::constructable(bool c)
+    {
+        klass_->constructable = c;
         return *this;
     }
 
     ObjClass *VM::ClassBuilder::end()
     {
+        /* Flatten parent vtable if parent exists */
+        if (klass_->parent && klass_->parent->vtable_size > 0)
+        {
+            ObjClass *p = klass_->parent;
+            if (klass_->vtable_size < p->vtable_size)
+            {
+                int new_size = p->vtable_size;
+                Value *new_vt = (Value *)zen_alloc(&vm_->gc_, sizeof(Value) * new_size);
+                for (int i = 0; i < klass_->vtable_size; i++)
+                    new_vt[i] = klass_->vtable[i];
+                for (int i = klass_->vtable_size; i < new_size; i++)
+                    new_vt[i] = val_nil();
+                if (klass_->vtable)
+                    zen_free(&vm_->gc_, klass_->vtable, sizeof(Value) * klass_->vtable_size);
+                klass_->vtable = new_vt;
+                klass_->vtable_size = new_size;
+            }
+            for (int i = 0; i < p->vtable_size; i++)
+            {
+                if (is_nil(klass_->vtable[i]))
+                    klass_->vtable[i] = p->vtable[i];
+            }
+        }
         vm_->def_global(klass_->name->chars, val_obj((Obj *)klass_));
         return klass_;
+    }
+
+    /* --- Instance API (C++ embedding) --- */
+
+    Value VM::make_instance(ObjClass *klass)
+    {
+        ObjInstance *inst = new_instance(&gc_, klass);
+        /* Call native constructor — walk parent chain */
+        ObjClass *ctor_src = klass;
+        while (ctor_src && !ctor_src->native_ctor)
+            ctor_src = ctor_src->parent;
+        if (ctor_src && ctor_src->native_ctor)
+        {
+            inst->native_data = ctor_src->native_ctor(this, 0, nullptr);
+        }
+        return val_obj((Obj *)inst);
+    }
+
+    Value VM::make_instance(ObjClass *klass, Value *args, int nargs)
+    {
+        ObjInstance *inst = new_instance(&gc_, klass);
+        Value self = val_obj((Obj *)inst);
+
+        /* Call native constructor — walk parent chain */
+        ObjClass *ctor_src = klass;
+        while (ctor_src && !ctor_src->native_ctor)
+            ctor_src = ctor_src->parent;
+        if (ctor_src && ctor_src->native_ctor)
+        {
+            inst->native_data = ctor_src->native_ctor(this, nargs, args);
+        }
+
+        /* Call init if exists */
+        int init_slot = find_selector("init", 4);
+        if (init_slot >= 0 && init_slot < klass->vtable_size && !is_nil(klass->vtable[init_slot]))
+        {
+            /* Set up args: [self, arg0, arg1, ...] on stack */
+            Value call_args[17]; /* self + max 16 args */
+            call_args[0] = self;
+            for (int i = 0; i < nargs && i < 16; i++)
+                call_args[i + 1] = args[i];
+
+            Value method = klass->vtable[init_slot];
+            if (is_native(method))
+            {
+                ObjNative *nat = as_native(method);
+                nat->fn(this, call_args, nargs + 1);
+            }
+            else if (is_closure(method))
+            {
+                /* Push args to fiber stack and call */
+                ObjFiber *fiber = current_fiber_;
+                Value *base = fiber->stack_top;
+                for (int i = 0; i <= nargs; i++)
+                    base[i] = call_args[i];
+                fiber->stack_top = base + as_closure(method)->func->num_regs;
+
+                CallFrame *frame = &fiber->frames[fiber->frame_count++];
+                ObjClosure *cl = as_closure(method);
+                frame->closure = cl;
+                frame->func = cl->func;
+                frame->ip = cl->func->code;
+                frame->base = base;
+                frame->ret_reg = 0;
+                frame->ret_count = 0;
+                execute(fiber);
+                fiber->stack_top = base; /* restore stack */
+                fiber->state = FIBER_RUNNING; /* reset after FIBER_DONE */
+            }
+        }
+        return self;
+    }
+
+    void VM::destroy_instance(Value instance)
+    {
+        if (!is_instance(instance)) return;
+        ObjInstance *inst = as_instance(instance);
+        zen::destroy_instance(&gc_, inst);
+    }
+
+    Value VM::invoke(Value instance, const char *method_name, Value *args, int nargs)
+    {
+        int slot = find_selector(method_name, (int)strlen(method_name));
+        if (slot < 0)
+        {
+            runtime_error("method '%s' not found", method_name);
+            return val_nil();
+        }
+        return invoke(instance, slot, args, nargs);
+    }
+
+    Value VM::invoke(Value instance, int slot, Value *args, int nargs)
+    {
+        ObjInstance *inst = as_instance(instance);
+        ObjClass *klass = inst->klass;
+
+        if (slot >= klass->vtable_size || is_nil(klass->vtable[slot]))
+        {
+            runtime_error("vtable slot %d is nil", slot);
+            return val_nil();
+        }
+
+        Value method = klass->vtable[slot];
+
+        /* Set up call args: [self, arg0, arg1, ...] */
+        if (is_native(method))
+        {
+            Value call_args[17];
+            call_args[0] = instance;
+            for (int i = 0; i < nargs && i < 16; i++)
+                call_args[i + 1] = args[i];
+            ObjNative *nat = as_native(method);
+            int nret = nat->fn(this, call_args, nargs + 1);
+            return nret > 0 ? call_args[0] : val_nil();
+        }
+        else if (is_closure(method))
+        {
+            ObjFiber *fiber = current_fiber_;
+            Value *base = fiber->stack_top;
+            base[0] = instance; /* self */
+            for (int i = 0; i < nargs; i++)
+                base[i + 1] = args[i];
+
+            ObjClosure *cl = as_closure(method);
+            fiber->stack_top = base + cl->func->num_regs;
+
+            CallFrame *frame = &fiber->frames[fiber->frame_count++];
+            frame->closure = cl;
+            frame->func = cl->func;
+            frame->ip = cl->func->code;
+            frame->base = base;
+            frame->ret_reg = 0;
+            frame->ret_count = 1;
+            execute(fiber);
+
+            Value result = base[0];
+            fiber->stack_top = base; /* restore stack */
+            fiber->state = FIBER_RUNNING; /* reset after FIBER_DONE */
+            return result;
+        }
+        return val_nil();
     }
 
     VM::StructBuilder VM::def_struct(const char *name)

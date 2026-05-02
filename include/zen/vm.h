@@ -76,6 +76,10 @@ namespace zen
             ClassBuilder &parent(const char *parent_name);
             ClassBuilder &field(const char *name);
             ClassBuilder &method(const char *name, NativeFn fn, int arity);
+            ClassBuilder &ctor(NativeClassCtor fn);       /* native constructor (returns void*) */
+            ClassBuilder &dtor(NativeClassDtor fn);       /* native destructor */
+            ClassBuilder &persistent(bool p = true);      /* instances NOT managed by GC */
+            ClassBuilder &constructable(bool c = true);   /* false = script cannot instantiate */
             ObjClass *end();
 
         private:
@@ -83,6 +87,13 @@ namespace zen
             ObjClass *klass_;
         };
         ClassBuilder def_class(const char *name);
+
+        /* --- Instance API (for C++ embedding) --- */
+        Value make_instance(ObjClass *klass);                    /* creates instance, no init */
+        Value make_instance(ObjClass *klass, Value *args, int nargs); /* creates + calls init */
+        void destroy_instance(Value instance);                   /* destroy persistent instance */
+        Value invoke(Value instance, const char *method, Value *args, int nargs);
+        Value invoke(Value instance, int slot, Value *args, int nargs); /* vtable slot, O(1) */
 
         /* --- Struct builder --- */
         struct StructBuilder
@@ -104,6 +115,14 @@ namespace zen
                                 NativeStructCtor ctor, NativeStructDtor dtor);
             NativeStructBuilder &field(const char *name, uint16_t offset,
                                        NativeFieldType type, bool read_only = false);
+            /* Convenience shortcuts */
+            NativeStructBuilder &i32(const char *name, uint16_t offset, bool ro = false)  { return field(name, offset, FIELD_INT, ro); }
+            NativeStructBuilder &u32(const char *name, uint16_t offset, bool ro = false)  { return field(name, offset, FIELD_UINT, ro); }
+            NativeStructBuilder &f32(const char *name, uint16_t offset, bool ro = false)  { return field(name, offset, FIELD_FLOAT, ro); }
+            NativeStructBuilder &f64(const char *name, uint16_t offset, bool ro = false)  { return field(name, offset, FIELD_DOUBLE, ro); }
+            NativeStructBuilder &byte(const char *name, uint16_t offset, bool ro = false) { return field(name, offset, FIELD_BYTE, ro); }
+            NativeStructBuilder &boolean(const char *name, uint16_t offset, bool ro = false) { return field(name, offset, FIELD_BOOL, ro); }
+            NativeStructBuilder &ptr(const char *name, uint16_t offset, bool ro = false)  { return field(name, offset, FIELD_POINTER, ro); }
             NativeStructDef *end();
 
         private:
@@ -188,8 +207,18 @@ namespace zen
         void *plugin_handles_[MAX_PLUGINS];
         int num_plugins_;
 
+        /* Method selector table (for vtable dispatch) */
+        static const int MAX_SELECTORS = 256;
+        ObjString *selectors_[MAX_SELECTORS]; /* interned method names */
+        int num_selectors_;
+
     public:
         bool had_error() const { return had_error_; }
+
+        /* Intern a method name → slot index (0..255). Same name → same slot. */
+        int intern_selector(const char *name, int len);
+        int find_selector(const char *name, int len) const;
+        int num_selectors() const { return num_selectors_; }
     };
 
 } /* namespace zen */

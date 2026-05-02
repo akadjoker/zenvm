@@ -718,6 +718,10 @@ namespace zen
             last_call_struct_def_ = as_struct_def(gval);
         else
             last_call_struct_def_ = nullptr;
+        if (is_class(gval))
+            last_call_class_def_ = as_class(gval);
+        else
+            last_call_class_def_ = nullptr;
 
         return reg;
     }
@@ -1183,6 +1187,20 @@ namespace zen
                 }
             }
         }
+        /* Try to resolve class field index (self.x inside a method) */
+        if (field_idx < 0 && current_class_fields_ && state_->is_method)
+        {
+            for (int i = 0; i < current_class_fields_->count; i++)
+            {
+                int flen = (int)strlen(current_class_fields_->fields[i]);
+                if (flen == field_tok.length &&
+                    memcmp(current_class_fields_->fields[i], field_tok.start, field_tok.length) == 0)
+                {
+                    field_idx = i;
+                    break;
+                }
+            }
+        }
 
         /* Check for assignment: a.b = expr or a.b += expr */
         if (canAssign && (check(TOK_EQ) || check(TOK_PLUS_EQ) ||
@@ -1274,9 +1292,42 @@ namespace zen
             }
             consume(TOK_RPAREN, "Expected ')' after arguments.");
 
-            /* Emit 2-word OP_INVOKE: word1=[OP_INVOKE|base|argcount|0], word2=name_ki */
-            state_->emitter.emit_abc(OP_INVOKE, base, arg_count, 0, previous_.line);
-            state_->emitter.emit((uint32_t)name_ki, previous_.line);
+            /* Try vtable dispatch if we know the class at compile time */
+            ObjClass *known_class = nullptr;
+            if (loc && loc->class_type)
+                known_class = loc->class_type;
+            else if (current_class_fields_ && state_->is_method && obj_reg == 0)
+            {
+                /* self inside a method — find the class being compiled */
+                /* We look up the class by the method's enclosing class name */
+                /* For now, use the general approach: check if current_class_fields_ is set */
+                /* We need the actual ObjClass*. It's built AFTER methods, so we can't
+                   use it here. For self.method() inside methods, fall back to OP_INVOKE
+                   for now. The vtable win is for external calls (var c = C(); c.tick()). */
+            }
+
+            if (known_class)
+            {
+                int slot = vm_->find_selector(field_tok.start, field_tok.length);
+                if (slot >= 0 && slot < known_class->vtable_size &&
+                    !is_nil(known_class->vtable[slot]))
+                {
+                    /* Emit single-word OP_INVOKE_VT */
+                    state_->emitter.emit_abc(OP_INVOKE_VT, base, arg_count, slot, previous_.line);
+                }
+                else
+                {
+                    /* Fallback: method not in vtable (maybe added later) */
+                    state_->emitter.emit_abc(OP_INVOKE, base, arg_count, 0, previous_.line);
+                    state_->emitter.emit((uint32_t)name_ki, previous_.line);
+                }
+            }
+            else
+            {
+                /* No type info — emit 2-word OP_INVOKE */
+                state_->emitter.emit_abc(OP_INVOKE, base, arg_count, 0, previous_.line);
+                state_->emitter.emit((uint32_t)name_ki, previous_.line);
+            }
 
             /* Result is in R[base] */
             state_->next_reg = save_next > base + 1 ? save_next : base + 1;

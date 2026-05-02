@@ -115,6 +115,9 @@ add_subdirectory(cli)
 # --- Test functions (ScriptComponent O(1) pattern) ---
 add_subdirectory(test_functions)
 
+# --- Class API tests (C++ ↔ Script vtable) ---
+add_subdirectory(tests/test_class_api)
+
 # --- VM test harness (old handcoded bytecode tests) ---
 # add_executable(zen_test_vm src/main.cpp)
 # target_link_libraries(zen_test_vm zen_static)

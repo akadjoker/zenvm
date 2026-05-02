@@ -182,7 +182,9 @@ namespace zen
             local.reg = reg;
             local.captured = false;
             local.struct_type = last_call_struct_def_;
+            local.class_type = last_call_class_def_;
             last_call_struct_def_ = nullptr;
+            last_call_class_def_ = nullptr;
         }
         else
         {
@@ -310,22 +312,302 @@ namespace zen
     }
 
     /* =========================================================
-    ** class declaration (stub — will expand)
+    ** class declaration
     ** class Name { var field; def method() {} }
+    ** class Child : Parent { ... }
+    **
+    ** Compiles to:
+    **   1. OP_NEWCLASS → creates ObjClass, stores as global
+    **   2. For each method: compile as closure, store in class.methods
+    **
+    ** At runtime, ClassName(args) → new_instance + call init
     ** ========================================================= */
 
     void Compiler::class_declaration()
     {
         consume(TOK_IDENTIFIER, "Expected class name.");
-        /* Token name = previous_; */
-        /* TODO: full class compilation */
+        Token name_tok = previous_;
+
+        char name_buf[128];
+        int nlen = name_tok.length < 127 ? name_tok.length : 127;
+        memcpy(name_buf, name_tok.start, nlen);
+        name_buf[nlen] = '\0';
+
+        /* Check for inheritance: class Child : Parent */
+        char parent_buf[128];
+        parent_buf[0] = '\0';
+        if (match(TOK_COLON))
+        {
+            consume(TOK_IDENTIFIER, "Expected parent class name after ':'.");
+            int plen = previous_.length < 127 ? previous_.length : 127;
+            memcpy(parent_buf, previous_.start, plen);
+            parent_buf[plen] = '\0';
+        }
+
         consume(TOK_LBRACE, "Expected '{' before class body.");
+
+        /* Collect fields and methods */
+        char fields[64][64];
+        int field_count = 0;
+
+        /* Build ClassFieldInfo for compile-time field indexing in methods.
+         * Parent fields come first, then local fields are added as parsed. */
+        ClassFieldInfo cfi;
+        cfi.count = 0;
+        cfi.parent_field_count = 0;
+
+        /* Resolve parent class early for field layout */
+        ObjClass *parent_class = nullptr;
+        if (parent_buf[0] != '\0')
+        {
+            int pidx = vm_->find_global(parent_buf);
+            if (pidx < 0 || !is_class(vm_->get_global(pidx)))
+            {
+                error("Parent class not found.");
+                return;
+            }
+            parent_class = as_class(vm_->get_global(pidx));
+            /* Copy parent field names into cfi */
+            for (int i = 0; i < parent_class->num_fields; i++)
+            {
+                int flen = parent_class->field_names[i]->length;
+                if (flen > 63) flen = 63;
+                memcpy(cfi.fields[cfi.count], parent_class->field_names[i]->chars, flen);
+                cfi.fields[cfi.count][flen] = '\0';
+                cfi.count++;
+            }
+            cfi.parent_field_count = cfi.count;
+        }
+
+        /* We'll store compiled methods temporarily */
+        struct MethodInfo
+        {
+            char name[64];
+            ObjFunc *func; /* compiled function */
+        };
+        MethodInfo methods[64];
+        int method_count = 0;
+
         while (!check(TOK_RBRACE) && !check(TOK_EOF))
         {
-            advance(); /* skip for now */
+            if (match(TOK_VAR))
+            {
+                /* Field declaration: var name; or var a, b, c; */
+                do
+                {
+                    consume(TOK_IDENTIFIER, "Expected field name.");
+                    int flen = previous_.length < 63 ? previous_.length : 63;
+                    memcpy(fields[field_count], previous_.start, flen);
+                    fields[field_count][flen] = '\0';
+                    field_count++;
+                    /* Also add to cfi for indexing */
+                    memcpy(cfi.fields[cfi.count], previous_.start, flen);
+                    cfi.fields[cfi.count][flen] = '\0';
+                    cfi.count++;
+                } while (match(TOK_COMMA));
+                consume(TOK_SEMICOLON, "Expected ';' after field declaration.");
+            }
+            else if (match(TOK_DEF))
+            {
+                /* Method: def name(params) { body } */
+                consume(TOK_IDENTIFIER, "Expected method name.");
+                Token method_name = previous_;
+
+                int mnlen = method_name.length < 63 ? method_name.length : 63;
+                memcpy(methods[method_count].name, method_name.start, mnlen);
+                methods[method_count].name[mnlen] = '\0';
+
+                /* Compile method as a function with implicit 'self' at reg 0 */
+                CompilerState fn_state;
+                fn_state.parent = state_;
+                fn_state.function = new_func(gc_);
+                fn_state.emitter = Emitter(gc_);
+                fn_state.local_count = 0;
+                fn_state.scope_depth = 0;
+                fn_state.next_reg = 0;
+                fn_state.max_reg = 0;
+                fn_state.upvalue_count = 0;
+                fn_state.loop_depth = 0;
+                fn_state.is_method = true;
+
+                char fn_name[192];
+                snprintf(fn_name, sizeof(fn_name), "%s.%s", name_buf, methods[method_count].name);
+                fn_state.emitter.begin(fn_name, 0, fn_name);
+
+                CompilerState *enclosing = state_;
+                state_ = &fn_state;
+
+                /* Enable field indexing for self.x inside methods */
+                ClassFieldInfo *prev_cfi = current_class_fields_;
+                current_class_fields_ = &cfi;
+
+                begin_scope();
+
+                /* Register 0 = self (implicit first parameter) */
+                Token self_tok;
+                self_tok.start = "self";
+                self_tok.length = 4;
+                self_tok.type = TOK_SELF;
+                self_tok.line = method_name.line;
+                add_local(self_tok);
+
+                /* Parse explicit parameters */
+                consume(TOK_LPAREN, "Expected '(' after method name.");
+                int arity = 0;
+                if (!check(TOK_RPAREN))
+                {
+                    do
+                    {
+                        consume(TOK_IDENTIFIER, "Expected parameter name.");
+                        add_local(previous_);
+                        arity++;
+                    } while (match(TOK_COMMA));
+                }
+                consume(TOK_RPAREN, "Expected ')' after parameters.");
+
+                /* Body */
+                consume(TOK_LBRACE, "Expected '{' before method body.");
+                block();
+
+                /* Implicit return nil (or self for init) */
+                bool is_init = (mnlen == 4 && memcmp(methods[method_count].name, "init", 4) == 0);
+                if (is_init)
+                {
+                    /* init returns self */
+                    state_->emitter.emit_abc(OP_RETURN, 0, 1, 0, previous_.line);
+                }
+                else
+                {
+                    state_->emitter.emit_abc(OP_LOADNIL, 0, 0, 0, previous_.line);
+                    state_->emitter.emit_abc(OP_RETURN, 0, 1, 0, previous_.line);
+                }
+
+                ObjFunc *fn = state_->emitter.end(state_->max_reg);
+                fn->arity = arity; /* does NOT count self — VM adds it implicitly */
+
+                /* Copy upvalue descriptors */
+                int nuv = state_->upvalue_count;
+                fn->upvalue_count = nuv;
+                if (nuv > 0)
+                {
+                    fn->upval_descs = (UpvalDesc *)zen_alloc(gc_, nuv * sizeof(UpvalDesc));
+                    for (int i = 0; i < nuv; i++)
+                    {
+                        fn->upval_descs[i].index = (uint8_t)state_->upvalues[i].index;
+                        fn->upval_descs[i].is_local = state_->upvalues[i].is_local ? 1 : 0;
+                    }
+                }
+
+                state_ = enclosing;
+                current_class_fields_ = prev_cfi;
+
+                /* Store function pointer directly */
+                methods[method_count].func = fn;
+                method_count++;
+            }
+            else
+            {
+                error("Expected 'var' or 'def' in class body.");
+                advance();
+            }
         }
         consume(TOK_RBRACE, "Expected '}' after class body.");
-        error("Class declarations not yet implemented.");
+
+        /* Build ObjClass now (compile-time, like structs) */
+        ObjString *cls_name = intern_string(gc_, name_buf, nlen,
+                                            hash_string(name_buf, nlen));
+        ObjClass *klass = new_class(gc_, cls_name, parent_class);
+
+        /* Set up field_names — parent fields first, then local */
+        int parent_fields = parent_class ? parent_class->num_fields : 0;
+        int total_fields = parent_fields + field_count;
+        klass->num_fields = total_fields;
+        if (total_fields > 0)
+        {
+            klass->field_names = (ObjString **)zen_alloc(gc_, sizeof(ObjString *) * total_fields);
+            /* Copy parent fields first */
+            for (int i = 0; i < parent_fields; i++)
+                klass->field_names[i] = parent_class->field_names[i];
+            /* Then local fields */
+            for (int i = 0; i < field_count; i++)
+            {
+                int flen = (int)strlen(fields[i]);
+                klass->field_names[parent_fields + i] = intern_string(gc_, fields[i], flen,
+                                                                      hash_string(fields[i], flen));
+            }
+        }
+
+        /* Store methods — compile closures and put in klass->methods */
+        for (int m = 0; m < method_count; m++)
+        {
+            ObjFunc *fn = methods[m].func;
+            /* Create closure for the method (no upvalues typically) */
+            ObjClosure *cl = (ObjClosure *)zen_alloc(gc_, sizeof(ObjClosure));
+            cl->obj.type = OBJ_CLOSURE;
+            cl->obj.color = GC_BLACK;
+            cl->obj.interned = 0;
+            cl->obj.hash = 0;
+            cl->obj._pad = 0;
+            cl->obj.gc_next = gc_->objects;
+            gc_->objects = (Obj *)cl;
+            cl->func = fn;
+            cl->upvalue_count = 0;
+            cl->upvalues = nullptr;
+
+            int mnlen2 = (int)strlen(methods[m].name);
+            ObjString *mname = intern_string(gc_, methods[m].name, mnlen2,
+                                             hash_string(methods[m].name, mnlen2));
+            map_set(gc_, klass->methods, val_obj((Obj *)mname), val_obj((Obj *)cl));
+
+            /* Register method in vtable */
+            int slot = vm_->intern_selector(methods[m].name, mnlen2);
+            if (slot >= klass->vtable_size)
+            {
+                /* Grow vtable to accommodate new slot */
+                int new_size = slot + 1;
+                Value *new_vt = (Value *)zen_alloc(gc_, sizeof(Value) * new_size);
+                for (int vi = 0; vi < klass->vtable_size; vi++)
+                    new_vt[vi] = klass->vtable[vi];
+                for (int vi = klass->vtable_size; vi < new_size; vi++)
+                    new_vt[vi] = val_nil();
+                if (klass->vtable)
+                    zen_free(gc_, klass->vtable, sizeof(Value) * klass->vtable_size);
+                klass->vtable = new_vt;
+                klass->vtable_size = new_size;
+            }
+            klass->vtable[slot] = val_obj((Obj *)cl);
+        }
+
+        /* Flatten parent vtable: copy slots not overridden */
+        if (parent_class && parent_class->vtable_size > 0)
+        {
+            /* Ensure child vtable is at least as big as parent's */
+            if (klass->vtable_size < parent_class->vtable_size)
+            {
+                int new_size = parent_class->vtable_size;
+                Value *new_vt = (Value *)zen_alloc(gc_, sizeof(Value) * new_size);
+                for (int vi = 0; vi < klass->vtable_size; vi++)
+                    new_vt[vi] = klass->vtable[vi];
+                for (int vi = klass->vtable_size; vi < new_size; vi++)
+                    new_vt[vi] = val_nil();
+                if (klass->vtable)
+                    zen_free(gc_, klass->vtable, sizeof(Value) * klass->vtable_size);
+                klass->vtable = new_vt;
+                klass->vtable_size = new_size;
+            }
+            /* Copy parent slots where child has nil */
+            for (int vi = 0; vi < parent_class->vtable_size; vi++)
+            {
+                if (is_nil(klass->vtable[vi]))
+                    klass->vtable[vi] = parent_class->vtable[vi];
+            }
+        }
+
+        /* Register class as global */
+        int gidx = vm_->find_global(name_buf);
+        if (gidx < 0)
+            gidx = vm_->def_global(name_buf, val_nil());
+        vm_->set_global(gidx, val_obj((Obj *)klass));
     }
 
     /* =========================================================
