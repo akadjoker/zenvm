@@ -64,29 +64,24 @@ static int nat_draw_text(VM *, Value *args, int)
 static int created_total = 0;
 static int destroyed_total = 0;
 
-static void on_create(VM *vm, ObjFiber *proc)
+static void on_create(VM *vm, VM::ProcessSlot *slot)
 {
-    (void)vm; (void)proc;
+    (void)vm; (void)slot;
     created_total++;
 }
 
-static void on_destroy(VM *vm, ObjFiber *proc)
+static void on_destroy(VM *vm, VM::ProcessSlot *slot)
 {
-    (void)vm; (void)proc;
+    (void)vm; (void)slot;
     destroyed_total++;
 }
 
-/* Render callback - reads process privados (registers) and draws */
-static void render_process(VM *vm, ObjFiber *proc, int id, void *userdata)
+/* Render callback - reads process privates and draws */
+static void render_process(VM *vm, VM::ProcessSlot *slot, void *userdata)
 {
-    (void)vm; (void)id; (void)userdata;
-    if (proc->frame_count < 1) return;
-    ObjFunc *fn = proc->frames[0].func;
-    if (!fn || !fn->is_process) return;
-    if (fn->arity < 2) return;
-    Value *R = proc->frames[0].base;
-    int x = (int)to_number(R[0]);
-    int y = (int)to_number(R[1]);
+    (void)vm; (void)userdata;
+    int x = (int)to_number(slot->privates[VM::PRIV_X]);
+    int y = (int)to_number(slot->privates[VM::PRIV_Y]);
     DrawCircle(x, y, 3, WHITE);
 }
 

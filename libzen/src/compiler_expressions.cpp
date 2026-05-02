@@ -106,6 +106,7 @@ namespace zen
         case TOK_FATHER:
         case TOK_SON:
         case TOK_ID:
+        case TOK_TYPE:
         case TOK_DEF:
             return true;
         default:
@@ -225,7 +226,13 @@ namespace zen
         case TOK_ID:
         {
             int reg = (dest >= 0) ? dest : alloc_reg();
-            state_->emitter.emit_abc(OP_PROC_ID, reg, 0, 0, previous_.line);
+            state_->emitter.emit_abc(OP_PROC_GET, reg, 0, VM::PRIV_ID, previous_.line);
+            return reg;
+        }
+        case TOK_TYPE:
+        {
+            int reg = (dest >= 0) ? dest : alloc_reg();
+            state_->emitter.emit_abc(OP_PROC_GET, reg, 0, VM::PRIV_TYPE, previous_.line);
             return reg;
         }
         case TOK_DEF:
@@ -538,6 +545,53 @@ namespace zen
                     error("Unknown module member.");
                     return dest >= 0 ? dest : alloc_reg();
                 }
+            }
+        }
+
+        /* In a process body, check privates FIRST (before locals) */
+        if (state_->is_process && token.type == TOK_IDENTIFIER)
+        {
+            int pidx = VM::resolve_private(token.start, token.length);
+            if (pidx >= 0)
+            {
+                int reg = dest >= 0 ? dest : alloc_reg();
+                /* Assignment: x = expr, x += expr, etc. */
+                if (canAssign && (check(TOK_EQ) || check(TOK_PLUS_EQ) ||
+                                  check(TOK_MINUS_EQ) || check(TOK_STAR_EQ) ||
+                                  check(TOK_SLASH_EQ)))
+                {
+                    TokenType assign_op = current_.type;
+                    advance();
+                    if (assign_op == TOK_EQ)
+                    {
+                        int val = expression(reg);
+                        if (val != reg) emit_move(reg, val);
+                        state_->emitter.emit_abc(OP_PROC_SET, reg, 0, pidx, token.line);
+                        return reg;
+                    }
+                    else
+                    {
+                        /* Compound: load current value, compute, store back */
+                        state_->emitter.emit_abc(OP_PROC_GET, reg, 0, pidx, token.line);
+                        int rhs = alloc_reg();
+                        expression(rhs);
+                        OpCode op;
+                        switch (assign_op) {
+                            case TOK_PLUS_EQ:  op = OP_ADD; break;
+                            case TOK_MINUS_EQ: op = OP_SUB; break;
+                            case TOK_STAR_EQ:  op = OP_MUL; break;
+                            case TOK_SLASH_EQ: op = OP_DIV; break;
+                            default:           op = OP_ADD; break;
+                        }
+                        state_->emitter.emit_abc(op, reg, reg, rhs, token.line);
+                        free_reg(rhs);
+                        state_->emitter.emit_abc(OP_PROC_SET, reg, 0, pidx, token.line);
+                        return reg;
+                    }
+                }
+                /* Read */
+                state_->emitter.emit_abc(OP_PROC_GET, reg, 0, pidx, token.line);
+                return reg;
             }
         }
 
@@ -1478,12 +1532,12 @@ namespace zen
                                       : "Expected '.' after 'son'.");
         consume(TOK_IDENTIFIER, "Expected field name.");
 
-        /* Resolve field name as a local register in current scope */
+        /* Resolve field name as a process private */
         Token field_name = previous_;
-        int field_idx = resolve_local(state_, &field_name);
+        int field_idx = VM::resolve_private(field_name.start, field_name.length);
         if (field_idx < 0)
         {
-            error("Unknown process field.");
+            error("Unknown process private field.");
             return dest >= 0 ? dest : alloc_reg();
         }
 
@@ -1608,6 +1662,7 @@ namespace zen
         fn_state.upvalue_count = 0;
         fn_state.loop_depth = 0;
         fn_state.is_method = false;
+        fn_state.is_process = false;
 
         fn_state.emitter.begin("<anon>", 0, "<anon>");
 

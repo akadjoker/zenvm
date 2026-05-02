@@ -139,13 +139,52 @@ namespace zen
 
         /* --- Process system (cooperative multitasking) --- */
 
+        /* Fixed private fields for every process (DIV-style) */
+        enum PrivateIndex : uint8_t
+        {
+            PRIV_ID = 0,
+            PRIV_FATHER,
+            PRIV_X,
+            PRIV_Y,
+            PRIV_Z,
+            PRIV_GRAPH,
+            PRIV_ANGLE,
+            PRIV_SIZE,
+            PRIV_FLAGS,
+            PRIV_RED,
+            PRIV_GREEN,
+            PRIV_BLUE,
+            PRIV_ALPHA,
+            PRIV_TAG,
+            PRIV_STATE,
+            PRIV_SPEED,
+            PRIV_GROUP,
+            PRIV_VELX,
+            PRIV_VELY,
+            PRIV_HP,
+            PRIV_PROGRESS,
+            PRIV_LIFE,
+            PRIV_ACTIVE,
+            PRIV_SHOW,
+            PRIV_XOLD,
+            PRIV_YOLD,
+            PRIV_SIZEX,
+            PRIV_SIZEY,
+            PRIV_TYPE,
+            PRIV_COUNT  /* total number of privates */
+        };
+        static const int MAX_PRIVATES = 32; /* must be >= PRIV_COUNT */
+
+        /* Resolve a field name to a private index (-1 = not a private) */
+        static int resolve_private(const char *name, int len);
+
         struct ProcessSlot
         {
             ObjFiber *fiber;
             int id;
-            int z;          /* z-order for sorting (lower = drawn first) */
             int parent_id;  /* ID of spawning process (-1 = none) */
             int last_child_id; /* ID of last spawned child (-1 = none) */
+            Value privates[MAX_PRIVATES];
         };
 
         enum ProcessState : uint8_t
@@ -172,13 +211,14 @@ namespace zen
         void let_me_alone();
         int get_id_by_type(ObjFunc *type) const;
         int current_process_id() const { return current_process_id_; }
+        ProcessSlot *current_slot() { return current_slot_idx_ >= 0 ? &pool_[current_slot_idx_] : nullptr; }
 
-        /* Iterate all alive processes (DIV-style: read privados via fiber->stack[reg]) */
-        typedef void (*ProcessIterFn)(VM *vm, ObjFiber *proc, int id, void *userdata);
+        /* Iterate all alive processes (DIV-style: read privados via slot->privates[]) */
+        typedef void (*ProcessIterFn)(VM *vm, ProcessSlot *slot, void *userdata);
         void for_each_process(ProcessIterFn fn, void *userdata = nullptr);
 
-        /* Process hooks (C++ callbacks) — all receive fiber so you can read privados */
-        typedef void (*ProcessHook)(VM *vm, ObjFiber *proc);
+        /* Process hooks (C++ callbacks) — receive slot so you can read privados */
+        typedef void (*ProcessHook)(VM *vm, ProcessSlot *slot);
         ProcessHook on_process_start;   /* after first FRAME */
         ProcessHook on_process_update;  /* after each FRAME (every tick) */
         ProcessHook on_process_end;     /* when process dies */
@@ -265,6 +305,7 @@ namespace zen
         int pool_capacity_;         /* allocated capacity */
         int next_process_id_;
         int current_process_id_;    /* ID of currently executing process (-1 = main) */
+        int current_slot_idx_;      /* index into pool_ of currently executing process (-1 = none) */
 
     public:
         bool had_error() const { return had_error_; }

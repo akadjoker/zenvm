@@ -240,6 +240,7 @@ namespace zen
         fn_state.upvalue_count = 0;
         fn_state.loop_depth = 0;
         fn_state.is_method = false;
+        fn_state.is_process = false;
 
         char name_buf[256];
         int len = name.length < 255 ? name.length : 255;
@@ -350,6 +351,7 @@ namespace zen
         fn_state.upvalue_count = 0;
         fn_state.loop_depth = 0;
         fn_state.is_method = false;
+        fn_state.is_process = true;
 
         char name_buf[256];
         int len = name.length < 255 ? name.length : 255;
@@ -363,14 +365,19 @@ namespace zen
 
         begin_scope();
 
-        /* Parameters (privados — live in registers across frames) */
+        /* Parameters — if name matches a private, record the mapping.
+        ** Non-private params become normal locals. */
         consume(TOK_LPAREN, "Expected '(' after process name.");
         int arity = 0;
+        int8_t priv_map[16];
+        memset(priv_map, -1, sizeof(priv_map));
         if (!check(TOK_RPAREN))
         {
             do
             {
                 consume(TOK_IDENTIFIER, "Expected parameter name.");
+                int pidx = VM::resolve_private(previous_.start, previous_.length);
+                if (arity < 16) priv_map[arity] = (int8_t)pidx;
                 add_local(previous_);
                 arity++;
             } while (match(TOK_COMMA));
@@ -388,6 +395,7 @@ namespace zen
         ObjFunc *fn = state_->emitter.end(state_->max_reg);
         fn->arity = arity;
         fn->is_process = 1;
+        memcpy(fn->param_privates, priv_map, sizeof(fn->param_privates));
 
         /* Copy upvalue descriptors */
         int nuv = state_->upvalue_count;
@@ -542,6 +550,7 @@ namespace zen
                 fn_state.upvalue_count = 0;
                 fn_state.loop_depth = 0;
                 fn_state.is_method = true;
+                fn_state.is_process = false;
 
                 char fn_name[192];
                 snprintf(fn_name, sizeof(fn_name), "%s.%s", name_buf, methods[method_count].name);

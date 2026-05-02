@@ -98,6 +98,7 @@ namespace zen
         TOK_FATHER,
         TOK_SON,
         TOK_ID,
+        TOK_TYPE,
 
         /* Special */
         TOK_UNDERSCORE, /* _ (discard) */

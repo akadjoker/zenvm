@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 
 namespace zen
 {
@@ -838,12 +839,18 @@ namespace zen
         return 1;
     }
 
-    /* get_my_id() — returns the ID of the calling process */
-    static int nat_get_my_id(VM *vm, Value *args, int nargs)
+    /* advance(dist) — move current process along its angle by dist (or speed if no arg) */
+    static int nat_advance(VM *vm, Value *args, int nargs)
     {
-        (void)nargs;
-        args[0] = val_int(vm->current_process_id());
-        return 1;
+        VM::ProcessSlot *slot = vm->current_slot();
+        if (!slot) { vm->runtime_error("advance() outside process"); return 0; }
+        double angle = to_number(slot->privates[VM::PRIV_ANGLE]) * 3.14159265358979323846 / 180.0;
+        double dist = (nargs > 0) ? to_number(args[0]) : to_number(slot->privates[VM::PRIV_SPEED]);
+        double x = to_number(slot->privates[VM::PRIV_X]);
+        double y = to_number(slot->privates[VM::PRIV_Y]);
+        slot->privates[VM::PRIV_X] = val_float(x + dist * cos(angle));
+        slot->privates[VM::PRIV_Y] = val_float(y + dist * sin(angle));
+        return 0;
     }
 
     /* =========================================================
@@ -877,7 +884,7 @@ namespace zen
         {"signal", nat_signal, -1},
         {"let_me_alone", nat_let_me_alone, 0},
         {"get_id", nat_get_id, 1},
-        {"get_my_id", nat_get_my_id, 0},
+        {"advance", nat_advance, -1},
     };
 
     static const NativeConst base_constants[] = {

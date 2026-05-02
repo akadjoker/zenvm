@@ -266,6 +266,7 @@ namespace zen
         fn->const_capacity = 0;
         fn->upvalue_count = 0;
         fn->is_process = 0;
+        memset(fn->param_privates, -1, sizeof(fn->param_privates));
         fn->code = nullptr;
         fn->lines = nullptr;
         fn->constants = nullptr;

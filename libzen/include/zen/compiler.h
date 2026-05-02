@@ -92,7 +92,8 @@ namespace zen
         LoopCtx loops[16];
         int loop_depth;
 
-        bool is_method; /* are we inside a class method? */
+        bool is_method;  /* are we inside a class method? */
+        bool is_process; /* are we inside a process body? */
     };
 
     class Compiler

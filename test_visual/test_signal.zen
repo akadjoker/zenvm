@@ -2,7 +2,7 @@
 
 process worker(x, y) {
     loop {
-        print("worker id=", get_my_id(), " x=", x);
+        print("worker id=", id, " x=", x);
         x = x + 1;
         frame;
     }

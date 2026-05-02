@@ -470,6 +470,7 @@ TokenType Lexer::identifier_type() {
                 switch (start_[1]) {
                     case 'a': return check_keyword(2, 1, "n", TOK_TAN);
                     case 'r': return check_keyword(2, 2, "ue", TOK_TRUE);
+                    case 'y': return check_keyword(2, 2, "pe", TOK_TYPE);
                 }
             }
             break;

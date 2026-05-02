@@ -19,7 +19,7 @@ namespace zen
     ** Construtor / Destrutor
     ** ========================================================= */
 
-    VM::VM() : on_process_start(nullptr), on_process_update(nullptr), on_process_end(nullptr), num_globals_(0), main_fiber_(nullptr), current_fiber_(nullptr), fiber_depth_(0), had_error_(false), num_search_paths_(0), num_libs_(0), num_plugins_(0), num_selectors_(0), pool_(nullptr), num_alive_(0), pool_capacity_(0), next_process_id_(1), current_process_id_(-1)
+    VM::VM() : on_process_start(nullptr), on_process_update(nullptr), on_process_end(nullptr), num_globals_(0), main_fiber_(nullptr), current_fiber_(nullptr), fiber_depth_(0), had_error_(false), num_search_paths_(0), num_libs_(0), num_plugins_(0), num_selectors_(0), pool_(nullptr), num_alive_(0), pool_capacity_(0), next_process_id_(1), current_process_id_(-1), current_slot_idx_(-1)
     {
         gc_init(&gc_);
         gc_.vm = this;
@@ -1165,6 +1165,107 @@ namespace zen
     ** Pool grows dynamically (no fixed limit).
     ** ========================================================= */
 
+    /* Resolve a field name to a PrivateIndex (-1 = not a private) */
+    int VM::resolve_private(const char *name, int len)
+    {
+        switch (name[0])
+        {
+        case 'a':
+            if (len == 5 && memcmp(name, "angle", 5) == 0) return PRIV_ANGLE;
+            if (len == 5 && memcmp(name, "alpha", 5) == 0) return PRIV_ALPHA;
+            if (len == 6 && memcmp(name, "active", 6) == 0) return PRIV_ACTIVE;
+            return -1;
+        case 'b':
+            if (len == 4 && memcmp(name, "blue", 4) == 0) return PRIV_BLUE;
+            return -1;
+        case 'f':
+            if (len == 5 && memcmp(name, "flags", 5) == 0) return PRIV_FLAGS;
+            if (len == 6 && memcmp(name, "father", 6) == 0) return PRIV_FATHER;
+            return -1;
+        case 'g':
+            if (len == 5 && memcmp(name, "graph", 5) == 0) return PRIV_GRAPH;
+            if (len == 5 && memcmp(name, "green", 5) == 0) return PRIV_GREEN;
+            if (len == 5 && memcmp(name, "group", 5) == 0) return PRIV_GROUP;
+            return -1;
+        case 'h':
+            if (len == 2 && name[1] == 'p') return PRIV_HP;
+            return -1;
+        case 'i':
+            if (len == 2 && name[1] == 'd') return PRIV_ID;
+            return -1;
+        case 'l':
+            if (len == 4 && memcmp(name, "life", 4) == 0) return PRIV_LIFE;
+            return -1;
+        case 'p':
+            if (len == 8 && memcmp(name, "progress", 8) == 0) return PRIV_PROGRESS;
+            return -1;
+        case 'r':
+            if (len == 3 && memcmp(name, "red", 3) == 0) return PRIV_RED;
+            return -1;
+        case 's':
+            if (len == 4 && memcmp(name, "size", 4) == 0) return PRIV_SIZE;
+            if (len == 5 && memcmp(name, "sizex", 5) == 0) return PRIV_SIZEX;
+            if (len == 5 && memcmp(name, "sizey", 5) == 0) return PRIV_SIZEY;
+            if (len == 5 && memcmp(name, "state", 5) == 0) return PRIV_STATE;
+            if (len == 5 && memcmp(name, "speed", 5) == 0) return PRIV_SPEED;
+            if (len == 4 && memcmp(name, "show", 4) == 0) return PRIV_SHOW;
+            return -1;
+        case 't':
+            if (len == 3 && memcmp(name, "tag", 3) == 0) return PRIV_TAG;
+            if (len == 4 && memcmp(name, "type", 4) == 0) return PRIV_TYPE;
+            return -1;
+        case 'v':
+            if (len == 4 && memcmp(name, "velx", 4) == 0) return PRIV_VELX;
+            if (len == 4 && memcmp(name, "vely", 4) == 0) return PRIV_VELY;
+            return -1;
+        case 'x':
+            if (len == 1) return PRIV_X;
+            if (len == 4 && memcmp(name, "xold", 4) == 0) return PRIV_XOLD;
+            return -1;
+        case 'y':
+            if (len == 1) return PRIV_Y;
+            if (len == 4 && memcmp(name, "yold", 4) == 0) return PRIV_YOLD;
+            return -1;
+        case 'z':
+            if (len == 1) return PRIV_Z;
+            return -1;
+        }
+        return -1;
+    }
+
+    static void init_privates(Value *p)
+    {
+        p[VM::PRIV_ID]       = val_int(0);
+        p[VM::PRIV_FATHER]   = val_int(-1);
+        p[VM::PRIV_X]        = val_float(0);
+        p[VM::PRIV_Y]        = val_float(0);
+        p[VM::PRIV_Z]        = val_int(0);
+        p[VM::PRIV_GRAPH]    = val_int(-1);
+        p[VM::PRIV_ANGLE]    = val_int(0);
+        p[VM::PRIV_SIZE]     = val_int(100);
+        p[VM::PRIV_FLAGS]    = val_int(0);
+        p[VM::PRIV_RED]      = val_int(255);
+        p[VM::PRIV_GREEN]    = val_int(255);
+        p[VM::PRIV_BLUE]     = val_int(255);
+        p[VM::PRIV_ALPHA]    = val_int(255);
+        p[VM::PRIV_TAG]      = val_int(0);
+        p[VM::PRIV_STATE]    = val_int(0);
+        p[VM::PRIV_SPEED]    = val_float(0);
+        p[VM::PRIV_GROUP]    = val_int(0);
+        p[VM::PRIV_VELX]     = val_float(0);
+        p[VM::PRIV_VELY]     = val_float(0);
+        p[VM::PRIV_HP]       = val_int(0);
+        p[VM::PRIV_PROGRESS] = val_float(0);
+        p[VM::PRIV_LIFE]     = val_int(100);
+        p[VM::PRIV_ACTIVE]   = val_int(1);
+        p[VM::PRIV_SHOW]     = val_int(1);
+        p[VM::PRIV_XOLD]     = val_float(0);
+        p[VM::PRIV_YOLD]     = val_float(0);
+        p[VM::PRIV_SIZEX]    = val_float(100.0);
+        p[VM::PRIV_SIZEY]    = val_float(100.0);
+        p[VM::PRIV_TYPE]     = val_nil();
+    }
+
     static void pool_grow(VM::ProcessSlot *&pool, int &capacity)
     {
         int new_cap = capacity < 64 ? 64 : capacity * 2;
@@ -1231,7 +1332,30 @@ namespace zen
         int id = next_process_id_++;
         fiber->process_id = id;
         int parent = current_process_id_; /* who is spawning me */
-        pool_[num_alive_] = { fiber, id, 0, parent, -1 };
+
+        ProcessSlot &slot = pool_[num_alive_];
+        slot.fiber = fiber;
+        slot.id = id;
+        slot.parent_id = parent;
+        slot.last_child_id = -1;
+        init_privates(slot.privates);
+        slot.privates[PRIV_ID] = val_int(id);
+        slot.privates[PRIV_FATHER] = val_int(parent);
+        slot.privates[PRIV_TYPE] = val_obj((Obj*)closure->func);
+
+        /* Copy args that map to private fields */
+        if (args && nargs > 0)
+        {
+            int max_args = nargs < closure->func->arity ? nargs : closure->func->arity;
+            if (max_args > 16) max_args = 16;
+            for (int i = 0; i < max_args; i++)
+            {
+                int pidx = closure->func->param_privates[i];
+                if (pidx >= 0 && pidx < MAX_PRIVATES)
+                    slot.privates[pidx] = args[i];
+            }
+        }
+
         num_alive_++;
 
         /* Update parent's last_child_id */
@@ -1302,9 +1426,9 @@ namespace zen
         /* qsort by z (lower z = first in array = drawn first) */
         qsort(pool_, num_alive_, sizeof(ProcessSlot),
               [](const void *a, const void *b) -> int {
-                  int za = ((const ProcessSlot *)a)->z;
-                  int zb = ((const ProcessSlot *)b)->z;
-                  return za - zb;
+                  int64_t za = to_integer(((const ProcessSlot *)a)->privates[PRIV_Z]);
+                  int64_t zb = to_integer(((const ProcessSlot *)b)->privates[PRIV_Z]);
+                  return (za < zb) ? -1 : (za > zb) ? 1 : 0;
               });
     }
 
@@ -1385,7 +1509,7 @@ namespace zen
             if (proc->state == FIBER_DONE || proc->state == FIBER_ERROR)
             {
                 if (on_process_end)
-                    on_process_end(this, proc);
+                    on_process_end(this, &slot);
                 free_process_fiber(proc);
                 pool_[i] = pool_[--num_alive_];
                 continue;
@@ -1418,7 +1542,9 @@ namespace zen
                 proc->state = FIBER_RUNNING;
                 current_fiber_ = proc;
                 current_process_id_ = slot.id;
+                current_slot_idx_ = i;
                 execute(proc);
+                current_slot_idx_ = -1;
                 current_process_id_ = -1;
                 current_fiber_ = main_fiber_;
 
@@ -1430,9 +1556,9 @@ namespace zen
                 }
 
                 if (on_process_start && proc->state == FIBER_SUSPENDED)
-                    on_process_start(this, proc);
+                    on_process_start(this, &slot);
                 if (on_process_update && proc->state == FIBER_SUSPENDED)
-                    on_process_update(this, proc);
+                    on_process_update(this, &slot);
             }
             /* Suspended = resume */
             else if (proc->state == FIBER_SUSPENDED)
@@ -1440,7 +1566,9 @@ namespace zen
                 proc->state = FIBER_RUNNING;
                 current_fiber_ = proc;
                 current_process_id_ = slot.id;
+                current_slot_idx_ = i;
                 execute(proc);
+                current_slot_idx_ = -1;
                 current_process_id_ = -1;
                 current_fiber_ = main_fiber_;
 
@@ -1452,14 +1580,14 @@ namespace zen
                 }
 
                 if (on_process_update && proc->state == FIBER_SUSPENDED)
-                    on_process_update(this, proc);
+                    on_process_update(this, &slot);
             }
 
             /* Check if died during execution */
             if (proc->state == FIBER_DONE || proc->state == FIBER_ERROR)
             {
                 if (on_process_end)
-                    on_process_end(this, proc);
+                    on_process_end(this, &slot);
                 free_process_fiber(proc);
                 pool_[i] = pool_[--num_alive_];
                 continue;
@@ -1474,7 +1602,7 @@ namespace zen
     void VM::for_each_process(ProcessIterFn fn, void *userdata)
     {
         for (int i = 0; i < num_alive_; i++)
-            fn(this, pool_[i].fiber, pool_[i].id, userdata);
+            fn(this, &pool_[i], userdata);
     }
 
 } /* namespace zen */

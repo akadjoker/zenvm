@@ -63,6 +63,7 @@ namespace zen
         script_state.upvalue_count = 0;
         script_state.loop_depth = 0;
         script_state.is_method = false;
+        script_state.is_process = false;
 
         script_state.emitter.begin(filename, 0, filename);
         state_ = &script_state;

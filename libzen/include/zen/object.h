@@ -129,6 +129,7 @@ namespace zen
         int32_t const_capacity;
         int32_t upvalue_count; /* número de upvalues que o closure captura */
         uint8_t is_process;   /* 1 = process (call spawns, body loops with FRAME) */
+        int8_t param_privates[16]; /* param_privates[i] = private index for arg i (-1=local) */
         Instruction *code; /* bytecode array (fixo após compilação) */
         int32_t *lines;    /* lines[i] = source line da instrução i */
         Value *constants;  /* pool de constantes (ints, floats, strings) */

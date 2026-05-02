@@ -37,3 +37,8 @@ option(ZEN_BUILD_VISUAL "Build visual benchmark (requires raylib)" ON)
 if(ZEN_BUILD_VISUAL)
     add_subdirectory(test_visual)
 endif()
+
+option(ZEN_BUILD_GFX "Build graphics engine prototype (requires raylib)" ON)
+if(ZEN_BUILD_GFX)
+    add_subdirectory(test_gfx)
+endif()

@@ -827,32 +827,31 @@ namespace zen
 
         CASE(OP_PROC_GET)
         {
-            /* R[A] = process[mode].stack[C]
+            /* R[A] = process[mode].privates[C]
             ** B: 0=self, 1=father, 2=son */
             uint32_t i = *ip;
             int a = ZEN_A(i);
             int mode = ZEN_B(i);
             int field = ZEN_C(i);
-            int target_id = -1;
+            ProcessSlot *target = nullptr;
 
-            if (mode == 1) /* father */
+            if (mode == 0) /* self */
+            {
+                target = find_slot(current_process_id_);
+            }
+            else if (mode == 1) /* father */
             {
                 ProcessSlot *self = find_slot(current_process_id_);
-                if (self) target_id = self->parent_id;
+                if (self) target = find_slot(self->parent_id);
             }
-            else if (mode == 2) /* son */
+            else /* son */
             {
                 ProcessSlot *self = find_slot(current_process_id_);
-                if (self) target_id = self->last_child_id;
-            }
-            else /* self */
-            {
-                target_id = current_process_id_;
+                if (self) target = find_slot(self->last_child_id);
             }
 
-            ObjFiber *target = (target_id >= 0) ? get_process(target_id) : nullptr;
-            if (target && field < (int)(target->stack_top - target->stack))
-                R[a] = target->stack[field];
+            if (target && field < MAX_PRIVATES)
+                R[a] = target->privates[field];
             else
                 R[a] = val_nil();
             NEXT();
@@ -860,40 +859,31 @@ namespace zen
 
         CASE(OP_PROC_SET)
         {
-            /* process[mode].stack[C] = R[A]
+            /* process[mode].privates[C] = R[A]
             ** B: 0=self, 1=father, 2=son */
             uint32_t i = *ip;
             int a = ZEN_A(i);
             int mode = ZEN_B(i);
             int field = ZEN_C(i);
-            int target_id = -1;
+            ProcessSlot *target = nullptr;
 
-            if (mode == 1) /* father */
+            if (mode == 0) /* self */
+            {
+                target = find_slot(current_process_id_);
+            }
+            else if (mode == 1) /* father */
             {
                 ProcessSlot *self = find_slot(current_process_id_);
-                if (self) target_id = self->parent_id;
+                if (self) target = find_slot(self->parent_id);
             }
-            else if (mode == 2) /* son */
+            else /* son */
             {
                 ProcessSlot *self = find_slot(current_process_id_);
-                if (self) target_id = self->last_child_id;
-            }
-            else /* self */
-            {
-                target_id = current_process_id_;
+                if (self) target = find_slot(self->last_child_id);
             }
 
-            ObjFiber *target = (target_id >= 0) ? get_process(target_id) : nullptr;
-            if (target && field < (int)(target->stack_top - target->stack))
-                target->stack[field] = R[a];
-            NEXT();
-        }
-
-        CASE(OP_PROC_ID)
-        {
-            uint32_t i = *ip;
-            int a = ZEN_A(i);
-            R[a] = val_int(fiber->process_id);
+            if (target && field < MAX_PRIVATES)
+                target->privates[field] = R[a];
             NEXT();
         }
 
