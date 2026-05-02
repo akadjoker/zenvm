@@ -2,9 +2,11 @@
 /test_collections
 /zen
 /zen_bench
+/build_release
 /study
 # Build artifacts
 *.o
 *.so
 *.a
 /DIV
+/bin
