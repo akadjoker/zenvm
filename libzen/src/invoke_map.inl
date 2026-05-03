@@ -7,7 +7,9 @@
 
 ObjMap *map = as_map(receiver);
 
-if (mlen == 3 && memcmp(mname, "set", 3) == 0)
+switch (method->map_method_id)
+{
+case MAP_SET:
 {
     /* map.set(key, val) → sets key, returns val */
     if (arg_count != 2)
@@ -17,8 +19,9 @@ if (mlen == 3 && memcmp(mname, "set", 3) == 0)
     }
     map_set(&gc_, map, args[0], args[1]);
     R[base] = args[1];
+    break;
 }
-else if (mlen == 3 && memcmp(mname, "get", 3) == 0)
+case MAP_GET:
 {
     /* map.get(key) or map.get(key, default) → value or nil/default */
     if (arg_count < 1)
@@ -32,8 +35,9 @@ else if (mlen == 3 && memcmp(mname, "get", 3) == 0)
         R[base] = result;
     else
         R[base] = (arg_count >= 2) ? args[1] : val_nil();
+    break;
 }
-else if (mlen == 3 && memcmp(mname, "has", 3) == 0)
+case MAP_HAS:
 {
     /* map.has(key) → bool */
     if (arg_count != 1)
@@ -42,8 +46,9 @@ else if (mlen == 3 && memcmp(mname, "has", 3) == 0)
         return;
     }
     R[base] = val_bool(map_contains(map, args[0]));
+    break;
 }
-else if (mlen == 6 && memcmp(mname, "delete", 6) == 0)
+case MAP_DELETE:
 {
     /* map.delete(key) → removes key, returns true if existed */
     if (arg_count != 1)
@@ -52,34 +57,40 @@ else if (mlen == 6 && memcmp(mname, "delete", 6) == 0)
         return;
     }
     R[base] = val_bool(map_delete(map, args[0]));
+    break;
 }
-else if (mlen == 4 && memcmp(mname, "keys", 4) == 0)
+case MAP_KEYS:
 {
     /* map.keys() → array of keys */
     ObjArray *result = new_array(&gc_);
     map_keys(&gc_, map, result);
     R[base] = val_obj((Obj *)result);
+    break;
 }
-else if (mlen == 6 && memcmp(mname, "values", 6) == 0)
+case MAP_VALUES:
 {
     /* map.values() → array of values */
     ObjArray *result = new_array(&gc_);
     map_values(&gc_, map, result);
     R[base] = val_obj((Obj *)result);
+    break;
 }
-else if (mlen == 4 && memcmp(mname, "size", 4) == 0)
+case MAP_SIZE:
 {
     /* map.size() → number of entries */
     R[base] = val_int(map->count);
+    break;
 }
-else if (mlen == 5 && memcmp(mname, "clear", 5) == 0)
+case MAP_CLEAR:
 {
     /* map.clear() → remove all entries */
     map_clear(&gc_, map);
     R[base] = val_nil();
+    break;
 }
-else
+default:
 {
     runtime_error("map has no method '%s'", mname);
     return;
+}
 }

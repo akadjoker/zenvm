@@ -144,11 +144,17 @@ namespace zen
         memcpy(name_buf, type_name.start, len);
         name_buf[len] = '\0';
 
-        int gidx = vm_->find_global(name_buf);
-        if (gidx < 0)
-            gidx = vm_->def_global(name_buf, val_nil());
-
         int reg = dest >= 0 ? dest : alloc_reg();
+        int gidx = require_global_slot(name_buf, &type_name);
+        if (gidx < 0)
+        {
+            state_->emitter.emit_abc(OP_LOADNIL, reg, 0, 0, type_name.line);
+            if (reg >= 0 && reg < 256)
+                state_->reg_class_hints[reg] = nullptr;
+            last_call_struct_def_ = nullptr;
+            last_call_class_def_ = nullptr;
+            return reg;
+        }
         state_->emitter.emit_abx(OP_GETGLOBAL, reg, gidx, type_name.line);
         return reg;
     }
@@ -386,6 +392,10 @@ namespace zen
             state_->emitter.emit_abx(OP_LOADK, reg, ki, token.line);
         }
 
+        last_call_struct_def_ = nullptr;
+        last_call_class_def_ = nullptr;
+        if (reg >= 0 && reg < 256)
+            state_->reg_class_hints[reg] = nullptr;
         return reg;
     }
 
@@ -400,6 +410,10 @@ namespace zen
             error(state_->emitter.escape_error());
         }
         state_->emitter.emit_abx(OP_LOADK, reg, ki, token.line);
+        last_call_struct_def_ = nullptr;
+        last_call_class_def_ = nullptr;
+        if (reg >= 0 && reg < 256)
+            state_->reg_class_hints[reg] = nullptr;
         return reg;
     }
 
@@ -409,6 +423,10 @@ namespace zen
         /* Skip @" prefix and closing " → token.start+2, token.length-3 */
         int ki = state_->emitter.add_verbatim_string_constant(token.start + 2, token.length - 3);
         state_->emitter.emit_abx(OP_LOADK, reg, ki, token.line);
+        last_call_struct_def_ = nullptr;
+        last_call_class_def_ = nullptr;
+        if (reg >= 0 && reg < 256)
+            state_->reg_class_hints[reg] = nullptr;
         return reg;
     }
 
@@ -433,9 +451,7 @@ namespace zen
         expression(tmp);
         /* Convert expression to string */
         ObjClass *tmp_class = class_hint_for_reg(tmp);
-        int str_slot = vm_->find_selector("__str__", 7);
-        bool has_str = tmp_class && str_slot >= 0 && str_slot < tmp_class->vtable_size &&
-                       !is_nil(tmp_class->vtable[str_slot]);
+        bool has_str = tmp_class && !is_nil(tmp_class->operator_slots[VM::SLOT_STR]);
         state_->emitter.emit_abc(has_str ? OP_TOSTRING_OBJ : OP_TOSTRING, tmp, tmp, 0, token.line);
         /* Concat: reg = reg .. tmp */
         state_->emitter.emit_abc(OP_CONCAT, reg, reg, tmp, token.line);
@@ -461,8 +477,7 @@ namespace zen
             tmp = alloc_reg();
             expression(tmp);
             tmp_class = class_hint_for_reg(tmp);
-            has_str = tmp_class && str_slot >= 0 && str_slot < tmp_class->vtable_size &&
-                      !is_nil(tmp_class->vtable[str_slot]);
+            has_str = tmp_class && !is_nil(tmp_class->operator_slots[VM::SLOT_STR]);
             state_->emitter.emit_abc(has_str ? OP_TOSTRING_OBJ : OP_TOSTRING, tmp, tmp, 0, token.line);
             state_->emitter.emit_abc(OP_CONCAT, reg, reg, tmp, token.line);
             free_reg(tmp);
@@ -487,6 +502,10 @@ namespace zen
             error("Unterminated interpolated string.");
         }
 
+        last_call_struct_def_ = nullptr;
+        last_call_class_def_ = nullptr;
+        if (reg >= 0 && reg < 256)
+            state_->reg_class_hints[reg] = nullptr;
         return reg;
     }
 
@@ -507,6 +526,10 @@ namespace zen
         default:
             break;
         }
+        last_call_struct_def_ = nullptr;
+        last_call_class_def_ = nullptr;
+        if (reg >= 0 && reg < 256)
+            state_->reg_class_hints[reg] = nullptr;
         return reg;
     }
 
@@ -695,9 +718,7 @@ namespace zen
                 }
             }
 
-            gidx = vm_->find_global(name_buf);
-            if (gidx < 0)
-                gidx = vm_->def_global(name_buf, val_nil());
+            gidx = require_global_slot(name_buf, &token);
         resolved:;
         }
 
@@ -735,10 +756,10 @@ namespace zen
                 {
                     state_->emitter.emit_abc(OP_SETUPVAL, val_reg, upval, 0, token.line);
                 }
-                else
+                else if (gidx >= 0)
                 {
                     state_->emitter.emit_abx(OP_SETGLOBAL, val_reg, gidx, token.line);
-                    if (gidx >= 0 && gidx < MAX_GLOBALS)
+                    if (ensure_global_class_hint(gidx))
                         global_class_hints_[gidx] = last_call_class_def_ ? last_call_class_def_ : state_->reg_class_hints[val_reg];
                 }
                 if (dest >= 0 && dest != val_reg)
@@ -764,8 +785,10 @@ namespace zen
                     cur_reg = alloc_reg();
                     if (upval != -1)
                         state_->emitter.emit_abc(OP_GETUPVAL, cur_reg, upval, 0, token.line);
-                    else
+                    else if (gidx >= 0)
                         state_->emitter.emit_abx(OP_GETGLOBAL, cur_reg, gidx, token.line);
+                    else
+                        state_->emitter.emit_abc(OP_LOADNIL, cur_reg, 0, 0, token.line);
                 }
 
                 /* Compile RHS */
@@ -810,7 +833,7 @@ namespace zen
                 {
                     if (upval != -1)
                         state_->emitter.emit_abc(OP_SETUPVAL, cur_reg, upval, 0, token.line);
-                    else
+                    else if (gidx >= 0)
                         state_->emitter.emit_abx(OP_SETGLOBAL, cur_reg, gidx, token.line);
                     free_reg(cur_reg);
                 }
@@ -842,8 +865,17 @@ namespace zen
         /* Global */
         if (reg < 0)
             reg = alloc_reg();
+        if (gidx < 0)
+        {
+            state_->emitter.emit_abc(OP_LOADNIL, reg, 0, 0, token.line);
+            if (reg >= 0 && reg < 256)
+                state_->reg_class_hints[reg] = nullptr;
+            last_call_struct_def_ = nullptr;
+            last_call_class_def_ = nullptr;
+            return reg;
+        }
         state_->emitter.emit_abx(OP_GETGLOBAL, reg, gidx, token.line);
-        if (gidx >= 0 && gidx < MAX_GLOBALS && global_class_hints_[gidx])
+        if (gidx >= 0 && gidx < global_class_hints_capacity_ && global_class_hints_[gidx])
             state_->reg_class_hints[reg] = global_class_hints_[gidx];
 
         /* Track struct def for type inference (used by var_declaration) */
@@ -852,7 +884,7 @@ namespace zen
             last_call_struct_def_ = as_struct_def(gval);
         else
             last_call_struct_def_ = nullptr;
-        if (gidx >= 0 && gidx < MAX_GLOBALS && global_class_hints_[gidx])
+        if (gidx >= 0 && gidx < global_class_hints_capacity_ && global_class_hints_[gidx])
             last_call_class_def_ = global_class_hints_[gidx];
         else if (is_class(gval))
             last_call_class_def_ = as_class(gval);
@@ -928,6 +960,10 @@ namespace zen
             } while (match(TOK_COMMA));
         }
         consume(TOK_RBRACKET, "Expected ']' after array literal.");
+        last_call_struct_def_ = nullptr;
+        last_call_class_def_ = nullptr;
+        if (reg >= 0 && reg < 256)
+            state_->reg_class_hints[reg] = nullptr;
         return reg;
     }
 
@@ -953,6 +989,10 @@ namespace zen
             } while (match(TOK_COMMA));
         }
         consume(TOK_RBRACE, "Expected '}' after map literal.");
+        last_call_struct_def_ = nullptr;
+        last_call_class_def_ = nullptr;
+        if (reg >= 0 && reg < 256)
+            state_->reg_class_hints[reg] = nullptr;
         return reg;
     }
 
@@ -975,6 +1015,10 @@ namespace zen
             } while (match(TOK_COMMA));
         }
         consume(TOK_RBRACE, "Expected '}' after set literal.");
+        last_call_struct_def_ = nullptr;
+        last_call_class_def_ = nullptr;
+        if (reg >= 0 && reg < 256)
+            state_->reg_class_hints[reg] = nullptr;
         return reg;
     }
 
@@ -1018,6 +1062,10 @@ namespace zen
         state_->emitter.emit_abc(OP_NEWBUFFER, reg, arg_reg, (int)btype, previous_.line);
         if (arg_reg != reg)
             free_reg(arg_reg);
+        last_call_struct_def_ = nullptr;
+        last_call_class_def_ = nullptr;
+        if (reg >= 0 && reg < 256)
+            state_->reg_class_hints[reg] = nullptr;
         return reg;
     }
 
@@ -1185,8 +1233,9 @@ namespace zen
         int base;
         int save_next = state_->next_reg;
 
-        /* Save struct def hint — argument expressions must not clobber it */
+        /* Save call-site type hints — argument expressions must not clobber them */
         ObjStructDef *saved_struct_def = last_call_struct_def_;
+        ObjClass *saved_class_def = last_call_class_def_;
 
         if (is_local_reg(func_reg))
         {
@@ -1234,8 +1283,9 @@ namespace zen
         /* Restore register allocation */
         state_->next_reg = save_next > base + 1 ? save_next : base + 1;
 
-        /* Restore struct def hint (argument expressions may have clobbered it) */
+        /* Restore call-site type hints (argument expressions may have clobbered them) */
         last_call_struct_def_ = saved_struct_def;
+        last_call_class_def_ = saved_class_def;
 
         if (result_reg != base)
         {
@@ -1251,6 +1301,7 @@ namespace zen
         int base;
         int save_next = state_->next_reg;
         ObjStructDef *saved_struct_def = last_call_struct_def_;
+        ObjClass *saved_class_def = last_call_class_def_;
 
         if (is_local_reg(func_reg))
         {
@@ -1295,6 +1346,7 @@ namespace zen
         state_->emitter.emit_abc(OP_CALL, base, arg_count, 1, previous_.line);
         state_->next_reg = save_next > base + 1 ? save_next : base + 1;
         last_call_struct_def_ = saved_struct_def;
+        last_call_class_def_ = saved_class_def;
 
         if (result_reg != base)
             emit_move(result_reg, base);
@@ -1559,11 +1611,15 @@ namespace zen
                 state_->emitter.emit((uint32_t)name_ki, previous_.line);
             }
 
-            /* Result is in R[base] */
+            /* Result is in R[base]. Without explicit return-type tracking,
+               method calls must not inherit the receiver class hint. */
             state_->next_reg = save_next > base + 1 ? save_next : base + 1;
             int result_reg = dest >= 0 ? dest : base;
             if (result_reg != base)
                 emit_move(result_reg, base);
+            last_call_class_def_ = nullptr;
+            if (result_reg >= 0 && result_reg < 256)
+                state_->reg_class_hints[result_reg] = nullptr;
             return result_reg;
         }
 

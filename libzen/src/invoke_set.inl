@@ -7,36 +7,43 @@
 
 ObjSet *set = as_set(receiver);
 
-if (mlen == 3 && memcmp(mname, "add", 3) == 0)
+switch (method->set_method_id)
+{
+case SET_ADD:
 {
     /* set.add(val) → returns true if newly added */
     if (arg_count != 1) { runtime_error("add() expects 1 argument"); return; }
     R[base] = val_bool(set_add(&gc_, set, args[0]));
+    break;
 }
-else if (mlen == 3 && memcmp(mname, "has", 3) == 0)
+case SET_HAS:
 {
     /* set.has(val) → bool */
     if (arg_count != 1) { runtime_error("has() expects 1 argument"); return; }
     R[base] = val_bool(set_contains(set, args[0]));
+    break;
 }
-else if (mlen == 6 && memcmp(mname, "delete", 6) == 0)
+case SET_DELETE:
 {
     /* set.delete(val) → returns true if was present */
     if (arg_count != 1) { runtime_error("delete() expects 1 argument"); return; }
     R[base] = val_bool(set_remove(set, args[0]));
+    break;
 }
-else if (mlen == 4 && memcmp(mname, "size", 4) == 0)
+case SET_SIZE:
 {
     /* set.size() → number of elements */
     R[base] = val_int(set->count);
+    break;
 }
-else if (mlen == 5 && memcmp(mname, "clear", 5) == 0)
+case SET_CLEAR:
 {
     /* set.clear() → remove all elements */
     set_clear(&gc_, set);
     R[base] = val_nil();
+    break;
 }
-else if (mlen == 6 && memcmp(mname, "values", 6) == 0)
+case SET_VALUES:
 {
     /* set.values() → array of all values */
     ObjArray *result = new_array(&gc_);
@@ -46,9 +53,11 @@ else if (mlen == 6 && memcmp(mname, "values", 6) == 0)
         }
     }
     R[base] = val_obj((Obj *)result);
+    break;
 }
-else
+default:
 {
     runtime_error("set has no method '%s'", mname);
     return;
+}
 }

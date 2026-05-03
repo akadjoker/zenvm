@@ -94,6 +94,7 @@ namespace zen
         void destroy_instance(Value instance);                   /* destroy persistent instance */
         Value invoke(Value instance, const char *method, Value *args, int nargs);
         Value invoke(Value instance, int slot, Value *args, int nargs); /* vtable slot, O(1) */
+        Value invoke_operator(Value instance, int slot, Value *args, int nargs);
 
         enum OperatorSlot : int
         {
@@ -112,7 +113,7 @@ namespace zen
             SLOT_LT,
             SLOT_LE,
             SLOT_STR,
-            SLOT_OPERATOR_COUNT
+            SLOT_OPERATOR_COUNT = kOperatorSlotCount
         };
 
         /* --- Struct builder --- */
@@ -288,10 +289,15 @@ namespace zen
         /* --- Estado --- */
         GC gc_;
 
-        /* Globals */
-        Value globals_[MAX_GLOBALS];
-        ObjString *global_names_[MAX_GLOBALS];
+        /* Globals — dynamic. Grows on demand via def_global up to
+        ** kMaxGlobalsHard (65536, dictated by OP_GETGLOBAL Bx encoding).
+        ** Same safety argument as selectors_: callers only hold integer
+        ** indices, never raw pointers into the array, so realloc is safe. */
+        Value *globals_;
+        ObjString **global_names_;
         int num_globals_;
+        int globals_capacity_;
+        bool grow_globals(int required); /* internal — returns false on hard cap */
 
         /* Main fiber (script top-level corre aqui) */
         ObjFiber *main_fiber_;
@@ -315,10 +321,18 @@ namespace zen
         void *plugin_handles_[MAX_PLUGINS];
         int num_plugins_;
 
-        /* Method selector table (for vtable dispatch) */
-        static const int MAX_SELECTORS = 256;
-        ObjString *selectors_[MAX_SELECTORS]; /* interned method names */
+        /* Method selector table (for vtable dispatch).
+        ** Dynamic: grows on demand via intern_selector().
+        ** The array of pointers may move on realloc, but:
+        **   - Slot indices (int) returned to callers stay valid forever
+        **     (we only append, never reorder).
+        **   - The ObjString* objects themselves are GC-allocated and never
+        **     move when this array reallocates.
+        ** So no caller is at risk of dangling references after a grow. */
+        static const int kInitSelectorCapacity = 32;
+        ObjString **selectors_;       /* interned method names (heap-allocated) */
         int num_selectors_;
+        int selectors_capacity_;
 
         /* Process pool (dynamic, compact, swap-remove) */
         ProcessSlot *pool_;         /* dynamic array of alive processes */

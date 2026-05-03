@@ -1,0 +1,325 @@
+// ============================================================
+// FlxState — base de todos os estados do jogo
+// FlxG      — global state (world bounds, gravity, etc.)
+// PlayState — exemplo de jogo completo em lógica pura
+// ============================================================
+
+import flx_object;
+import flx_sprite;
+import flx_group;
+import flx_camera;
+import flx_timer_tween;
+import flx_collision;
+
+// ==========================================================
+// FlxG — singleton global
+// ==========================================================
+
+class FlxG {
+    var width;
+    var height;
+
+    var gravity_x;
+    var gravity_y;
+
+    var elapsed;      // dt do frame actual
+    var fps;
+
+    var camera;       // câmara principal
+
+    // tweens e timers globais
+    var tweens;
+    var timers;
+
+    def init(w, h) {
+        self.width  = w;
+        self.height = h;
+        self.gravity_x = 0;
+        self.gravity_y = 0;
+        self.elapsed = 0;
+        self.fps     = 0;
+        self.camera  = FlxCamera(0, 0, w, h);
+        self.tweens  = FlxTweenManager();
+        self.timers  = [];
+    }
+
+    def update(dt) {
+        self.elapsed = dt;
+        if (dt > 0) { self.fps = int(1.0 / dt); }
+        self.camera.update(dt);
+        self.tweens.update(dt);
+
+        var i = 0;
+        while (i < self.timers.len()) {
+            var t = self.timers[i];
+            t.update(dt);
+            if (t.finished) {
+                self.timers.remove(i);
+            } else {
+                i = i + 1;
+            }
+        }
+    }
+
+    def add_timer(duration, on_complete, loops) {
+        var t = FlxTimer();
+        t.start(duration, on_complete, loops);
+        self.timers.push(t);
+        return t;
+    }
+
+    def tween(from, to, duration, ease_fn, on_complete) {
+        return self.tweens.tween(from, to, duration, ease_fn, on_complete);
+    }
+}
+
+// ==========================================================
+// FlxState
+// ==========================================================
+
+class FlxState {
+    var flx;        // referência ao FlxG
+    var members;    // grupos/objectos do estado
+
+    def init(flx) {
+        self.flx    = flx;
+        self.members = [];
+    }
+
+    def add(obj) {
+        self.members.push(obj);
+        return obj;
+    }
+
+    def create()     {}   // override: inicializa objectos
+    def update(dt)   {}   // override: lógica por frame
+    def on_destroy() {}   // override: cleanup
+
+    def update_base(dt) {
+        var i = 0;
+        while (i < self.members.len()) {
+            var m = self.members[i];
+            if (m != null and m.exists and m.active) {
+                m.update(dt);
+            }
+            i = i + 1;
+        }
+        self.update(dt);
+    }
+
+    def destroy() {
+        self.on_destroy();
+        self.members.clear();
+    }
+}
+
+// ==========================================================
+// FlxStateManager — gere transições entre estados
+// ==========================================================
+
+class FlxStateManager {
+    var flx;
+    var current;
+    var next;
+
+    def init(flx) {
+        self.flx     = flx;
+        self.current = null;
+        self.next    = null;
+    }
+
+    def switch_to(state) {
+        self.next = state;
+    }
+
+    def update(dt) {
+        // transição pendente?
+        if (self.next != null) {
+            if (self.current != null) {
+                self.current.destroy();
+            }
+            self.current = self.next;
+            self.next    = null;
+            self.current.create();
+        }
+
+        if (self.current != null) {
+            self.current.update_base(dt);
+        }
+    }
+}
+
+// ==========================================================
+// EXEMPLO — PlayState: plataformer simples com colisão
+// ==========================================================
+
+struct Vec2 { x, y }
+
+class Player : FlxSprite {
+    var on_ground;
+    var jump_power;
+    var move_speed;
+
+    def init(x, y) {
+        FlxSprite.init(self, x, y);
+        self.set_size(16, 24);
+        self.ay       = 500;   // gravidade
+        self.max_vx   = 150;
+        self.max_vy   = 400;
+        self.drag_x   = 800;
+        self.jump_power  = 300;
+        self.move_speed  = 200;
+        self.on_ground   = false;
+    }
+
+    def update(dt) {
+        // input simulado (substituir por key_down em contexto real)
+        var move = 0;
+
+        // on_ground se tocando em baixo
+        self.on_ground = (self.touching & DOWN) != 0;
+
+        // movimento horizontal
+        if (move < 0) { self.vx = self.vx - self.move_speed * dt; }
+        if (move > 0) { self.vx = self.vx + self.move_speed * dt; }
+
+        FlxSprite.update(self, dt);
+    }
+
+    def jump() {
+        if (self.on_ground) {
+            self.vy = -self.jump_power;
+        }
+    }
+}
+
+class Platform : FlxObject {
+    def init(x, y, w, h) {
+        FlxObject.init(self, x, y, w, h);
+        self.immovable = true;
+    }
+
+    def update(dt) {
+        // plataforma estática — não chama FlxObject.update
+    }
+}
+
+class Coin : FlxSprite {
+    var value;
+    var bob_timer;
+
+    def init(x, y, v) {
+        FlxSprite.init(self, x, y);
+        self.set_size(8, 8);
+        self.value     = v;
+        self.bob_timer = 0;
+        self.immovable = true;
+    }
+
+    def update(dt) {
+        // bob suave (seno)
+        self.bob_timer = self.bob_timer + dt * 2;
+        self.y = self.y + sin(self.bob_timer) * 20 * dt;
+    }
+}
+
+class PlayState : FlxState {
+    var player;
+    var platforms;
+    var coins;
+    var score;
+    var score_timer;
+
+    def init(flx) {
+        FlxState.init(self, flx);
+        self.score = 0;
+    }
+
+    def create() {
+        // player
+        self.player = Player(100, 100);
+        self.add(self.player);
+
+        // câmara segue o player com lerp suave
+        self.flx.camera.follow(self.player, 0.1);
+        self.flx.camera.set_bounds(0, 0, 2560, 720);
+
+        // plataformas
+        self.platforms = FlxGroup(0);
+        self.add(self.platforms);
+
+        // chão
+        self.platforms.add(Platform(0,   680, 2560, 40));
+        // plataformas flutuantes
+        self.platforms.add(Platform(200, 500, 120, 16));
+        self.platforms.add(Platform(400, 400, 120, 16));
+        self.platforms.add(Platform(600, 300, 120, 16));
+        self.platforms.add(Platform(800, 350, 200, 16));
+        self.platforms.add(Platform(100, 550, 80,  16));
+
+        // moedas
+        self.coins = FlxGroup(0);
+        self.add(self.coins);
+
+        self.coins.add(Coin(220, 460, 10));
+        self.coins.add(Coin(260, 460, 10));
+        self.coins.add(Coin(420, 360, 20));
+        self.coins.add(Coin(820, 310, 50));
+
+        // timer de debug (imprime score de 2 em 2 segundos)
+        self.score_timer = self.flx.add_timer(2.0, def(t) {
+            print("score: {self.score}  player: ({int(self.player.x)}, {int(self.player.y)})");
+        }, 0);
+
+        print("PlayState criado!");
+        print("plataformas: {self.platforms.members.len()}");
+        print("moedas: {self.coins.members.len()}");
+    }
+
+    def update(dt) {
+        // colisão player ↔ plataformas
+        group_overlap(self.platforms, FlxGroup(0), null);
+
+        // colisão player ↔ moedas
+        var i = 0;
+        while (i < self.coins.members.len()) {
+            var coin = self.coins.members[i];
+            if (coin != null and coin.alive) {
+                if (self.player.overlaps(coin)) {
+                    self.score = self.score + coin.value;
+                    print("apanhou moeda! score={self.score}");
+                    coin.kill();
+                }
+            }
+            i = i + 1;
+        }
+
+        // mundo bounds — player não sai pelo topo
+        if (self.player.y < 0) {
+            self.player.y = 0;
+            self.player.vy = 0;
+        }
+    }
+}
+
+// ==========================================================
+// BOOTSTRAP — simula um loop de jogo por N frames
+// ==========================================================
+
+var flx = FlxG(1280, 720);
+var states = FlxStateManager(flx);
+
+states.switch_to(PlayState(flx));
+
+// simula 10 frames a 60fps
+var frame = 0;
+var dt = 1.0 / 60.0;
+
+while (frame < 10) {
+    flx.update(dt);
+    states.update(dt);
+    frame = frame + 1;
+}
+
+print("simulação terminada — {frame} frames");
+print("moedas vivas: {states.current.coins.count_living()}");

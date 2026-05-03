@@ -1,0 +1,169 @@
+// ============================================================
+// FlxCamera — viewport com scroll, zoom e shake
+// ============================================================
+
+class FlxCamera {
+    var x;          // posição do mundo que a câmara mostra
+    var y;
+    var width;
+    var height;
+    var zoom;
+
+    // scroll bounds (null = sem limites)
+    var bound_x;
+    var bound_y;
+    var bound_w;
+    var bound_h;
+    var has_bounds;
+
+    // shake
+    var shake_intensity;
+    var shake_timer;
+    var shake_x;
+    var shake_y;
+
+    // follow
+    var target;         // FlxObject a seguir
+    var follow_lerp;    // 0=instantâneo 1=nunca segue
+    var dead_zone_x;    // zona morta (não segue dentro desta área)
+    var dead_zone_y;
+    var dead_zone_w;
+    var dead_zone_h;
+    var has_dead_zone;
+
+    def init(x, y, w, h) {
+        self.x = x;  self.y = y;
+        self.width = w;  self.height = h;
+        self.zoom = 1.0;
+
+        self.has_bounds = false;
+        self.bound_x = 0;  self.bound_y = 0;
+        self.bound_w = 0;  self.bound_h = 0;
+
+        self.shake_intensity = 0;
+        self.shake_timer = 0;
+        self.shake_x = 0;
+        self.shake_y = 0;
+
+        self.target = null;
+        self.follow_lerp = 0.0;   // instantâneo
+        self.has_dead_zone = false;
+        self.dead_zone_x = 0;  self.dead_zone_y = 0;
+        self.dead_zone_w = 0;  self.dead_zone_h = 0;
+    }
+
+    def set_bounds(x, y, w, h) {
+        self.bound_x = x;
+        self.bound_y = y;
+        self.bound_w = w;
+        self.bound_h = h;
+        self.has_bounds = true;
+    }
+
+    def follow(target, lerp) {
+        self.target = target;
+        self.follow_lerp = lerp;
+    }
+
+    def set_dead_zone(x, y, w, h) {
+        self.dead_zone_x = x;
+        self.dead_zone_y = y;
+        self.dead_zone_w = w;
+        self.dead_zone_h = h;
+        self.has_dead_zone = true;
+    }
+
+    def shake(intensity, duration) {
+        self.shake_intensity = intensity;
+        self.shake_timer     = duration;
+    }
+
+    def update(dt) {
+        // follow target
+        if (self.target != null) {
+            var tx = self.target.mid_x() - self.width  / 2;
+            var ty = self.target.mid_y() - self.height / 2;
+
+            if (self.has_dead_zone) {
+                // só segue se o target saiu da dead zone
+                var dz_world_x = self.x + self.dead_zone_x;
+                var dz_world_y = self.y + self.dead_zone_y;
+                if (self.target.x < dz_world_x) {
+                    tx = self.target.x - self.dead_zone_x;
+                } else {
+                    if (self.target.right() > dz_world_x + self.dead_zone_w) {
+                        tx = self.target.right() - self.dead_zone_x - self.dead_zone_w;
+                    } else {
+                        tx = self.x;
+                    }
+                }
+                if (self.target.y < dz_world_y) {
+                    ty = self.target.y - self.dead_zone_y;
+                } else {
+                    if (self.target.bottom() > dz_world_y + self.dead_zone_h) {
+                        ty = self.target.bottom() - self.dead_zone_y - self.dead_zone_h;
+                    } else {
+                        ty = self.y;
+                    }
+                }
+            }
+
+            if (self.follow_lerp <= 0) {
+                self.x = tx;
+                self.y = ty;
+            } else {
+                self.x = self.x + (tx - self.x) * (1.0 - self.follow_lerp);
+                self.y = self.y + (ty - self.y) * (1.0 - self.follow_lerp);
+            }
+        }
+
+        // clamp aos bounds
+        if (self.has_bounds) {
+            if (self.x < self.bound_x) { self.x = self.bound_x; }
+            if (self.y < self.bound_y) { self.y = self.bound_y; }
+            var max_x = self.bound_x + self.bound_w - self.width;
+            var max_y = self.bound_y + self.bound_h - self.height;
+            if (self.x > max_x) { self.x = max_x; }
+            if (self.y > max_y) { self.y = max_y; }
+        }
+
+        // shake
+        if (self.shake_timer > 0) {
+            self.shake_timer = self.shake_timer - dt;
+            if (self.shake_timer <= 0) {
+                self.shake_timer = 0;
+                self.shake_x = 0;
+                self.shake_y = 0;
+            } else {
+                var prog = self.shake_timer / self.shake_timer;   // 1→0
+                var i = self.shake_intensity;
+                self.shake_x = (math.random(int(i * 2)) - i);
+                self.shake_y = (math.random(int(i * 2)) - i);
+            }
+        }
+    }
+
+    // Converte coordenada do mundo para ecrã
+    def world_to_screen_x(wx) {
+        return (wx - self.x + self.shake_x) * self.zoom;
+    }
+    def world_to_screen_y(wy) {
+        return (wy - self.y + self.shake_y) * self.zoom;
+    }
+
+    // Converte coordenada de ecrã para mundo
+    def screen_to_world_x(sx) {
+        return sx / self.zoom + self.x;
+    }
+    def screen_to_world_y(sy) {
+        return sy / self.zoom + self.y;
+    }
+
+    // Verifica se um FlxObject está visível na câmara
+    def on_screen(obj) {
+        return obj.right()  > self.x and
+               obj.x        < self.x + self.width  and
+               obj.bottom() > self.y and
+               obj.y        < self.y + self.height;
+    }
+}

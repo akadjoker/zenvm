@@ -1,0 +1,153 @@
+// ============================================================
+// FlxObject — base de toda a hierarquia Flixel
+// Física: posição, velocidade, aceleração, drag, gravidade
+// Colisão: AABB com allowCollisions (bitmask)
+// ============================================================
+
+// Bitmask de colisão
+var NONE  = 0;
+var LEFT  = 1;
+var RIGHT = 2;
+var UP    = 4;
+var DOWN  = 8;
+var ALL   = 15;
+
+class FlxObject {
+    // posição
+    var x;
+    var y;
+    var width;
+    var height;
+
+    // física
+    var vx;
+    var vy;
+    var ax;       // aceleração
+    var ay;
+    var drag_x;   // drag (fricção)
+    var drag_y;
+    var max_vx;
+    var max_vy;
+
+    // estado
+    var alive;
+    var exists;
+    var visible;
+    var active;
+    var immovable;
+
+    // colisão
+    var allow_collisions;
+    var touching;
+    var was_touching;
+
+    // massa (para separação)
+    var mass;
+
+    def init(x, y, w, h) {
+        self.x = x;
+        self.y = y;
+        self.width  = w;
+        self.height = h;
+
+        self.vx = 0;   self.vy = 0;
+        self.ax = 0;   self.ay = 0;
+        self.drag_x = 0; self.drag_y = 0;
+        self.max_vx = 10000; self.max_vy = 10000;
+
+        self.alive   = true;
+        self.exists  = true;
+        self.visible = true;
+        self.active  = true;
+        self.immovable = false;
+
+        self.allow_collisions = ALL;
+        self.touching      = NONE;
+        self.was_touching  = NONE;
+        self.mass = 1.0;
+    }
+
+    def update(dt) {
+        self.was_touching = self.touching;
+        self.touching = NONE;
+
+        // aceleração → velocidade
+        self.vx = self.vx + self.ax * dt;
+        self.vy = self.vy + self.ay * dt;
+
+        // drag (apenas se não há aceleração nessa direcção)
+        if (self.ax == 0 and self.drag_x > 0) {
+            if (self.vx > 0) {
+                self.vx = self.vx - self.drag_x * dt;
+                if (self.vx < 0) { self.vx = 0; }
+            } else {
+                if (self.vx < 0) {
+                    self.vx = self.vx + self.drag_x * dt;
+                    if (self.vx > 0) { self.vx = 0; }
+                }
+            }
+        }
+        if (self.ay == 0 and self.drag_y > 0) {
+            if (self.vy > 0) {
+                self.vy = self.vy - self.drag_y * dt;
+                if (self.vy < 0) { self.vy = 0; }
+            } else {
+                if (self.vy < 0) {
+                    self.vy = self.vy + self.drag_y * dt;
+                    if (self.vy > 0) { self.vy = 0; }
+                }
+            }
+        }
+
+        // clamp velocidade
+        if (self.vx >  self.max_vx) { self.vx =  self.max_vx; }
+        if (self.vx < -self.max_vx) { self.vx = -self.max_vx; }
+        if (self.vy >  self.max_vy) { self.vy =  self.max_vy; }
+        if (self.vy < -self.max_vy) { self.vy = -self.max_vy; }
+
+        // integrar posição
+        self.x = self.x + self.vx * dt;
+        self.y = self.y + self.vy * dt;
+    }
+
+    // AABB overlap (sem separação)
+    def overlaps(other) {
+        return self.x          < other.x + other.width  and
+               self.x + self.width  > other.x           and
+               self.y          < other.y + other.height and
+               self.y + self.height > other.y;
+    }
+
+    // Centro
+    def mid_x() { return self.x + self.width  / 2; }
+    def mid_y() { return self.y + self.height / 2; }
+
+    // Bounds helpers
+    def left()   { return self.x; }
+    def right()  { return self.x + self.width; }
+    def top()    { return self.y; }
+    def bottom() { return self.y + self.height; }
+
+    def kill() {
+        self.alive  = false;
+        self.exists = false;
+    }
+
+    def revive() {
+        self.alive  = true;
+        self.exists = true;
+    }
+
+    def reset(x, y) {
+        self.x = x;
+        self.y = y;
+        self.vx = 0;
+        self.vy = 0;
+        self.revive();
+    }
+
+    def in_world_bounds(world_x, world_y, world_w, world_h) {
+        return self.x >= world_x and self.right()  <= world_x + world_w and
+               self.y >= world_y and self.bottom() <= world_y + world_h;
+    }
+}

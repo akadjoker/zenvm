@@ -1,0 +1,169 @@
+// ============================================================
+// FlxGroup — contentor de FlxObjects
+// Gere um pool com recycle de objectos mortos
+// ============================================================
+
+import flx_object;
+
+class FlxGroup {
+    var members;        // array de FlxObject (ou subclasses)
+    var max_size;       // 0 = ilimitado
+    var length;         // membros activos
+
+    def init(max_size) {
+        self.members  = [];
+        self.max_size = max_size;
+        self.length   = 0;
+    }
+
+    // Adiciona um objecto
+    def add(obj) {
+        // já existe?
+        var i = 0;
+        while (i < self.members.len()) {
+            if (self.members[i] == obj) { return obj; }
+            i = i + 1;
+        }
+
+        // max_size atingido?
+        if (self.max_size > 0 and self.members.len() >= self.max_size) {
+            return null;
+        }
+
+        self.members.push(obj);
+        self.length = self.length + 1;
+        return obj;
+    }
+
+    // Remove um objecto (swap-remove, não destrói)
+    def remove(obj, splice) {
+        var i = self.members.index_of(obj);
+        if (i < 0) { return obj; }
+
+        if (splice) {
+            self.members.remove(i);
+        } else {
+            self.members[i] = null;
+        }
+        self.length = self.length - 1;
+        return obj;
+    }
+
+    // Recycle — reutiliza um objecto morto ou cria novo
+    def recycle(factory) {
+        // procura um morto
+        var i = 0;
+        while (i < self.members.len()) {
+            var m = self.members[i];
+            if (m != null and !m.exists) {
+                return m;
+            }
+            i = i + 1;
+        }
+
+        // cria novo
+        var obj = factory();
+        self.add(obj);
+        return obj;
+    }
+
+    def update(dt) {
+        var i = 0;
+        while (i < self.members.len()) {
+            var m = self.members[i];
+            if (m != null and m.exists and m.active) {
+                m.update(dt);
+            }
+            i = i + 1;
+        }
+    }
+
+    // Conta vivos
+    def count_living() {
+        var n = 0;
+        var i = 0;
+        while (i < self.members.len()) {
+            var m = self.members[i];
+            if (m != null and m.alive) { n = n + 1; }
+            i = i + 1;
+        }
+        return n;
+    }
+
+    // Conta mortos (recicláveis)
+    def count_dead() {
+        var n = 0;
+        var i = 0;
+        while (i < self.members.len()) {
+            var m = self.members[i];
+            if (m != null and !m.alive) { n = n + 1; }
+            i = i + 1;
+        }
+        return n;
+    }
+
+    // Primeiro vivo
+    def get_first_alive() {
+        var i = 0;
+        while (i < self.members.len()) {
+            var m = self.members[i];
+            if (m != null and m.alive) { return m; }
+            i = i + 1;
+        }
+        return null;
+    }
+
+    // Primeiro morto
+    def get_first_dead() {
+        var i = 0;
+        while (i < self.members.len()) {
+            var m = self.members[i];
+            if (m != null and !m.alive) { return m; }
+            i = i + 1;
+        }
+        return null;
+    }
+
+    // Mata todos
+    def kill_all() {
+        var i = 0;
+        while (i < self.members.len()) {
+            var m = self.members[i];
+            if (m != null and m.alive) { m.kill(); }
+            i = i + 1;
+        }
+    }
+
+    def revive_all() {
+        var i = 0;
+        while (i < self.members.len()) {
+            var m = self.members[i];
+            if (m != null) { m.revive(); }
+            i = i + 1;
+        }
+    }
+
+    def clear() {
+        self.members.clear();
+        self.length = 0;
+    }
+
+    // forEach com callback closure
+    def for_each(callback) {
+        var i = 0;
+        while (i < self.members.len()) {
+            var m = self.members[i];
+            if (m != null) { callback(m); }
+            i = i + 1;
+        }
+    }
+
+    def for_each_alive(callback) {
+        var i = 0;
+        while (i < self.members.len()) {
+            var m = self.members[i];
+            if (m != null and m.alive) { callback(m); }
+            i = i + 1;
+        }
+    }
+}

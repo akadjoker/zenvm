@@ -1,5 +1,6 @@
 #include "vm.h"
 #include "debug.h"
+#include "name_tables.h"
 #include "zenconf.h"
 #include <cmath>
 #include <ctime>
@@ -74,7 +75,7 @@ namespace zen
             return false;
 
         ObjClass *klass = as_instance(receiver)->klass;
-        return slot < klass->vtable_size && !is_nil(klass->vtable[slot]);
+        return slot < VM::SLOT_OPERATOR_COUNT && !is_nil(klass->operator_slots[slot]);
     }
 
     static bool try_binary_operator(VM *vm, Value lhs, Value rhs,
@@ -84,14 +85,14 @@ namespace zen
         if (instance_has_method_slot(lhs, slot))
         {
             Value args[1] = { rhs };
-            *out = vm->invoke(lhs, slot, args, 1);
+            *out = vm->invoke_operator(lhs, slot, args, 1);
             return true;
         }
 
         if (reflected_slot >= 0 && instance_has_method_slot(rhs, reflected_slot))
         {
             Value args[1] = { lhs };
-            *out = vm->invoke(rhs, reflected_slot, args, 1);
+            *out = vm->invoke_operator(rhs, reflected_slot, args, 1);
             return true;
         }
 
@@ -103,7 +104,7 @@ namespace zen
         if (!instance_has_method_slot(operand, slot))
             return false;
 
-        *out = vm->invoke(operand, slot, nullptr, 0);
+        *out = vm->invoke_operator(operand, slot, nullptr, 0);
         return true;
     }
 
@@ -112,7 +113,7 @@ namespace zen
         if (!instance_has_method_slot(receiver, VM::SLOT_STR))
             return false;
 
-        *out = vm->invoke(receiver, VM::SLOT_STR, nullptr, 0);
+        *out = vm->invoke_operator(receiver, VM::SLOT_STR, nullptr, 0);
         return true;
     }
 
@@ -1630,7 +1631,6 @@ namespace zen
             Value receiver = R[base];
             ObjString *method = as_string(K[name_ki]);
             const char *mname = method->chars;
-            int mlen = method->length;
             Value *args = &R[base + 1];
 
             if (is_array(receiver))

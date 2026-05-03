@@ -192,6 +192,7 @@ namespace zen
         bool is_prefix(TokenType type);
         bool looks_like_generic_call();
         int generic_type_arg(int dest);
+        int require_global_slot(const char *name, Token *token);
 
         /* --- Variable resolution --- */
         int resolve_local(CompilerState *state, Token *name);
@@ -250,7 +251,9 @@ namespace zen
 
         /* Class type inference: set when callee is a class */
         ObjClass *last_call_class_def_;
-        ObjClass *global_class_hints_[MAX_GLOBALS];
+        ObjClass **global_class_hints_;
+        int global_class_hints_capacity_;
+        bool ensure_global_class_hint(int idx);
 
         /* Class field indexing: set during method compilation */
         struct ClassFieldInfo

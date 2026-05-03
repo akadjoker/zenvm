@@ -14,6 +14,10 @@ target_include_directories(zen_glfw_backend
 )
 
 target_compile_options(zen_glfw_backend PRIVATE -w)
+# GLFW vendor uses ppoll() in posix_poll.c — needs _GNU_SOURCE under glibc.
+if(UNIX AND NOT APPLE)
+    target_compile_definitions(zen_glfw_backend PRIVATE _GNU_SOURCE)
+endif()
 
 if(UNIX AND NOT APPLE)
     find_package(Threads REQUIRED)

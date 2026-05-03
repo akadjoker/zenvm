@@ -37,6 +37,8 @@ namespace zen
 
         size_t bytes_allocated;
         size_t next_gc; /* threshold para próximo ciclo */
+        size_t pause_saved_next_gc;
+        int pause_depth;
 
         /* String interning table (open addressing) */
         ObjString **strings;
@@ -108,6 +110,8 @@ namespace zen
     /* GC control */
     void gc_init(GC *gc);
     void gc_collect(VM *vm);
+    void gc_pause(GC *gc);
+    void gc_resume(GC *gc);
     void gc_sweep_all(GC *gc);
     void gc_mark_value(GC *gc, Value v);
     void gc_mark_obj(GC *gc, Obj *obj);

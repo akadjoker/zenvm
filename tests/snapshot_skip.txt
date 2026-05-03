@@ -1,0 +1,10 @@
+# Tests skipped by tests/run_zen_tests.sh (snapshot suite).
+# One basename (with .zen) per line. Lines starting with '#' are comments.
+#
+# Reason: non-deterministic output (timing, wall clock, perf measurement).
+# These should still run and be checked manually for correctness.
+
+benchmark.zen
+test_os_time.zen
+test_gc.zen
+test_gc2.zen

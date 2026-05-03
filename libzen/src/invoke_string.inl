@@ -7,11 +7,14 @@
 
 ObjString *str = as_string(receiver);
 
-if (mlen == 3 && memcmp(mname, "len", 3) == 0)
+switch (method->string_method_id)
+{
+case STRING_LEN:
 {
     R[base] = val_int(str->length);
+    break;
 }
-else if (mlen == 3 && memcmp(mname, "sub", 3) == 0)
+case STRING_SUB:
 {
     /* str.sub(start, end?) → substring [start, end) */
     int32_t slen = str->length;
@@ -26,8 +29,9 @@ else if (mlen == 3 && memcmp(mname, "sub", 3) == 0)
         R[base] = val_obj((Obj *)new_string(&gc_, "", 0));
     else
         R[base] = val_obj((Obj *)new_string(&gc_, str->chars + start, end - start));
+    break;
 }
-else if (mlen == 4 && memcmp(mname, "find", 4) == 0)
+case STRING_FIND:
 {
     /* str.find(needle) → index or -1 */
     if (arg_count != 1 || !is_string(args[0])) { runtime_error("find() expects a string argument"); return; }
@@ -37,8 +41,9 @@ else if (mlen == 4 && memcmp(mname, "find", 4) == 0)
         const char *found = (const char *)memmem(str->chars, str->length, needle->chars, needle->length);
         R[base] = found ? val_int((int32_t)(found - str->chars)) : val_int(-1);
     }
+    break;
 }
-else if (mlen == 5 && memcmp(mname, "upper", 5) == 0)
+case STRING_UPPER:
 {
     /* str.upper() → new uppercase string */
     char *buf = (char *)malloc(str->length);
@@ -46,8 +51,9 @@ else if (mlen == 5 && memcmp(mname, "upper", 5) == 0)
         buf[si] = (str->chars[si] >= 'a' && str->chars[si] <= 'z') ? str->chars[si] - 32 : str->chars[si];
     R[base] = val_obj((Obj *)new_string(&gc_, buf, str->length));
     free(buf);
+    break;
 }
-else if (mlen == 5 && memcmp(mname, "lower", 5) == 0)
+case STRING_LOWER:
 {
     /* str.lower() → new lowercase string */
     char *buf = (char *)malloc(str->length);
@@ -55,8 +61,9 @@ else if (mlen == 5 && memcmp(mname, "lower", 5) == 0)
         buf[si] = (str->chars[si] >= 'A' && str->chars[si] <= 'Z') ? str->chars[si] + 32 : str->chars[si];
     R[base] = val_obj((Obj *)new_string(&gc_, buf, str->length));
     free(buf);
+    break;
 }
-else if (mlen == 5 && memcmp(mname, "split", 5) == 0)
+case STRING_SPLIT:
 {
     /* str.split(sep) → array of strings */
     if (arg_count != 1 || !is_string(args[0])) { runtime_error("split() expects a string argument"); return; }
@@ -80,8 +87,9 @@ else if (mlen == 5 && memcmp(mname, "split", 5) == 0)
         }
     }
     R[base] = val_obj((Obj *)result);
+    break;
 }
-else if (mlen == 4 && memcmp(mname, "trim", 4) == 0)
+case STRING_TRIM:
 {
     /* str.trim() → strip leading/trailing whitespace */
     int start = 0, end = str->length;
@@ -92,8 +100,9 @@ else if (mlen == 4 && memcmp(mname, "trim", 4) == 0)
                            str->chars[end-1] == '\n' || str->chars[end-1] == '\r'))
         end--;
     R[base] = val_obj((Obj *)new_string(&gc_, str->chars + start, end - start));
+    break;
 }
-else if (mlen == 7 && memcmp(mname, "replace", 7) == 0)
+case STRING_REPLACE:
 {
     /* str.replace(old, new) → new string with all occurrences replaced */
     if (arg_count != 2 || !is_string(args[0]) || !is_string(args[1])) {
@@ -130,41 +139,47 @@ else if (mlen == 7 && memcmp(mname, "replace", 7) == 0)
             free(buf);
         }
     }
+    break;
 }
-else if (mlen == 11 && memcmp(mname, "starts_with", 11) == 0)
+case STRING_STARTS_WITH:
 {
     if (arg_count != 1 || !is_string(args[0])) { runtime_error("starts_with() expects a string"); return; }
     ObjString *prefix = as_string(args[0]);
     bool match = (prefix->length <= str->length) &&
                  (memcmp(str->chars, prefix->chars, prefix->length) == 0);
     R[base] = val_bool(match);
+    break;
 }
-else if (mlen == 9 && memcmp(mname, "ends_with", 9) == 0)
+case STRING_ENDS_WITH:
 {
     if (arg_count != 1 || !is_string(args[0])) { runtime_error("ends_with() expects a string"); return; }
     ObjString *suffix = as_string(args[0]);
     bool match = (suffix->length <= str->length) &&
                  (memcmp(str->chars + str->length - suffix->length, suffix->chars, suffix->length) == 0);
     R[base] = val_bool(match);
+    break;
 }
-else if (mlen == 7 && memcmp(mname, "char_at", 7) == 0)
+case STRING_CHAR_AT:
 {
     /* str.char_at(idx) → single-char string */
     if (arg_count != 1 || !is_int(args[0])) { runtime_error("char_at() expects an integer"); return; }
     int32_t idx = args[0].as.integer;
     if (idx < 0 || idx >= str->length) { R[base] = val_nil(); }
     else { R[base] = val_obj((Obj *)new_string(&gc_, &str->chars[idx], 1)); }
+    break;
 }
-else if (mlen == 7 && memcmp(mname, "byte_at", 7) == 0)
+case STRING_BYTE_AT:
 {
     /* str.byte_at(idx) → integer byte value */
     if (arg_count != 1 || !is_int(args[0])) { runtime_error("byte_at() expects an integer"); return; }
     int32_t idx = args[0].as.integer;
     if (idx < 0 || idx >= str->length) { R[base] = val_int(0); }
     else { R[base] = val_int((uint8_t)str->chars[idx]); }
+    break;
 }
-else
+default:
 {
     runtime_error("string has no method '%s'", mname);
     return;
+}
 }

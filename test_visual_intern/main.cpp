@@ -301,7 +301,7 @@ static bool load_and_run(VM &vm, const char *script)
 
 int main(int argc, char *argv[])
 {
-    const char *script = "scripts/mini_engine_intern.zen";
+    const char *script = "../tests/mini_engine_intern.zen";
     if (argc > 1) script = argv[1];
 
     printf("=== Zen Internal Raylib Loop Test ===\n");
@@ -313,7 +313,8 @@ int main(int argc, char *argv[])
     vm.register_lib(&zen_lib_os);
     vm.register_lib(&zen_lib_time);
     vm.add_search_path(".");
-    vm.add_search_path("scripts");
+    vm.add_search_path("../scripts");
+    vm.add_search_path("../tests");
 #ifdef ZENVM_SOURCE_DIR
     vm.add_search_path(ZENVM_SOURCE_DIR);
     vm.add_search_path(ZENVM_SOURCE_DIR "/scripts");

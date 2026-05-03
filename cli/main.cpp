@@ -18,6 +18,9 @@
 #ifdef ZEN_ENABLE_GLFW
 #include "zen/module_glfw.h"
 #endif
+#ifdef ZEN_ENABLE_SDL2
+#include "zen/module_sdl2.h"
+#endif
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -109,6 +112,9 @@ static void register_default_libs(VM &vm)
 #endif
 #ifdef ZEN_ENABLE_GLFW
     vm.register_lib(&zen_lib_glfw);
+#endif
+#ifdef ZEN_ENABLE_SDL2
+    vm.register_lib(&zen_lib_sdl2);
 #endif
     for (int i = 0; i < g_num_search_paths; i++)
         vm.add_search_path(g_search_paths[i]);

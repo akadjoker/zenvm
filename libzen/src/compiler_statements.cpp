@@ -9,7 +9,6 @@
 
 namespace zen
 {
-
     /* =========================================================
     ** Top-level dispatcher
     ** ========================================================= */
@@ -154,11 +153,11 @@ namespace zen
                     int len = names[i].length < 255 ? names[i].length : 255;
                     memcpy(buf, names[i].start, len);
                     buf[len] = '\0';
-                    int gidx = vm_->find_global(buf);
+                    int gidx = require_global_slot(buf, &names[i]);
                     if (gidx < 0)
-                        gidx = vm_->def_global(buf, val_nil());
+                        continue;
                     state_->emitter.emit_abx(OP_SETGLOBAL, base + i, gidx, names[i].line);
-                    if (gidx >= 0 && gidx < MAX_GLOBALS)
+                    if (ensure_global_class_hint(gidx))
                         global_class_hints_[gidx] = state_->reg_class_hints[base + i];
                 }
             }
@@ -204,17 +203,18 @@ namespace zen
             int len = name.length < 255 ? name.length : 255;
             memcpy(buf, name.start, len);
             buf[len] = '\0';
-            int gidx = vm_->find_global(buf);
-            if (gidx < 0)
-                gidx = vm_->def_global(buf, val_nil());
+            int gidx = require_global_slot(buf, &name);
 
             if (match(TOK_EQ))
             {
                 int reg = alloc_reg();
                 expression(reg);
-                state_->emitter.emit_abx(OP_SETGLOBAL, reg, gidx, name.line);
-                if (gidx >= 0 && gidx < MAX_GLOBALS)
-                    global_class_hints_[gidx] = last_call_class_def_ ? last_call_class_def_ : state_->reg_class_hints[reg];
+                if (gidx >= 0)
+                {
+                    state_->emitter.emit_abx(OP_SETGLOBAL, reg, gidx, name.line);
+                    if (ensure_global_class_hint(gidx))
+                        global_class_hints_[gidx] = last_call_class_def_ ? last_call_class_def_ : state_->reg_class_hints[reg];
+                }
                 free_reg(reg);
                 last_call_struct_def_ = nullptr;
                 last_call_class_def_ = nullptr;
@@ -222,7 +222,7 @@ namespace zen
             else
             {
                 /* nil by default — already set */
-                if (gidx >= 0 && gidx < MAX_GLOBALS)
+                if (gidx >= 0 && ensure_global_class_hint(gidx))
                     global_class_hints_[gidx] = nullptr;
             }
         }
@@ -320,13 +320,14 @@ namespace zen
         else
         {
             /* Global function */
-            int gidx = vm_->find_global(name_buf);
-            if (gidx < 0)
-                gidx = vm_->def_global(name_buf, val_nil());
-            int reg = alloc_reg();
-            state_->emitter.emit_abx(OP_CLOSURE, reg, ki, name.line);
-            state_->emitter.emit_abx(OP_SETGLOBAL, reg, gidx, name.line);
-            free_reg(reg);
+            int gidx = require_global_slot(name_buf, &name);
+            if (gidx >= 0)
+            {
+                int reg = alloc_reg();
+                state_->emitter.emit_abx(OP_CLOSURE, reg, ki, name.line);
+                state_->emitter.emit_abx(OP_SETGLOBAL, reg, gidx, name.line);
+                free_reg(reg);
+            }
         }
     }
 
@@ -436,13 +437,14 @@ namespace zen
         }
         else
         {
-            int gidx = vm_->find_global(name_buf);
-            if (gidx < 0)
-                gidx = vm_->def_global(name_buf, val_nil());
-            int reg = alloc_reg();
-            state_->emitter.emit_abx(OP_CLOSURE, reg, ki, name.line);
-            state_->emitter.emit_abx(OP_SETGLOBAL, reg, gidx, name.line);
-            free_reg(reg);
+            int gidx = require_global_slot(name_buf, &name);
+            if (gidx >= 0)
+            {
+                int reg = alloc_reg();
+                state_->emitter.emit_abx(OP_CLOSURE, reg, ki, name.line);
+                state_->emitter.emit_abx(OP_SETGLOBAL, reg, gidx, name.line);
+                free_reg(reg);
+            }
         }
     }
 
@@ -520,8 +522,9 @@ namespace zen
             char name[64];
             ObjFunc *func; /* compiled function */
         };
-        MethodInfo methods[64];
+        MethodInfo *methods = nullptr;
         int method_count = 0;
+        int method_capacity = 0;
         bool has_init_method = false;
 
         while (!check(TOK_RBRACE) && !check(TOK_EOF))
@@ -548,6 +551,20 @@ namespace zen
                 /* Method: def name(params) { body } */
                 consume(TOK_IDENTIFIER, "Expected method name.");
                 Token method_name = previous_;
+
+                if (method_count >= method_capacity)
+                {
+                    int new_capacity = method_capacity == 0 ? 16 : method_capacity * 2;
+                    MethodInfo *grown = (MethodInfo *)realloc(methods, sizeof(MethodInfo) * new_capacity);
+                    if (!grown)
+                    {
+                        free(methods);
+                        error("Out of memory while collecting class methods.");
+                        return;
+                    }
+                    methods = grown;
+                    method_capacity = new_capacity;
+                }
 
                 int mnlen = method_name.length < 63 ? method_name.length : 63;
                 memcpy(methods[method_count].name, method_name.start, mnlen);
@@ -670,6 +687,8 @@ namespace zen
             /* Clear vtable for rebuild — methods will be re-registered below */
             for (int vi = 0; vi < klass->vtable_size; vi++)
                 klass->vtable[vi] = val_nil();
+            for (int oi = 0; oi < VM::SLOT_OPERATOR_COUNT; oi++)
+                klass->operator_slots[oi] = val_nil();
             /* Clear methods map */
             if (klass->methods)
                 map_clear(gc_, klass->methods);
@@ -724,23 +743,31 @@ namespace zen
                                              hash_string(methods[m].name, mnlen2));
             map_set(gc_, klass->methods, val_obj((Obj *)mname), val_obj((Obj *)cl));
 
-            /* Register method in vtable */
-            int slot = vm_->intern_selector(methods[m].name, mnlen2);
-            if (slot >= klass->vtable_size)
+            int op_slot = mname->operator_slot_id;
+            if (op_slot >= 0)
             {
-                /* Grow vtable to accommodate new slot */
-                int new_size = slot + 1;
-                Value *new_vt = (Value *)zen_alloc(gc_, sizeof(Value) * new_size);
-                for (int vi = 0; vi < klass->vtable_size; vi++)
-                    new_vt[vi] = klass->vtable[vi];
-                for (int vi = klass->vtable_size; vi < new_size; vi++)
-                    new_vt[vi] = val_nil();
-                if (klass->vtable)
-                    zen_free(gc_, klass->vtable, sizeof(Value) * klass->vtable_size);
-                klass->vtable = new_vt;
-                klass->vtable_size = new_size;
+                klass->operator_slots[op_slot] = val_obj((Obj *)cl);
             }
-            klass->vtable[slot] = val_obj((Obj *)cl);
+            else
+            {
+                /* Register method in vtable */
+                int slot = vm_->intern_selector(methods[m].name, mnlen2);
+                if (slot >= klass->vtable_size)
+                {
+                    /* Grow vtable to accommodate new slot */
+                    int new_size = slot + 1;
+                    Value *new_vt = (Value *)zen_alloc(gc_, sizeof(Value) * new_size);
+                    for (int vi = 0; vi < klass->vtable_size; vi++)
+                        new_vt[vi] = klass->vtable[vi];
+                    for (int vi = klass->vtable_size; vi < new_size; vi++)
+                        new_vt[vi] = val_nil();
+                    if (klass->vtable)
+                        zen_free(gc_, klass->vtable, sizeof(Value) * klass->vtable_size);
+                    klass->vtable = new_vt;
+                    klass->vtable_size = new_size;
+                }
+                klass->vtable[slot] = val_obj((Obj *)cl);
+            }
         }
 
         /* Flatten parent vtable: copy slots not overridden */
@@ -767,12 +794,21 @@ namespace zen
                     klass->vtable[vi] = parent_class->vtable[vi];
             }
         }
+        if (parent_class)
+        {
+            for (int oi = 0; oi < VM::SLOT_OPERATOR_COUNT; oi++)
+            {
+                if (is_nil(klass->operator_slots[oi]))
+                    klass->operator_slots[oi] = parent_class->operator_slots[oi];
+            }
+        }
 
         /* Register class as global */
-        int gidx = vm_->find_global(name_buf);
-        if (gidx < 0)
-            gidx = vm_->def_global(name_buf, val_nil());
-        vm_->set_global(gidx, val_obj((Obj *)klass));
+        int gidx = require_global_slot(name_buf, &name_tok);
+        if (gidx >= 0)
+            vm_->set_global(gidx, val_obj((Obj *)klass));
+
+        free(methods);
     }
 
     /* =========================================================
@@ -1080,9 +1116,11 @@ namespace zen
 
     void Compiler::expression_statement()
     {
+        int saved_next_reg = state_->next_reg;
         int reg = expression(-1);
         free_reg(reg);
         consume(TOK_SEMICOLON, "Expected ';' after expression.");
+        state_->next_reg = saved_next_reg;
     }
 
     /* =========================================================

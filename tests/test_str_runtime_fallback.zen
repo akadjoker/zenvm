@@ -2,7 +2,11 @@
 
 class Label {
     var text;
- 
+
+    def init(text) {
+        self.text = text;
+    }
+
     def __str__() {
         return "Label[" + self.text + "]";
     }

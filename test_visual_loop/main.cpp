@@ -182,7 +182,7 @@ static bool load_sprite_texture(const char *path)
 
 int main(int argc, char *argv[])
 {
-    const char *script = "scripts/mini_engine.zen";
+    const char *script = "../tests/mini_engine.zen";
     const char *texture_path =
 #ifdef ZENVM_SOURCE_DIR
         ZENVM_SOURCE_DIR "/assets/wabbit_alpha.png";
@@ -204,6 +204,8 @@ int main(int argc, char *argv[])
     vm.register_lib(&zen_lib_time);
     vm.add_search_path(".");
     vm.add_search_path("scripts");
+    vm.add_search_path("../scripts");
+    vm.add_search_path("../tests");
 #ifdef ZENVM_SOURCE_DIR
     vm.add_search_path(ZENVM_SOURCE_DIR);
     vm.add_search_path(ZENVM_SOURCE_DIR "/scripts");

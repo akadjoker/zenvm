@@ -39,6 +39,11 @@ if(ZEN_ENABLE_GLFW)
     add_subdirectory(modules/glfw)
 endif()
 
+option(ZEN_ENABLE_SDL2 "Enable SDL2 window module" OFF)
+if(ZEN_ENABLE_SDL2)
+    add_subdirectory(modules/sdl2)
+endif()
+
 # --- CLI (zen executable) ---
 add_subdirectory(cli)
 
@@ -73,4 +78,23 @@ if(ZEN_BUILD_VISUAL)
 endif()
 if(ZEN_BUILD_GFX)
     add_subdirectory(test_gfx)
+endif()
+
+# --- Snapshot tests for tests/*.zen (ctest integration) ---
+# Run with:
+#   cd build && ctest --output-on-failure
+# Refresh snapshots with:
+#   tests/run_zen_tests.sh ./bin/zen --update
+enable_testing()
+if(EXISTS "${CMAKE_SOURCE_DIR}/tests/run_zen_tests.sh")
+    add_test(
+        NAME zen_snapshot_suite
+        COMMAND bash "${CMAKE_SOURCE_DIR}/tests/run_zen_tests.sh"
+                "$<TARGET_FILE:zen>"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    set_tests_properties(zen_snapshot_suite PROPERTIES
+        TIMEOUT 600
+        LABELS "snapshot"
+    )
 endif()

@@ -173,7 +173,9 @@ static EngineComponent make_engine_component(VM &vm, Value component)
 
 static Texture2D make_circle_texture(int radius, Color color)
 {
-    const int size = radius * 2;
+    if (radius < 1)
+        radius = 1;
+    const int size = radius * 2 + 1;
     Image image = GenImageColor(size, size, BLANK);
     ImageDrawCircle(&image, radius, radius, radius, color);
     Texture2D texture = LoadTextureFromImage(image);
@@ -693,7 +695,7 @@ static bool reload_script(VM *&vm, const char *script)
 
 int main(int argc, char *argv[])
 {
-    const char *script = "scripts/fake_engine.zen";
+    const char *script = "../tests/fake_engine.zen";
     if (argc > 1)
     {
         script = argv[1];
