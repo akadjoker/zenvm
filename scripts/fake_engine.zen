@@ -14,7 +14,7 @@ class Player : ScriptComponent {
     def update(dt) 
     {
         
-        var t = self.transform;
+        var t = self.getComponent<Transform>();
         if (key_down(68)) { t.translate(self.speed * dt, 0); }
         if (key_down(65)) { t.translate(-self.speed * dt, 0); }
         if (key_down(87)) { t.translate(0, -self.speed * dt); }
@@ -49,7 +49,7 @@ class Bullet : ScriptComponent {
     def update(dt) 
     {
         
-        var t = self.transform;
+        var t = self.getComponent<Transform>();
         
         t.x = t.x + self.vx * dt;
         if (t.x > 1260) 

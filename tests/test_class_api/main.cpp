@@ -1317,6 +1317,61 @@ static bool test_raylib_pattern()
     return true;
 }
 
+static int nat_expect_type_arg(VM *, Value *args, int nargs)
+{
+    bool ok = nargs == 1 &&
+              is_class(args[0]) &&
+              strcmp(as_class(args[0])->name->chars, "Transform") == 0;
+    args[0] = val_bool(ok);
+    return 1;
+}
+
+static int nat_get_component_sugar(VM *, Value *args, int nargs)
+{
+    bool ok = nargs == 3 &&
+              is_instance(args[0]) &&
+              is_class(args[1]) &&
+              strcmp(as_class(args[1])->name->chars, "Transform") == 0 &&
+              is_int(args[2]) &&
+              args[2].as.integer == 123;
+    args[0] = val_bool(ok);
+    return 1;
+}
+
+static bool test_generic_call_sugar()
+{
+    VM vm;
+
+    vm.def_class("Transform")
+        .end();
+
+    vm.def_class("Holder")
+        .method("getComponent", nat_get_component_sugar, 2)
+        .end();
+
+    vm.def_native("expectType", nat_expect_type_arg, 1);
+
+    const char *script = R"(
+        var ok_global = expectType<Transform>();
+        var holder = Holder();
+        var ok_method = holder.getComponent<Transform>(123);
+        var comparison_still_works = 1 < 2;
+    )";
+
+    Compiler compiler;
+    ObjFunc *fn = compiler.compile(&vm.get_gc(), &vm, script, "<generic-call-sugar>");
+    CHECK(fn != nullptr, "generic call sugar compiled");
+    CHECK(!compiler.had_error(), "no compile errors");
+    vm.run(fn);
+    CHECK(!vm.had_error(), "no runtime error");
+
+    CHECK(vm.get_global("ok_global").as.boolean, "free function receives Transform class");
+    CHECK(vm.get_global("ok_method").as.boolean, "method receives Transform class first");
+    CHECK(vm.get_global("comparison_still_works").as.boolean, "comparison still parses normally");
+
+    return true;
+}
+
 int main()
 {
     printf("=== Class API Tests ===\n\n");
@@ -1334,6 +1389,7 @@ int main()
     RUN_TEST(test_non_constructable);
     RUN_TEST(test_native_method_creates_instance);
     RUN_TEST(test_raylib_pattern);
+    RUN_TEST(test_generic_call_sugar);
 
     printf("\n=== %d / %d PASSED ===\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;

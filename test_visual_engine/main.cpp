@@ -84,6 +84,65 @@ static RenderKind render_kind_for_component(Value component)
     return RenderKind::None;
 }
 
+static bool class_is_or_derives_from(ObjClass *klass, ObjClass *wanted)
+{
+    for (ObjClass *cur = klass; cur; cur = cur->parent)
+    {
+        if (cur == wanted)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+static EngineObject *find_engine_object_by_go(Value go)
+{
+    if (!is_instance(go))
+    {
+        return nullptr;
+    }
+
+    for (size_t i = 0; i < g_objects.size(); ++i)
+    {
+        if (g_objects[i].alive && is_instance(g_objects[i].go) &&
+            g_objects[i].go.as.obj == go.as.obj)
+        {
+            return &g_objects[i];
+        }
+    }
+    return nullptr;
+}
+
+static Value find_component_on_object(EngineObject *obj, ObjClass *wanted)
+{
+    if (!obj || !wanted)
+    {
+        return val_nil();
+    }
+
+    if (wanted == g_transform_class)
+    {
+        return obj->transform;
+    }
+
+    for (size_t i = 0; i < obj->components.size(); ++i)
+    {
+        Value component = obj->components[i].instance;
+        if (!is_instance(component))
+        {
+            continue;
+        }
+
+        ObjClass *klass = as_instance(component)->klass;
+        if (class_is_or_derives_from(klass, wanted))
+        {
+            return component;
+        }
+    }
+    return val_nil();
+}
+
 static EngineComponent make_engine_component(VM &vm, Value component)
 {
     EngineComponent result;
@@ -285,6 +344,26 @@ static int nat_game_object_get_transform(VM *, Value *args, int)
     return 1;
 }
 
+static int nat_game_object_get_component(VM *vm, Value *args, int nargs)
+{
+    if (nargs != 2 || !is_instance(args[0]) || !is_class(args[1]))
+    {
+        vm->runtime_error("GameObject.getComponent<T>() expects a component type");
+        args[0] = val_nil();
+        return 1;
+    }
+
+    ObjInstance *self = as_instance(args[0]);
+    if (self->klass != g_game_object_class)
+    {
+        args[0] = val_nil();
+        return 1;
+    }
+
+    args[0] = find_component_on_object(find_engine_object_by_go(args[0]), as_class(args[1]));
+    return 1;
+}
+
 static int nat_script_component_get_transform(VM *vm, Value *args, int)
 {
     (void)vm;
@@ -317,6 +396,27 @@ static int nat_script_component_get_transform(VM *vm, Value *args, int)
     }
 
     args[0] = go_inst->fields[1];
+    return 1;
+}
+
+static int nat_script_component_get_component(VM *vm, Value *args, int nargs)
+{
+    if (nargs != 2 || !is_instance(args[0]) || !is_class(args[1]))
+    {
+        vm->runtime_error("ScriptComponent.getComponent<T>() expects a component type");
+        args[0] = val_nil();
+        return 1;
+    }
+
+    ObjInstance *self = as_instance(args[0]);
+    if (self->klass->num_fields < 1)
+    {
+        args[0] = val_nil();
+        return 1;
+    }
+
+    Value go = self->fields[0]; /* gameObject */
+    args[0] = find_component_on_object(find_engine_object_by_go(go), as_class(args[1]));
     return 1;
 }
 
@@ -478,6 +578,7 @@ static void register_engine_api(VM &vm)
         .field("transform")
         .method("init", nat_game_object_init, 1)
         .method("get_transform", nat_game_object_get_transform, 0)
+        .method("getComponent", nat_game_object_get_component, 1)
         .persistent(true)
         .constructable(false)
         .end();
@@ -486,6 +587,7 @@ static void register_engine_api(VM &vm)
         .field("gameObject")
         .field("transform")
         .method("get_transform", nat_script_component_get_transform, 0)
+        .method("getComponent", nat_script_component_get_component, 1)
         .persistent(true)
         .constructable(false)
         .end();

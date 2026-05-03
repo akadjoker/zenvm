@@ -114,6 +114,46 @@ namespace zen
         }
     }
 
+    bool Compiler::looks_like_generic_call()
+    {
+        if (current_.type != TOK_LT)
+            return false;
+
+        LexerState saved = lexer_.save_state();
+        Token type_name = lexer_.next_token();
+        Token close = lexer_.next_token();
+        Token call = lexer_.next_token();
+        lexer_.restore_state(saved);
+
+        return type_name.type == TOK_IDENTIFIER &&
+               close.type == TOK_GT &&
+               call.type == TOK_LPAREN;
+    }
+
+    int Compiler::generic_type_arg(int dest)
+    {
+        if (check(TOK_LT))
+            advance();
+        else if (previous_.type != TOK_LT)
+            error("Expected '<' before generic type.");
+        consume(TOK_IDENTIFIER, "Expected type name in generic call.");
+        Token type_name = previous_;
+        consume(TOK_GT, "Expected '>' after generic type.");
+
+        char name_buf[256];
+        int len = type_name.length < 255 ? type_name.length : 255;
+        memcpy(name_buf, type_name.start, len);
+        name_buf[len] = '\0';
+
+        int gidx = vm_->find_global(name_buf);
+        if (gidx < 0)
+            gidx = vm_->def_global(name_buf, val_nil());
+
+        int reg = dest >= 0 ? dest : alloc_reg();
+        state_->emitter.emit_abx(OP_GETGLOBAL, reg, gidx, type_name.line);
+        return reg;
+    }
+
     /* =========================================================
     ** Expression entry point
     ** ========================================================= */
@@ -140,11 +180,21 @@ namespace zen
         int reg = prefix_rule(token, dest, canAssign);
 
         /* Infix: keep consuming operators at this precedence or higher */
-        while (prec <= get_precedence(current_.type))
+        for (;;)
         {
+            Precedence op_prec = get_precedence(current_.type);
+            bool is_generic_call = current_.type == TOK_LT && looks_like_generic_call();
+            if (is_generic_call)
+                op_prec = PREC_CALL;
+            if (prec > op_prec)
+                break;
+
             Token op = current_;
             advance();
-            reg = infix_rule(op, reg, dest, canAssign);
+            if (is_generic_call)
+                reg = generic_call_expr(reg, dest);
+            else
+                reg = infix_rule(op, reg, dest, canAssign);
         }
 
         /* If we can assign but '=' is still sitting there, it's an error.
@@ -1156,6 +1206,61 @@ namespace zen
         return result_reg;
     }
 
+    int Compiler::generic_call_expr(int func_reg, int dest)
+    {
+        int base;
+        int save_next = state_->next_reg;
+        ObjStructDef *saved_struct_def = last_call_struct_def_;
+
+        if (is_local_reg(func_reg))
+        {
+            if (state_->next_reg <= func_reg)
+                state_->next_reg = func_reg + 1;
+            base = alloc_reg();
+            emit_move(base, func_reg);
+        }
+        else
+        {
+            base = func_reg;
+        }
+
+        if (state_->next_reg <= base)
+            state_->next_reg = base + 1;
+
+        int arg_count = 0;
+        int type_reg = alloc_reg();
+        if (type_reg != base + 1)
+        {
+            /* Keep call arguments consecutive even if the allocator had moved. */
+            state_->next_reg = base + 1;
+            type_reg = alloc_reg();
+        }
+        generic_type_arg(type_reg);
+        arg_count++;
+
+        consume(TOK_LPAREN, "Expected '(' after generic type.");
+        if (!check(TOK_RPAREN))
+        {
+            do
+            {
+                int arg_reg = alloc_reg();
+                expression(arg_reg);
+                state_->next_reg = arg_reg + 1;
+                arg_count++;
+            } while (match(TOK_COMMA));
+        }
+        consume(TOK_RPAREN, "Expected ')' after arguments.");
+
+        int result_reg = dest >= 0 ? dest : base;
+        state_->emitter.emit_abc(OP_CALL, base, arg_count, 1, previous_.line);
+        state_->next_reg = save_next > base + 1 ? save_next : base + 1;
+        last_call_struct_def_ = saved_struct_def;
+
+        if (result_reg != base)
+            emit_move(result_reg, base);
+        return result_reg;
+    }
+
     /* =========================================================
     ** Infix handlers — Index: a[i]
     ** ========================================================= */
@@ -1334,11 +1439,11 @@ namespace zen
             return dest >= 0 ? dest : alloc_reg();
         }
 
-        /* Not assignment — check for method call: a.b(args) */
-        if (check(TOK_LPAREN))
+        /* Not assignment — check for method call: a.b(args) or a.b<T>(args) */
+        bool has_generic_arg = check(TOK_LT) && looks_like_generic_call();
+        if (has_generic_arg || check(TOK_LPAREN))
         {
             /* Method invocation — emit OP_INVOKE (2-word) */
-            advance(); /* consume '(' */
 
             /* Put receiver at base register */
             int base = alloc_reg();
@@ -1352,12 +1457,26 @@ namespace zen
             if (state_->next_reg <= base)
                 state_->next_reg = base + 1;
 
+            if (has_generic_arg)
+            {
+                int type_reg = alloc_reg();
+                if (type_reg != base + 1)
+                {
+                    state_->next_reg = base + 1;
+                    type_reg = alloc_reg();
+                }
+                generic_type_arg(type_reg);
+                arg_count++;
+            }
+
+            consume(TOK_LPAREN, "Expected '(' after generic type.");
             if (!check(TOK_RPAREN))
             {
                 do
                 {
                     int arg_reg = alloc_reg();
                     expression(arg_reg);
+                    state_->next_reg = arg_reg + 1;
                     arg_count++;
                 } while (match(TOK_COMMA));
             }

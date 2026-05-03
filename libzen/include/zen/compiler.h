@@ -171,6 +171,7 @@ namespace zen
         /* Infix handlers */
         int binary(Token op, int left, int dest);
         int call_expr(int func_reg, int dest);
+        int generic_call_expr(int func_reg, int dest);
         int index_expr(int obj_reg, int dest, bool canAssign);
         int dot_expr(int obj_reg, int dest, bool canAssign);
         int and_expr(int left, int dest);
@@ -187,6 +188,8 @@ namespace zen
         /* --- Helpers --- */
         Precedence get_precedence(TokenType type);
         bool is_prefix(TokenType type);
+        bool looks_like_generic_call();
+        int generic_type_arg(int dest);
 
         /* --- Variable resolution --- */
         int resolve_local(CompilerState *state, Token *name);
