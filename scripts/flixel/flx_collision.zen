@@ -1,0 +1,352 @@
+// ============================================================
+// FlxCollision — separação AABB e QuadTree
+// ============================================================
+
+import flx_object;
+
+// ==========================================================
+// Separação AABB (igual ao Flixel: separa e ajusta velocidade)
+// ==========================================================
+
+// Separa dois objectos no eixo X
+// Retorna true se houve separação
+def separate_x(a, b) {
+    var a_immov = a.immovable;
+    var b_immov = b.immovable;
+    if (a_immov and b_immov) { return false; }
+
+    var overlap = 0;
+    var a_delta = a.x - a.last_x;   // movimento neste frame
+    var b_delta = b.x - b.last_x;
+
+    if (a_delta != b_delta) {
+        var a_delta_abs = abs(a_delta);
+        var b_delta_abs = abs(b_delta);
+
+        // hitboxes expandidas pelo movimento
+        var a_l = a.x - (a_delta > 0 ? 0 : a_delta_abs);
+        var a_r = a_l + a.width + a_delta_abs;
+        var b_l = b.x - (b_delta > 0 ? 0 : b_delta_abs);
+        var b_r = b_l + b.width + b_delta_abs;
+
+        if (a_l < b_r and a_r > b_l) {
+            var max_overlap = a_delta_abs + b_delta_abs + 4;
+
+            if (a_delta > b_delta) {
+                overlap = a.right() - b.x;
+                if (overlap > max_overlap or (a.allow_collisions & RIGHT) == 0 or
+                    (b.allow_collisions & LEFT) == 0) {
+                    overlap = 0;
+                } else {
+                    a.touching = a.touching | RIGHT;
+                    b.touching = b.touching | LEFT;
+                }
+            } else {
+                overlap = a.x - b.right();
+                if (-overlap > max_overlap or (a.allow_collisions & LEFT) == 0 or
+                    (b.allow_collisions & RIGHT) == 0) {
+                    overlap = 0;
+                } else {
+                    a.touching = a.touching | LEFT;
+                    b.touching = b.touching | RIGHT;
+                }
+            }
+        }
+    }
+
+    if (overlap != 0) {
+        var a_v = a.vx;
+        var b_v = b.vx;
+
+        if (!a_immov and !b_immov) {
+            overlap = overlap / 2;
+            a.x = a.x - overlap;
+            b.x = b.x + overlap;
+
+            // transferência de momento
+            var avg = (a_v + b_v) / 2;
+            a_v = avg + (b_v - avg) * a.mass;
+            b_v = avg + (a_v - avg) * b.mass;
+            a.vx = a_v;
+            b.vx = b_v;
+        } else {
+            if (!a_immov) {
+                a.x = a.x - overlap;
+                a.vx = b_v - a_v * 0.8;
+            } else {
+                b.x = b.x + overlap;
+                b.vx = a_v - b_v * 0.8;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
+// Separa no eixo Y
+def separate_y(a, b) {
+    var a_immov = a.immovable;
+    var b_immov = b.immovable;
+    if (a_immov and b_immov) { return false; }
+
+    var overlap = 0;
+    var a_delta = a.y - a.last_y;
+    var b_delta = b.y - b.last_y;
+
+    if (a_delta != b_delta) {
+        var a_delta_abs = abs(a_delta);
+        var b_delta_abs = abs(b_delta);
+
+        var a_t = a.y - (a_delta > 0 ? 0 : a_delta_abs);
+        var a_b = a_t + a.height + a_delta_abs;
+        var b_t = b.y - (b_delta > 0 ? 0 : b_delta_abs);
+        var b_b = b_t + b.height + b_delta_abs;
+
+        if (a_t < b_b and a_b > b_t) {
+            var max_overlap = a_delta_abs + b_delta_abs + 4;
+
+            if (a_delta > b_delta) {
+                overlap = a.bottom() - b.y;
+                if (overlap > max_overlap or (a.allow_collisions & DOWN) == 0 or
+                    (b.allow_collisions & UP) == 0) {
+                    overlap = 0;
+                } else {
+                    a.touching = a.touching | DOWN;
+                    b.touching = b.touching | UP;
+                }
+            } else {
+                overlap = a.y - b.bottom();
+                if (-overlap > max_overlap or (a.allow_collisions & UP) == 0 or
+                    (b.allow_collisions & DOWN) == 0) {
+                    overlap = 0;
+                } else {
+                    a.touching = a.touching | UP;
+                    b.touching = b.touching | DOWN;
+                }
+            }
+        }
+    }
+
+    if (overlap != 0) {
+        var a_v = a.vy;
+        var b_v = b.vy;
+
+        if (!a_immov and !b_immov) {
+            overlap = overlap / 2;
+            a.y = a.y - overlap;
+            b.y = b.y + overlap;
+            var avg = (a_v + b_v) / 2;
+            a_v = avg + (b_v - avg) * a.mass;
+            b_v = avg + (a_v - avg) * b.mass;
+            a.vy = a_v;
+            b.vy = b_v;
+        } else {
+            if (!a_immov) {
+                a.y = a.y - overlap;
+                a.vy = b_v - a_v * 0.8;
+                if (b_immov and a_delta > 0) {
+                    a.touching = a.touching | DOWN;
+                }
+            } else {
+                b.y = b.y + overlap;
+                b.vy = a_v - b_v * 0.8;
+                if (a_immov and b_delta > 0) {
+                    b.touching = b.touching | DOWN;
+                }
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
+// Colisão completa: separa X e Y
+def flx_collide(a, b) {
+    return separate_x(a, b) or separate_y(a, b);
+}
+
+// Só verifica overlap sem separar
+def flx_overlap(a, b) {
+    return a.overlaps(b);
+}
+
+// ==========================================================
+// QuadTree — broad phase para grupos grandes
+// ==========================================================
+
+var QT_MAX_OBJECTS = 10;
+var QT_MAX_DEPTH   = 5;
+
+class QuadTree {
+    var x;  var y;
+    var w;  var h;
+    var depth;
+    var objects;     // FlxObjects neste nó
+    var children;    // 4 filhos ou null
+
+    def init(x, y, w, h, depth) {
+        self.x = x;  self.y = y;
+        self.w = w;  self.h = h;
+        self.depth   = depth;
+        self.objects = [];
+        self.children = null;
+    }
+
+    def is_leaf() {
+        return self.children == null;
+    }
+
+    def subdivide() {
+        var hw = self.w / 2;
+        var hh = self.h / 2;
+        self.children = [];
+        self.children.push(QuadTree(self.x,      self.y,      hw, hh, self.depth + 1));
+        self.children.push(QuadTree(self.x + hw, self.y,      hw, hh, self.depth + 1));
+        self.children.push(QuadTree(self.x,      self.y + hh, hw, hh, self.depth + 1));
+        self.children.push(QuadTree(self.x + hw, self.y + hh, hw, hh, self.depth + 1));
+    }
+
+    def get_quadrant(obj) {
+        var hw = self.w / 2;
+        var hh = self.h / 2;
+        var mx = self.x + hw;
+        var my = self.y + hh;
+
+        var in_top    = obj.y + obj.height < my;
+        var in_bottom = obj.y > my;
+        var in_left   = obj.x + obj.width < mx;
+        var in_right  = obj.x > mx;
+
+        if (in_left) {
+            if (in_top)    { return 0; }
+            if (in_bottom) { return 2; }
+        } else {
+            if (in_right) {
+                if (in_top)    { return 1; }
+                if (in_bottom) { return 3; }
+            }
+        }
+        return -1;   // cabe em múltiplos quadrantes
+    }
+
+    def insert(obj) {
+        if (!self.is_leaf()) {
+            var q = self.get_quadrant(obj);
+            if (q >= 0) {
+                self.children[q].insert(obj);
+                return;
+            }
+        }
+
+        self.objects.push(obj);
+
+        if (self.is_leaf() and
+            self.objects.len() > QT_MAX_OBJECTS and
+            self.depth < QT_MAX_DEPTH) {
+            self.subdivide();
+            // redistribui objectos
+            var old = self.objects;
+            self.objects = [];
+            var i = 0;
+            while (i < old.len()) {
+                var q = self.get_quadrant(old[i]);
+                if (q >= 0) {
+                    self.children[q].insert(old[i]);
+                } else {
+                    self.objects.push(old[i]);
+                }
+                i = i + 1;
+            }
+        }
+    }
+
+    def query(obj, results) {
+        // candidatos neste nó
+        var i = 0;
+        while (i < self.objects.len()) {
+            var o = self.objects[i];
+            if (o != obj and o.exists and obj.overlaps(o)) {
+                results.push(o);
+            }
+            i = i + 1;
+        }
+
+        // desce nos filhos relevantes
+        if (!self.is_leaf()) {
+            var q = self.get_quadrant(obj);
+            if (q >= 0) {
+                self.children[q].query(obj, results);
+            } else {
+                // cabe em múltiplos → verifica todos
+                var j = 0;
+                while (j < 4) {
+                    self.children[j].query(obj, results);
+                    j = j + 1;
+                }
+            }
+        }
+    }
+
+    def clear() {
+        self.objects.clear();
+        if (!self.is_leaf()) {
+            var i = 0;
+            while (i < 4) {
+                self.children[i].clear();
+                i = i + 1;
+            }
+            self.children = null;
+        }
+    }
+}
+
+// ==========================================================
+// FlxG.collide / FlxG.overlap equivalentes para grupos
+// ==========================================================
+
+def group_collide(group_a, group_b) {
+    var hits = 0;
+    var i = 0;
+    while (i < group_a.members.len()) {
+        var a = group_a.members[i];
+        if (a != null and a.exists) {
+            var j = 0;
+            while (j < group_b.members.len()) {
+                var b = group_b.members[j];
+                if (b != null and b.exists and a != b) {
+                    if (flx_collide(a, b)) {
+                        hits = hits + 1;
+                    }
+                }
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return hits;
+}
+
+def group_overlap(group_a, group_b, callback) {
+    var hits = 0;
+    var i = 0;
+    while (i < group_a.members.len()) {
+        var a = group_a.members[i];
+        if (a != null and a.exists) {
+            var j = 0;
+            while (j < group_b.members.len()) {
+                var b = group_b.members[j];
+                if (b != null and b.exists and a != b) {
+                    if (flx_overlap(a, b)) {
+                        hits = hits + 1;
+                        if (callback != null) {
+                            callback(a, b);
+                        }
+                    }
+                }
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return hits;
+}

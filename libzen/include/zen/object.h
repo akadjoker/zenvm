@@ -83,6 +83,12 @@ namespace zen
         Obj obj;
         int32_t length;
         int32_t capacity; /* allocated size of chars[] (0 = tight, length+1) */
+        int16_t array_method_id;
+        int16_t buffer_method_id;
+        int16_t map_method_id;
+        int16_t set_method_id;
+        int16_t string_method_id;
+        int16_t operator_slot_id;
         char chars[];     /* flexible array member — C99/C++11 */
     };
 
@@ -541,6 +547,7 @@ namespace zen
         ObjString **field_names; /* nomes dos fields (para init) */
         Value *vtable;           /* flat array indexed by selector slot */
         int32_t vtable_size;     /* allocated slots in vtable */
+        Value operator_slots[kOperatorSlotCount]; /* fixed slots for __add__, __str__, ... */
         /* Native class binding */
         NativeClassCtor native_ctor; /* returns void* userdata (NULL = no native ctor) */
         NativeClassDtor native_dtor; /* called on GC free or explicit destroy (NULL = nop) */

@@ -1,0 +1,170 @@
+// ============================================================
+// FlxSprite — estende FlxObject com animações
+// Animação: array de frames, fps, loop, callbacks
+// ============================================================
+
+import flx_object;
+
+class FlxAnimation {
+    var name;
+    var frames;     // array de índices de frame
+    var fps;
+    var looped;
+
+    def init(name, frames, fps, looped) {
+        self.name   = name;
+        self.frames = frames;
+        self.fps    = fps;
+        self.looped = looped;
+    }
+}
+
+class FlxSprite : FlxObject {
+    // animações
+    var animations;      // map nome→FlxAnimation
+    var cur_anim;        // FlxAnimation activa
+    var cur_frame;       // índice no array frames da animação
+    var frame_timer;     // acumulador de tempo
+    var finished;        // animação terminou (não looped)
+    var frame_index;     // frame actual do spritesheet
+
+    // flip
+    var flip_x;
+    var flip_y;
+
+    // cor / alpha
+    var alpha;
+    var color_r;
+    var color_g;
+    var color_b;
+
+    // offset de render (não afecta hitbox)
+    var offset_x;
+    var offset_y;
+
+    // escala
+    var scale_x;
+    var scale_y;
+
+    // ângulo
+    var angle;
+    var angular_vel;
+
+    def init(x, y) {
+        // chama FlxObject.init com tamanho default
+        super.init(self, x, y, 16, 16);
+
+        self.animations  = {};
+        self.cur_anim    = null;
+        self.cur_frame   = 0;
+        self.frame_timer = 0.0;
+        self.finished    = false;
+        self.frame_index = 0;
+
+        self.flip_x = false;
+        self.flip_y = false;
+
+        self.alpha   = 1.0;
+        self.color_r = 255;
+        self.color_g = 255;
+        self.color_b = 255;
+
+        self.offset_x = 0;
+        self.offset_y = 0;
+        self.scale_x  = 1.0;
+        self.scale_y  = 1.0;
+        self.angle    = 0.0;
+        self.angular_vel = 0.0;
+    }
+
+    // Adiciona uma animação
+    def add_animation(name, frames, fps, looped) {
+        var anim = FlxAnimation(name, frames, fps, looped);
+        self.animations.set(name, anim);
+    }
+
+    // Toca uma animação pelo nome
+    def play(name, force) {
+        if (!force and self.cur_anim != null) {
+            if (self.cur_anim.name == name) { return; }
+        }
+
+        var anim = self.animations.get(name, null);
+        if (anim == null) {
+            print("FlxSprite.play: animação '{name}' não existe");
+            return;
+        }
+
+        self.cur_anim    = anim;
+        self.cur_frame   = 0;
+        self.frame_timer = 0.0;
+        self.finished    = false;
+
+        if (anim.frames.len() > 0) {
+            self.frame_index = anim.frames[0];
+        }
+    }
+
+    def update(dt) {
+        // física via FlxObject
+        FlxObject.update(self, dt);
+
+        // ângulo
+        if (self.angular_vel != 0) {
+            self.angle = self.angle + self.angular_vel * dt;
+        }
+
+        // animação
+        if (self.cur_anim != null and !self.finished) {
+            var anim = self.cur_anim;
+            if (anim.fps > 0) {
+                self.frame_timer = self.frame_timer + dt;
+                var frame_dur = 1.0 / anim.fps;
+
+                while (self.frame_timer >= frame_dur) {
+                    self.frame_timer = self.frame_timer - frame_dur;
+                    self.cur_frame = self.cur_frame + 1;
+
+                    if (self.cur_frame >= anim.frames.len()) {
+                        if (anim.looped) {
+                            self.cur_frame = 0;
+                        } else {
+                            self.cur_frame = anim.frames.len() - 1;
+                            self.finished  = true;
+                            break;
+                        }
+                    }
+                }
+
+                self.frame_index = anim.frames[self.cur_frame];
+            }
+        }
+    }
+
+    // Helpers de cor
+    def set_color(r, g, b) {
+        self.color_r = r;
+        self.color_g = g;
+        self.color_b = b;
+    }
+
+    def set_size(w, h) {
+        self.width  = w;
+        self.height = h;
+    }
+
+    // Ajusta hitbox centrada no sprite
+    def center_offsets() {
+        self.offset_x = (self.width  - self.width)  / 2;
+        self.offset_y = (self.height - self.height) / 2;
+    }
+
+    def is_animation_finished() {
+        return self.finished;
+    }
+
+    def cur_animation_name() {
+        if (self.cur_anim == null) { return ""; }
+        return self.cur_anim.name;
+    }
+}

@@ -15,8 +15,9 @@
 
 ObjArray *arr = as_array(receiver);
 
-/* Dispatch by method name (sorted by likely frequency) */
-if (mlen == 4 && memcmp(mname, "push", 4) == 0)
+switch (method->array_method_id)
+{
+case ARRAY_PUSH:
 {
     /* arr.push(val) → append, returns new length */
     if (arg_count < 1)
@@ -27,8 +28,9 @@ if (mlen == 4 && memcmp(mname, "push", 4) == 0)
     for (int ai = 0; ai < arg_count; ai++)
         array_push(&gc_, arr, args[ai]);
     R[base] = val_int(arr_count(arr));
+    break;
 }
-else if (mlen == 3 && memcmp(mname, "pop", 3) == 0)
+case ARRAY_POP:
 {
     /* arr.pop() → remove+return last element */
     if (arr_count(arr) == 0)
@@ -37,13 +39,15 @@ else if (mlen == 3 && memcmp(mname, "pop", 3) == 0)
         return;
     }
     R[base] = *--arr->end;
+    break;
 }
-else if (mlen == 3 && memcmp(mname, "len", 3) == 0)
+case ARRAY_LEN:
 {
     /* arr.len() → length */
     R[base] = val_int(arr_count(arr));
+    break;
 }
-else if (mlen == 6 && memcmp(mname, "remove", 6) == 0)
+case ARRAY_REMOVE:
 {
     /* arr.remove(idx) → remove at index, return removed value */
     if (arg_count != 1 || !is_int(args[0]))
@@ -62,8 +66,9 @@ else if (mlen == 6 && memcmp(mname, "remove", 6) == 0)
     memmove(&arr->data[idx], &arr->data[idx + 1], (size_t)(count - idx - 1) * sizeof(Value));
     arr->end--;
     R[base] = removed;
+    break;
 }
-else if (mlen == 6 && memcmp(mname, "insert", 6) == 0)
+case ARRAY_INSERT:
 {
     /* arr.insert(idx, val) → insert at position */
     if (arg_count != 2 || !is_int(args[0]))
@@ -83,8 +88,9 @@ else if (mlen == 6 && memcmp(mname, "insert", 6) == 0)
     memmove(&arr->data[idx + 1], &arr->data[idx], (size_t)(count - idx) * sizeof(Value));
     arr->data[idx] = args[1];
     R[base] = val_int(arr_count(arr));
+    break;
 }
-else if (mlen == 5 && memcmp(mname, "slice", 5) == 0)
+case ARRAY_SLICE:
 {
     /* arr.slice(start, end?) → new array [start, end) */
     int32_t count = arr_count(arr);
@@ -110,20 +116,23 @@ else if (mlen == 5 && memcmp(mname, "slice", 5) == 0)
         result->end = result->data + new_count;
     }
     R[base] = val_obj((Obj *)result);
+    break;
 }
-else if (mlen == 7 && memcmp(mname, "reverse", 7) == 0)
+case ARRAY_REVERSE:
 {
     /* arr.reverse() → in-place reverse, returns arr */
     array_reverse(arr);
     R[base] = receiver;
+    break;
 }
-else if (mlen == 5 && memcmp(mname, "clear", 5) == 0)
+case ARRAY_CLEAR:
 {
     /* arr.clear() → empty the array */
     array_clear(arr);
     R[base] = val_nil();
+    break;
 }
-else if (mlen == 8 && memcmp(mname, "contains", 8) == 0)
+case ARRAY_CONTAINS:
 {
     /* arr.contains(val) → bool */
     if (arg_count != 1)
@@ -132,8 +141,9 @@ else if (mlen == 8 && memcmp(mname, "contains", 8) == 0)
         return;
     }
     R[base] = val_bool(array_contains(arr, args[0]));
+    break;
 }
-else if (mlen == 4 && memcmp(mname, "join", 4) == 0)
+case ARRAY_JOIN:
 {
     /* arr.join(sep?) → string */
     const char *sep = "";
@@ -213,8 +223,9 @@ else if (mlen == 4 && memcmp(mname, "join", 4) == 0)
     }
     R[base] = val_obj((Obj *)new_string(&gc_, buf, total_len));
     free(buf);
+    break;
 }
-else if (mlen == 4 && memcmp(mname, "sort", 4) == 0)
+case ARRAY_SORT:
 {
     /* arr.sort() or arr.sort("desc") → in-place sort using qsort */
     if (arg_count > 1)
@@ -262,8 +273,9 @@ else if (mlen == 4 && memcmp(mname, "sort", 4) == 0)
             return s_desc ? -cmp : cmp; });
     }
     R[base] = receiver;
+    break;
 }
-else if (mlen == 8 && memcmp(mname, "index_of", 8) == 0)
+case ARRAY_INDEX_OF:
 {
     /* arr.index_of(val) → index or -1 */
     if (arg_count != 1)
@@ -272,9 +284,11 @@ else if (mlen == 8 && memcmp(mname, "index_of", 8) == 0)
         return;
     }
     R[base] = val_int(array_find(arr, args[0]));
+    break;
 }
-else
+default:
 {
     runtime_error("array has no method '%s'", mname);
     return;
+}
 }

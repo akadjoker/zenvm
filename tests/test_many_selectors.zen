@@ -1,12 +1,9 @@
 // AUTO-GENERATED: stress test for the dynamic selector table.
 // The VM's selector pool starts at capacity 32 and must grow as
 // new method names are interned. With 100 unique m### method names
-// (plus init plus the operator selectors), it will trigger at least
+// (plus init), it will trigger at least
 // two reallocations of selectors_, proving the grow path is correct.
 // Each method is also CALLED to verify slots stay valid post-grow.
-//
-// Capped at 100 methods to stay below an unrelated pre-existing
-// vtable issue (see notes/libzen-known-issues.md).
 
 class Many {
     var n;

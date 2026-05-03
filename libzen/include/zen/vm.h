@@ -94,6 +94,7 @@ namespace zen
         void destroy_instance(Value instance);                   /* destroy persistent instance */
         Value invoke(Value instance, const char *method, Value *args, int nargs);
         Value invoke(Value instance, int slot, Value *args, int nargs); /* vtable slot, O(1) */
+        Value invoke_operator(Value instance, int slot, Value *args, int nargs);
 
         enum OperatorSlot : int
         {
@@ -112,7 +113,7 @@ namespace zen
             SLOT_LT,
             SLOT_LE,
             SLOT_STR,
-            SLOT_OPERATOR_COUNT
+            SLOT_OPERATOR_COUNT = kOperatorSlotCount
         };
 
         /* --- Struct builder --- */
@@ -288,10 +289,15 @@ namespace zen
         /* --- Estado --- */
         GC gc_;
 
-        /* Globals */
-        Value globals_[MAX_GLOBALS];
-        ObjString *global_names_[MAX_GLOBALS];
+        /* Globals — dynamic. Grows on demand via def_global up to
+        ** kMaxGlobalsHard (65536, dictated by OP_GETGLOBAL Bx encoding).
+        ** Same safety argument as selectors_: callers only hold integer
+        ** indices, never raw pointers into the array, so realloc is safe. */
+        Value *globals_;
+        ObjString **global_names_;
         int num_globals_;
+        int globals_capacity_;
+        bool grow_globals(int required); /* internal — returns false on hard cap */
 
         /* Main fiber (script top-level corre aqui) */
         ObjFiber *main_fiber_;

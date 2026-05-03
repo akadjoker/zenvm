@@ -1,5 +1,6 @@
 #include "vm.h"
 #include "debug.h"
+#include "name_tables.h"
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -14,17 +15,20 @@
 
 namespace zen
 {
-
     /* =========================================================
     ** Construtor / Destrutor
     ** ========================================================= */
 
-    VM::VM() : on_process_start(nullptr), on_process_update(nullptr), on_process_end(nullptr), num_globals_(0), main_fiber_(nullptr), current_fiber_(nullptr), fiber_depth_(0), external_call_stop_depth_(-1), had_error_(false), num_search_paths_(0), num_libs_(0), num_plugins_(0), selectors_(nullptr), num_selectors_(0), selectors_capacity_(0), pool_(nullptr), num_alive_(0), pool_capacity_(0), next_process_id_(1), current_process_id_(-1), current_slot_idx_(-1)
+    VM::VM() : on_process_start(nullptr), on_process_update(nullptr), on_process_end(nullptr), globals_(nullptr), global_names_(nullptr), num_globals_(0), globals_capacity_(0), main_fiber_(nullptr), current_fiber_(nullptr), fiber_depth_(0), external_call_stop_depth_(-1), had_error_(false), num_search_paths_(0), num_libs_(0), num_plugins_(0), selectors_(nullptr), num_selectors_(0), selectors_capacity_(0), pool_(nullptr), num_alive_(0), pool_capacity_(0), next_process_id_(1), current_process_id_(-1), current_slot_idx_(-1)
     {
         gc_init(&gc_);
         gc_.vm = this;
-        memset(globals_, 0, sizeof(globals_));
-        memset(global_names_, 0, sizeof(global_names_));
+
+        /* Globals: dynamic, grow on demand via def_global. */
+        globals_capacity_ = kInitGlobalCapacity;
+        globals_ = (Value *)calloc(globals_capacity_, sizeof(Value));
+        global_names_ = (ObjString **)calloc(globals_capacity_, sizeof(ObjString *));
+
         memset(search_paths_, 0, sizeof(search_paths_));
         memset(plugin_handles_, 0, sizeof(plugin_handles_));
 
@@ -32,18 +36,7 @@ namespace zen
         selectors_capacity_ = kInitSelectorCapacity;
         selectors_ = (ObjString **)calloc(selectors_capacity_, sizeof(ObjString *));
 
-        static const char *operator_names[] = {
-            "__add__", "__radd__", "__sub__", "__rsub__", "__mul__", "__rmul__",
-            "__div__", "__rdiv__", "__mod__", "__rmod__", "__neg__", "__eq__",
-            "__lt__", "__le__", "__str__",
-        };
-        for (int i = 0; i < SLOT_OPERATOR_COUNT; i++)
-        {
-            int len = (int)strlen(operator_names[i]);
-            selectors_[i] = intern_string(&gc_, operator_names[i], len,
-                                          hash_string(operator_names[i], len));
-        }
-        num_selectors_ = SLOT_OPERATOR_COUNT;
+        num_selectors_ = 0;
 
         /* Criar main fiber */
         main_fiber_ = new_fiber(nullptr, kMaxRegs * 4);
@@ -82,6 +75,13 @@ namespace zen
         /* Free all objects via GC sweep */
         gc_sweep_all(&gc_);
 
+        free(globals_);
+        free(global_names_);
+        globals_ = nullptr;
+        global_names_ = nullptr;
+        globals_capacity_ = 0;
+        num_globals_ = 0;
+
         /* Free gray list */
         if (gc_.gray_list)
             free(gc_.gray_list);
@@ -101,8 +101,7 @@ namespace zen
         ** our BLACK fiber to WHITE, and the second cycle sweeps it because
         ** it's not yet reachable from any root (not in pool_ yet).
         ** Fix: bump the GC threshold so no collection happens until we're done. */
-        size_t saved_next_gc = gc_.next_gc;
-        gc_.next_gc = (size_t)-1; /* disable GC trigger */
+        gc_pause(&gc_);
 
         ObjFiber *fiber = (ObjFiber *)zen_alloc(&gc_, sizeof(ObjFiber));
         fiber->obj.type = OBJ_FIBER;
@@ -138,8 +137,7 @@ namespace zen
         fiber->frame_capacity = max_frames;
         fiber->frames = (CallFrame *)zen_alloc(&gc_, max_frames * sizeof(CallFrame));
 
-        /* Restore GC threshold */
-        gc_.next_gc = saved_next_gc;
+        gc_resume(&gc_);
 
         /* Se tiver closure, prepara o primeiro frame */
         if (closure)
@@ -275,11 +273,54 @@ namespace zen
             globals_[existing] = val;
             return existing;
         }
+        if (!grow_globals(num_globals_ + 1))
+            return -1;
         int idx = num_globals_++;
         global_names_[idx] = intern_string(&gc_, name, (int)strlen(name),
                                            hash_string(name, (int)strlen(name)));
         globals_[idx] = val;
         return idx;
+    }
+
+    bool VM::grow_globals(int required)
+    {
+        if (required <= globals_capacity_)
+            return true;
+        if (required > kMaxGlobalsHard)
+        {
+            runtime_error("too many globals");
+            return false;
+        }
+
+        int new_cap = globals_capacity_ > 0 ? globals_capacity_ : kInitGlobalCapacity;
+        while (new_cap < required && new_cap < kMaxGlobalsHard)
+            new_cap *= 2;
+        if (new_cap < required)
+            new_cap = kMaxGlobalsHard;
+
+        Value *new_globals = (Value *)realloc(globals_, sizeof(Value) * (size_t)new_cap);
+        if (!new_globals)
+        {
+            runtime_error("out of memory growing globals");
+            return false;
+        }
+        ObjString **new_names = (ObjString **)realloc(global_names_, sizeof(ObjString *) * (size_t)new_cap);
+        if (!new_names)
+        {
+            runtime_error("out of memory growing globals");
+            globals_ = new_globals;
+            return false;
+        }
+
+        for (int i = globals_capacity_; i < new_cap; i++)
+        {
+            new_globals[i] = val_nil();
+            new_names[i] = nullptr;
+        }
+        globals_ = new_globals;
+        global_names_ = new_names;
+        globals_capacity_ = new_cap;
+        return true;
     }
 
     Value VM::get_global(const char *name) const
@@ -777,8 +818,16 @@ namespace zen
         ObjNative *nat = new_native(&vm_->gc_, fn, arity, s);
         map_set(&vm_->gc_, klass_->methods, val_obj((Obj *)s), val_obj((Obj *)nat));
 
+        int name_len = (int)strlen(name);
+        int op_slot = s->operator_slot_id;
+        if (op_slot >= 0)
+        {
+            klass_->operator_slots[op_slot] = val_obj((Obj *)nat);
+            return *this;
+        }
+
         /* Also register in vtable */
-        int slot = vm_->intern_selector(name, (int)strlen(name));
+        int slot = vm_->intern_selector(name, name_len);
         if (slot >= klass_->vtable_size)
         {
             int new_size = slot + 1;
@@ -843,6 +892,14 @@ namespace zen
             {
                 if (is_nil(klass_->vtable[i]))
                     klass_->vtable[i] = p->vtable[i];
+            }
+        }
+        if (klass_->parent)
+        {
+            for (int i = 0; i < SLOT_OPERATOR_COUNT; i++)
+            {
+                if (is_nil(klass_->operator_slots[i]))
+                    klass_->operator_slots[i] = klass_->parent->operator_slots[i];
             }
         }
         vm_->def_global(klass_->name->chars, val_obj((Obj *)klass_));
@@ -932,7 +989,12 @@ namespace zen
 
     Value VM::invoke(Value instance, const char *method_name, Value *args, int nargs)
     {
-        int slot = find_selector(method_name, (int)strlen(method_name));
+        int name_len = (int)strlen(method_name);
+        int op_slot = operator_slot_for_name(method_name, name_len);
+        if (op_slot >= 0)
+            return invoke_operator(instance, op_slot, args, nargs);
+
+        int slot = find_selector(method_name, name_len);
         if (slot < 0)
         {
             runtime_error("method '%s' not found", method_name);
@@ -993,6 +1055,61 @@ namespace zen
             fiber->state = FIBER_RUNNING; /* reset after FIBER_DONE */
             return result;
         }
+        return val_nil();
+    }
+
+    Value VM::invoke_operator(Value instance, int slot, Value *args, int nargs)
+    {
+        ObjInstance *inst = as_instance(instance);
+        ObjClass *klass = inst->klass;
+
+        if (slot < 0 || slot >= SLOT_OPERATOR_COUNT || is_nil(klass->operator_slots[slot]))
+        {
+            runtime_error("operator slot %d is nil", slot);
+            return val_nil();
+        }
+
+        Value method = klass->operator_slots[slot];
+
+        if (is_native(method))
+        {
+            Value call_args[17];
+            call_args[0] = instance;
+            for (int i = 0; i < nargs && i < 16; i++)
+                call_args[i + 1] = args[i];
+            return as_native(method)->fn(this, call_args, nargs + 1) > 0 ? call_args[0] : val_nil();
+        }
+
+        if (is_closure(method))
+        {
+            ObjFiber *fiber = current_fiber_;
+            Value *base = fiber->stack_top;
+            base[0] = instance;
+            for (int i = 0; i < nargs; i++)
+                base[i + 1] = args[i];
+
+            ObjClosure *cl = as_closure(method);
+            fiber->stack_top = base + cl->func->num_regs;
+
+            CallFrame *frame = &fiber->frames[fiber->frame_count++];
+            frame->closure = cl;
+            frame->func = cl->func;
+            frame->ip = cl->func->code;
+            frame->base = base;
+            frame->ret_reg = (int)(base - fiber->frames[fiber->frame_count - 2].base);
+            frame->ret_count = 1;
+            int prev_stop_depth = external_call_stop_depth_;
+            external_call_stop_depth_ = fiber->frame_count - 1;
+            execute(fiber);
+            external_call_stop_depth_ = prev_stop_depth;
+
+            Value result = base[0];
+            fiber->stack_top = base;
+            fiber->state = FIBER_RUNNING;
+            return result;
+        }
+
+        runtime_error("operator slot %d is not callable", slot);
         return val_nil();
     }
 

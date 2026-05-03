@@ -5,11 +5,14 @@
 
 ObjBuffer *buf = as_buffer(receiver);
 
-if (mlen == 3 && memcmp(mname, "len", 3) == 0)
+switch (method->buffer_method_id)
+{
+case BUFFER_LEN:
 {
     R[base] = val_int(buf->count);
+    break;
 }
-else if (mlen == 4 && memcmp(mname, "fill", 4) == 0)
+case BUFFER_FILL:
 {
     if (arg_count != 1)
     {
@@ -28,13 +31,16 @@ else if (mlen == 4 && memcmp(mname, "fill", 4) == 0)
     }
     buffer_fill(buf, v);
     R[base] = receiver;
+    break;
 }
-else if (mlen == 8 && memcmp(mname, "byte_len", 8) == 0)
+case BUFFER_BYTE_LEN:
 {
     R[base] = val_int(buf->count * buffer_elem_size[buf->btype]);
+    break;
 }
-else
+default:
 {
     runtime_error("buffer has no method '%s'", mname);
     return;
+}
 }

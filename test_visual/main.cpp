@@ -87,7 +87,7 @@ static void render_process(VM *vm, VM::ProcessSlot *slot, void *userdata)
 
 int main(int argc, char *argv[])
 {
-    const char *script = "scripts/bunnymark.zen";
+    const char *script = "../tests/bunnymark.zen";
     if (argc > 1) script = argv[1];
 
     printf("=== Zen Process Benchmark ===\n");

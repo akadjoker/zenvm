@@ -1,5 +1,6 @@
 #include "bytecode.h"
 #include "memory.h"
+#include "name_tables.h"
 #include "object.h"
 #include "value.h"
 #include "vm.h"
@@ -497,6 +498,12 @@ namespace
                 return false;
         }
 
+        for (int32_t i = 0; i < kOperatorSlotCount; i++)
+        {
+            if (!write_value(w, klass->operator_slots[i], strip_debug, stats, err, err_len))
+                return false;
+        }
+
         return w.write_u8(klass->persistent ? 1 : 0) &&
                w.write_u8(klass->constructable ? 1 : 0);
     }
@@ -548,8 +555,8 @@ namespace
         return read_string(vm, r, out, err, err_len);
     }
 
-    static ObjFunc *read_func(VM *vm, BytecodeReader &r, char *err, int err_len);
-    static bool read_value(VM *vm, BytecodeReader &r, Value *out, char *err, int err_len);
+    static ObjFunc *read_func(VM *vm, BytecodeReader &r, uint16_t minor, char *err, int err_len);
+    static bool read_value(VM *vm, BytecodeReader &r, uint16_t minor, Value *out, char *err, int err_len);
     static bool read_selectors(VM *vm, BytecodeReader &r, char *err, int err_len)
     {
         uint32_t count = 0;
@@ -592,10 +599,11 @@ namespace
         return true;
     }
 
-    static ObjClass *read_class(VM *vm, BytecodeReader &r, char *err, int err_len);
+    static ObjClass *read_class(VM *vm, BytecodeReader &r, uint16_t minor, char *err, int err_len);
 
-    static bool read_global_names(VM *vm, BytecodeReader &r, char *err, int err_len)
+    static bool read_global_names(VM *vm, BytecodeReader &r, uint16_t minor, char *err, int err_len)
     {
+        (void)minor;
         uint32_t count = 0;
         if (!r.read_u32(&count))
         {
@@ -603,7 +611,7 @@ namespace
             return false;
         }
 
-        if (count > (uint32_t)MAX_GLOBALS)
+        if (count > (uint32_t)kMaxGlobalsHard)
         {
             set_error(err, err_len, "too many globals in bytecode");
             return false;
@@ -664,7 +672,7 @@ namespace
             if (has_value == 1)
             {
                 Value value = val_nil();
-                if (!read_value(vm, r, &value, err, err_len))
+                if (!read_value(vm, r, minor, &value, err, err_len))
                     return false;
                 vm->set_global((int)i, value);
             }
@@ -678,7 +686,7 @@ namespace
         return true;
     }
 
-    static bool read_value(VM *vm, BytecodeReader &r, Value *out, char *err, int err_len)
+    static bool read_value(VM *vm, BytecodeReader &r, uint16_t minor, Value *out, char *err, int err_len)
     {
         uint8_t tag = 0;
         if (!r.read_u8(&tag))
@@ -726,7 +734,7 @@ namespace
         }
         case BC_FUNC:
         {
-            ObjFunc *fn = read_func(vm, r, err, err_len);
+            ObjFunc *fn = read_func(vm, r, minor, err, err_len);
             if (!fn)
                 return false;
             *out = val_obj((Obj *)fn);
@@ -734,7 +742,7 @@ namespace
         }
         case BC_CLOSURE:
         {
-            ObjFunc *fn = read_func(vm, r, err, err_len);
+            ObjFunc *fn = read_func(vm, r, minor, err, err_len);
             if (!fn)
                 return false;
             GC *gc = &vm->get_gc();
@@ -754,7 +762,7 @@ namespace
         }
         case BC_CLASS:
         {
-            ObjClass *klass = read_class(vm, r, err, err_len);
+            ObjClass *klass = read_class(vm, r, minor, err, err_len);
             if (!klass)
                 return false;
             *out = val_obj((Obj *)klass);
@@ -776,7 +784,7 @@ namespace
         return true;
     }
 
-    static ObjFunc *read_func(VM *vm, BytecodeReader &r, char *err, int err_len)
+    static ObjFunc *read_func(VM *vm, BytecodeReader &r, uint16_t minor, char *err, int err_len)
     {
         GC *gc = &vm->get_gc();
 
@@ -860,7 +868,7 @@ namespace
 
         for (int32_t i = 0; i < const_count; i++)
         {
-            if (!read_value(vm, r, &fn->constants[i], err, err_len))
+            if (!read_value(vm, r, minor, &fn->constants[i], err, err_len))
                 return nullptr;
         }
 
@@ -890,7 +898,7 @@ namespace
         return fn;
     }
 
-    static ObjClass *read_class(VM *vm, BytecodeReader &r, char *err, int err_len)
+    static ObjClass *read_class(VM *vm, BytecodeReader &r, uint16_t minor, char *err, int err_len)
     {
         GC *gc = &vm->get_gc();
 
@@ -923,6 +931,8 @@ namespace
         }
 
         ObjClass *klass = new_class(gc, name, parent);
+        for (int32_t i = 0; i < kOperatorSlotCount; i++)
+            klass->operator_slots[i] = val_nil();
         klass->num_fields = num_fields;
         if (num_fields > 0)
         {
@@ -945,9 +955,12 @@ namespace
             ObjString *mname = nullptr;
             Value method = val_nil();
             if (!read_string(vm, r, &mname, err, err_len) ||
-                !read_value(vm, r, &method, err, err_len))
+                !read_value(vm, r, minor, &method, err, err_len))
                 return nullptr;
             map_set(gc, klass->methods, val_obj((Obj *)mname), method);
+            int op_slot = mname->operator_slot_id;
+            if (op_slot >= 0 && op_slot < kOperatorSlotCount)
+                klass->operator_slots[op_slot] = method;
         }
 
         int32_t vtable_size = 0;
@@ -963,8 +976,39 @@ namespace
             for (int32_t i = 0; i < vtable_size; i++)
             {
                 klass->vtable[i] = val_nil();
-                if (!read_value(vm, r, &klass->vtable[i], err, err_len))
+                if (!read_value(vm, r, minor, &klass->vtable[i], err, err_len))
                     return nullptr;
+            }
+        }
+
+        if (minor >= 1)
+        {
+            for (int32_t i = 0; i < kOperatorSlotCount; i++)
+            {
+                if (!read_value(vm, r, minor, &klass->operator_slots[i], err, err_len))
+                    return nullptr;
+            }
+        }
+        else
+        {
+            for (int32_t i = 0; i < kOperatorSlotCount; i++)
+            {
+                int selector_slot = vm->find_selector(kOperatorNames[i].name, kOperatorNames[i].len);
+                if (selector_slot >= 0 &&
+                    selector_slot < klass->vtable_size &&
+                    is_nil(klass->operator_slots[i]))
+                {
+                    klass->operator_slots[i] = klass->vtable[selector_slot];
+                }
+            }
+        }
+
+        if (parent)
+        {
+            for (int32_t i = 0; i < kOperatorSlotCount; i++)
+            {
+                if (is_nil(klass->operator_slots[i]))
+                    klass->operator_slots[i] = parent->operator_slots[i];
             }
         }
 
@@ -1102,7 +1146,8 @@ ObjFunc *load_bytecode_buffer(VM *vm, const uint8_t *data, size_t size, char *er
         return nullptr;
     }
 
-    if (major != ZEN_BYTECODE_VERSION_MAJOR)
+    if (major != ZEN_BYTECODE_VERSION_MAJOR ||
+        minor > ZEN_BYTECODE_VERSION_MINOR)
     {
         set_error(err, err_len, "unsupported bytecode version %u.%u", (unsigned)major, (unsigned)minor);
         return nullptr;
@@ -1114,7 +1159,7 @@ ObjFunc *load_bytecode_buffer(VM *vm, const uint8_t *data, size_t size, char *er
         return nullptr;
     }
 
-    if (!read_global_names(vm, r, err, err_len))
+    if (!read_global_names(vm, r, minor, err, err_len))
         return nullptr;
     if (!read_selectors(vm, r, err, err_len))
         return nullptr;
@@ -1122,7 +1167,7 @@ ObjFunc *load_bytecode_buffer(VM *vm, const uint8_t *data, size_t size, char *er
     GC &gc = vm->get_gc();
     void *saved_vm = gc.vm;
     gc.vm = nullptr;
-    ObjFunc *fn = read_func(vm, r, err, err_len);
+    ObjFunc *fn = read_func(vm, r, minor, err, err_len);
     gc.vm = saved_vm;
 
     if (!fn)

@@ -1,5 +1,0 @@
-[line 1] Error at '{': Parent class not found.
-[line 38] Error at '}': Expected expression.
-[line 40] Error at '{': Parent class not found.
-[line 65] Error at '}': Expected expression.
-zen: compilation failed.

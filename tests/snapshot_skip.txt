@@ -6,3 +6,5 @@
 
 benchmark.zen
 test_os_time.zen
+test_gc.zen
+test_gc2.zen

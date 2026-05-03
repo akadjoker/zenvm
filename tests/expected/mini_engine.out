@@ -1,3 +1,0 @@
-[zen runtime error] attempt to call non-function
-  at Scene.init() [Scene.init:82]
-  at /media/projectos/projects/cpp/zenvm/tests/mini_engine.zen() [/media/projectos/projects/cpp/zenvm/tests/mini_engine.zen:177]

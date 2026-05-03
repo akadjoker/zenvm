@@ -22,20 +22,70 @@ namespace zen
         : gc_(nullptr), vm_(nullptr), state_(nullptr),
           had_error_(false), panic_mode_(false), current_file_(nullptr), include_count_(0), include_depth_(0), num_imports_(0), expected_results_(1),
           last_call_struct_def_(nullptr), last_call_class_def_(nullptr),
+          global_class_hints_(nullptr), global_class_hints_capacity_(0),
           current_class_fields_(nullptr)
     {
         current_.type = TOK_EOF;
         previous_.type = TOK_EOF;
-        memset(global_class_hints_, 0, sizeof(global_class_hints_));
+        ensure_global_class_hint(kInitGlobalCapacity - 1);
     }
 
     Compiler::~Compiler()
     {
+        free(global_class_hints_);
         for (int i = 0; i < include_count_; i++)
         {
             free(include_sources_[i]);
             free(include_paths_[i]);
         }
+    }
+
+    bool Compiler::ensure_global_class_hint(int idx)
+    {
+        if (idx < 0)
+            return false;
+        if (idx < global_class_hints_capacity_)
+            return true;
+        if (idx >= kMaxGlobalsHard)
+        {
+            error("Too many globals.");
+            return false;
+        }
+
+        int new_cap = global_class_hints_capacity_ > 0 ? global_class_hints_capacity_ : kInitGlobalCapacity;
+        while (new_cap <= idx && new_cap < kMaxGlobalsHard)
+            new_cap *= 2;
+        if (new_cap <= idx)
+            new_cap = kMaxGlobalsHard;
+
+        ObjClass **grown = (ObjClass **)realloc(global_class_hints_, sizeof(ObjClass *) * (size_t)new_cap);
+        if (!grown)
+        {
+            error("Out of memory growing global class hints.");
+            return false;
+        }
+        for (int i = global_class_hints_capacity_; i < new_cap; i++)
+            grown[i] = nullptr;
+        global_class_hints_ = grown;
+        global_class_hints_capacity_ = new_cap;
+        return true;
+    }
+
+    int Compiler::require_global_slot(const char *name, Token *token)
+    {
+        int gidx = vm_->find_global(name);
+        if (gidx >= 0)
+            return gidx;
+
+        gidx = vm_->def_global(name, val_nil());
+        if (gidx < 0)
+        {
+            if (token)
+                error_at(token, "Failed to allocate global slot.");
+            else
+                error("Failed to allocate global slot.");
+        }
+        return gidx;
     }
 
     /* =========================================================
@@ -77,6 +127,12 @@ namespace zen
             declaration();
         }
         consume(TOK_EOF, "Expected end of file.");
+
+        if (had_error_)
+        {
+            state_ = nullptr;
+            return nullptr;
+        }
 
         /* Emit final HALT */
         state_->emitter.emit_abc(OP_HALT, 0, 0, 0, previous_.line);

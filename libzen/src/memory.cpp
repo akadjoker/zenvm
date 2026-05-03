@@ -1,4 +1,5 @@
 #include "memory.h"
+#include "name_tables.h"
 #include "vm.h"
 #include <cmath>
 
@@ -15,7 +16,7 @@ namespace zen
     void *zen_alloc(GC *gc, size_t size)
     {
         /* Trigger GC BEFORE allocation (so new objects won't be swept) */
-        if (gc->vm && gc->bytes_allocated > gc->next_gc)
+        if (gc->pause_depth == 0 && gc->vm && gc->bytes_allocated > gc->next_gc)
             gc_collect((VM *)gc->vm);
         gc->bytes_allocated += size;
         return malloc(size);
@@ -23,7 +24,7 @@ namespace zen
 
     void *zen_realloc(GC *gc, void *ptr, size_t old_size, size_t new_size)
     {
-        if (gc->vm && gc->bytes_allocated > gc->next_gc)
+        if (gc->pause_depth == 0 && gc->vm && gc->bytes_allocated > gc->next_gc)
             gc_collect((VM *)gc->vm);
         gc->bytes_allocated += new_size - old_size;
         if (new_size == 0)
@@ -52,6 +53,8 @@ namespace zen
         gc->gray_capacity = 0;
         gc->bytes_allocated = 0;
         gc->next_gc = kGCInitThreshold;
+        gc->pause_saved_next_gc = kGCInitThreshold;
+        gc->pause_depth = 0;
         gc->vm = nullptr;
 
         /* String interning table — começa com 64 slots */
@@ -59,6 +62,25 @@ namespace zen
         gc->string_count = 0;
         gc->strings = (ObjString **)calloc(gc->string_capacity, sizeof(ObjString *));
         gc->bytes_allocated += sizeof(ObjString *) * gc->string_capacity;
+    }
+
+    void gc_pause(GC *gc)
+    {
+        if (!gc)
+            return;
+        if (gc->pause_depth++ == 0)
+        {
+            gc->pause_saved_next_gc = gc->next_gc;
+            gc->next_gc = (size_t)-1;
+        }
+    }
+
+    void gc_resume(GC *gc)
+    {
+        if (!gc || gc->pause_depth <= 0)
+            return;
+        if (--gc->pause_depth == 0)
+            gc->next_gc = gc->pause_saved_next_gc;
     }
 
     /* =========================================================
@@ -145,6 +167,12 @@ namespace zen
         ObjString *str = (ObjString *)alloc_obj(gc, total, OBJ_STRING);
         str->length = length;
         str->capacity = 0; /* tight — no extra space */
+        str->array_method_id = (int16_t)lookup_name(kArrayMethods, chars, length);
+        str->buffer_method_id = (int16_t)lookup_name(kBufferMethods, chars, length);
+        str->map_method_id = (int16_t)lookup_name(kMapMethods, chars, length);
+        str->set_method_id = (int16_t)lookup_name(kSetMethods, chars, length);
+        str->string_method_id = (int16_t)lookup_name(kStringMethods, chars, length);
+        str->operator_slot_id = (int16_t)operator_slot_for_name(chars, length);
         memcpy(str->chars, chars, length);
         str->chars[length] = '\0';
         str->obj.hash = hash;
@@ -1151,6 +1179,8 @@ namespace zen
         cls->field_names = nullptr;
         cls->vtable = nullptr;
         cls->vtable_size = 0;
+        for (int i = 0; i < kOperatorSlotCount; i++)
+            cls->operator_slots[i] = val_nil();
         cls->native_ctor = nullptr;
         cls->native_dtor = nullptr;
         cls->persistent = false;
@@ -1162,8 +1192,6 @@ namespace zen
     {
         ObjInstance *inst;
         int nf = klass->num_fields;
-        size_t saved_next_gc = gc->next_gc;
-
         if (klass->persistent)
         {
             /* Persistent: malloc directo, NUNCA entra na lista do GC.
@@ -1180,7 +1208,7 @@ namespace zen
             /* The field array allocation below can trigger GC. Until this
             ** function returns, the new instance is not yet reachable from a
             ** VM root, so keep GC disabled during construction. */
-            gc->next_gc = (size_t)-1;
+            gc_pause(gc);
             inst = (ObjInstance *)alloc_obj(gc, sizeof(ObjInstance), OBJ_INSTANCE);
         }
 
@@ -1196,7 +1224,8 @@ namespace zen
         {
             inst->fields = nullptr;
         }
-        gc->next_gc = saved_next_gc;
+        if (!klass->persistent)
+            gc_resume(gc);
         return inst;
     }
 
@@ -1327,6 +1356,9 @@ namespace zen
             for (int32_t i = 0; i < cls->vtable_size; i++)
                 if (cls->vtable[i].type == VAL_OBJ)
                     gc_mark_obj(gc, cls->vtable[i].as.obj);
+            for (int32_t i = 0; i < kOperatorSlotCount; i++)
+                if (cls->operator_slots[i].type == VAL_OBJ)
+                    gc_mark_obj(gc, cls->operator_slots[i].as.obj);
             break;
         }
 

@@ -1,2 +1,0 @@
-[zen runtime error] attempt to call non-function
-  at /media/projectos/projects/cpp/zenvm/tests/mini_engine_intern.zen() [/media/projectos/projects/cpp/zenvm/tests/mini_engine_intern.zen:349]

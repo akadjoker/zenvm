@@ -6,7 +6,7 @@ selector-table grow change. They are **not** caused by the review
 branch — both also reproduce on `main`. Filed here so they aren't
 forgotten.
 
-## 1. Class-type hint leaks across globals after a function call
+## 1. RESOLVED: Class-type hint leaks across globals after a function call
 
 Reproducer (one-liner):
 
@@ -28,10 +28,9 @@ likely cause is the global-typing layer in
 attributing a class hint to `fails` (or to the temp register that
 receives the call result) when nearby globals are class instances.
 
-Workaround used in `tests/test_many_selectors.zen`: avoid `+` with a
-function-call result on the rhs.
+Covered by `tests/test_call_hint_leak.zen`.
 
-## 2. `intern_selector` slot beyond ~120 returns stale vtable Value (not a selector-array bug)
+## 2. RESOLVED: `intern_selector` slot beyond ~120 returns stale vtable Value (not a selector-array bug)
 
 Reproducer: a class with ~120+ methods. With 300 methods,
 `m119` fails:
@@ -50,13 +49,11 @@ selector table on this branch. Suspect the per-class vtable grow code
 at [`compiler_statements.cpp:728`](libzen/src/compiler_statements.cpp:728)
 or `OP_INVOKE_VT` boundary handling.
 
-Investigation pointer:
+Root cause was the fixed `MethodInfo methods[64]` buffer used while
+compiling class bodies. It is now dynamic. Covered by
+`tests/test_many_methods_invoke.zen`.
 
-* `klass->vtable_size` grow logic
-* selector slot vs. vtable slot decoupling
-* Bytecode emitted for `OP_INVOKE_VT` at slots > 128
-
-## 3. (Cosmetic) compiler does not free temp registers across a long
+## 3. RESOLVED: compiler does not free temp registers across a long
    sequence of `acc = acc + expr` statements
 
 `sum = sum + x.mNNN()` repeated ~125 times at the same scope hits
@@ -69,7 +66,6 @@ Too many registers needed (expression too complex).
 script is run with these errors present (the compiler should bail out
 cleanly before handing bytecode to the VM).
 
-Each `expr` should release its temporary when assigned back into `acc`,
-keeping register pressure flat. Currently it grows.
-
-Workaround: split into smaller scopes / functions.
+Expression statements now restore `next_reg` after compilation and the
+compiler returns `nullptr` before final bytecode emission when it has
+reported compile errors.
