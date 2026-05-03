@@ -1,0 +1,152 @@
+// ============================================================
+// Tutorial 09 — Projecto Prático: Snake
+// (lógica pura — sem API gráfica)
+// ============================================================
+
+import math;
+
+// --- Constantes do mundo ---
+var COLS = 20;
+var ROWS = 15;
+var DIR_UP    = 0;
+var DIR_DOWN  = 1;
+var DIR_LEFT  = 2;
+var DIR_RIGHT = 3;
+
+// --- Structs ---
+struct Celula { x, y }
+
+// --- Geração de comida aleatória ---
+def nova_comida() {
+    return Celula(math.random(COLS), math.random(ROWS));
+}
+
+// --- Verifica se célula está na cobra ---
+def cobra_tem(cobra, x, y) {
+    var i = 0;
+    while (i < cobra.len()) {
+        var seg = cobra[i];
+        if (seg.x == x && seg.y == y) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// --- Mover cobra ---
+// Retorna: 0 = ok, 1 = comeu, -1 = morreu
+def mover(cobra, dir, comida) {
+    var cabeca = cobra[0];
+    var nx = cabeca.x;
+    var ny = cabeca.y;
+
+    if (dir == DIR_UP)    { ny = ny - 1; }
+    if (dir == DIR_DOWN)  { ny = ny + 1; }
+    if (dir == DIR_LEFT)  { nx = nx - 1; }
+    if (dir == DIR_RIGHT) { nx = nx + 1; }
+
+    // colisão com parede
+    if (nx < 0 or nx >= COLS or ny < 0 or ny >= ROWS) {
+        return -1;
+    }
+
+    // colisão consigo própria
+    if (cobra_tem(cobra, nx, ny)) {
+        return -1;
+    }
+
+    var nova_cabeca = Celula(nx, ny);
+
+    // crescer ou mover
+    var comeu = (nx == comida.x && ny == comida.y);
+    if (!comeu) {
+        // remove cauda (swap-remove preserva ordem aqui? não — usa pop do fim)
+        // a cauda é o último elemento
+        cobra.pop();
+    }
+
+    // insere nova cabeça na frente: rebuild array
+    var nova_cobra = [];
+    nova_cobra.push(nova_cabeca);
+    var i = 0;
+    while (i < cobra.len()) {
+        nova_cobra.push(cobra[i]);
+        i = i + 1;
+    }
+    // Copiar de volta para cobra (zen passa arrays por referência)
+    cobra.clear();
+    var j = 0;
+    while (j < nova_cobra.len()) {
+        cobra.push(nova_cobra[j]);
+        j = j + 1;
+    }
+
+    if (comeu) { return 1; }
+    return 0;
+}
+
+// --- Imprimir grelha (ASCII) ---
+def imprimir_grelha(cobra, comida) {
+    var y = 0;
+    while (y < ROWS) {
+        var linha = "";
+        var x = 0;
+        while (x < COLS) {
+            if (cobra_tem(cobra, x, y)) {
+                if (x == cobra[0].x && y == cobra[0].y) {
+                    linha = "{linha}O";   // cabeça
+                } else {
+                    linha = "{linha}#";   // corpo
+                }
+            } else {
+                if (x == comida.x && y == comida.y) {
+                    linha = "{linha}*";   // comida
+                } else {
+                    linha = "{linha}.";
+                }
+            }
+            x = x + 1;
+        }
+        print(linha);
+        y = y + 1;
+    }
+}
+
+// --- Loop de jogo (simulação de 20 passos) ---
+var cobra = [];
+cobra.push(Celula(5, 5));
+cobra.push(Celula(4, 5));
+cobra.push(Celula(3, 5));
+
+var comida = nova_comida();
+var dir = DIR_RIGHT;
+var pontos = 0;
+var vivo = true;
+var passo = 0;
+
+while (passo < 20 && vivo) {
+    // IA simples: vai em frente ou vira aleatoriamente
+    var r = math.random(4);
+    if (r == 0 && dir != DIR_LEFT)  { dir = DIR_RIGHT; }
+    if (r == 1 && dir != DIR_RIGHT) { dir = DIR_LEFT;  }
+    if (r == 2 && dir != DIR_DOWN)  { dir = DIR_UP;    }
+    if (r == 3 && dir != DIR_UP)    { dir = DIR_DOWN;  }
+
+    var res = mover(cobra, dir, comida);
+
+    if (res == -1) {
+        print("=== GAME OVER ===");
+        vivo = false;
+    } else {
+        if (res == 1) {
+            pontos = pontos + 1;
+            print("Comeu! pontos={pontos} tamanho={cobra.len()}");
+            comida = nova_comida();
+        }
+    }
+
+    passo = passo + 1;
+}
+
+print("--- Estado final ---");
+imprimir_grelha(cobra, comida);
+print("Pontos: {pontos}  Tamanho: {cobra.len()}");

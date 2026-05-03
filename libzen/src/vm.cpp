@@ -19,7 +19,7 @@ namespace zen
     ** Construtor / Destrutor
     ** ========================================================= */
 
-    VM::VM() : on_process_start(nullptr), on_process_update(nullptr), on_process_end(nullptr), num_globals_(0), main_fiber_(nullptr), current_fiber_(nullptr), fiber_depth_(0), had_error_(false), num_search_paths_(0), num_libs_(0), num_plugins_(0), num_selectors_(0), pool_(nullptr), num_alive_(0), pool_capacity_(0), next_process_id_(1), current_process_id_(-1), current_slot_idx_(-1)
+    VM::VM() : on_process_start(nullptr), on_process_update(nullptr), on_process_end(nullptr), num_globals_(0), main_fiber_(nullptr), current_fiber_(nullptr), fiber_depth_(0), external_call_stop_depth_(-1), had_error_(false), num_search_paths_(0), num_libs_(0), num_plugins_(0), num_selectors_(0), pool_(nullptr), num_alive_(0), pool_capacity_(0), next_process_id_(1), current_process_id_(-1), current_slot_idx_(-1)
     {
         gc_init(&gc_);
         gc_.vm = this;
@@ -28,6 +28,19 @@ namespace zen
         memset(search_paths_, 0, sizeof(search_paths_));
         memset(plugin_handles_, 0, sizeof(plugin_handles_));
         memset(selectors_, 0, sizeof(selectors_));
+
+        static const char *operator_names[] = {
+            "__add__", "__radd__", "__sub__", "__rsub__", "__mul__", "__rmul__",
+            "__div__", "__rdiv__", "__mod__", "__rmod__", "__neg__", "__eq__",
+            "__lt__", "__le__", "__str__",
+        };
+        for (int i = 0; i < SLOT_OPERATOR_COUNT; i++)
+        {
+            int len = (int)strlen(operator_names[i]);
+            selectors_[i] = intern_string(&gc_, operator_names[i], len,
+                                          hash_string(operator_names[i], len));
+        }
+        num_selectors_ = SLOT_OPERATOR_COUNT;
 
         /* Criar main fiber */
         main_fiber_ = new_fiber(nullptr, kMaxRegs * 4);
@@ -286,6 +299,11 @@ namespace zen
     {
         int idx = find_selector(name, len);
         if (idx >= 0) return idx;
+        if (num_selectors_ >= MAX_SELECTORS)
+        {
+            runtime_error("too many method selectors");
+            return -1;
+        }
         idx = num_selectors_++;
         selectors_[idx] = intern_string(&gc_, name, len, hash_string(name, len));
         return idx;
@@ -865,7 +883,10 @@ namespace zen
                 frame->base = base;
                 frame->ret_reg = 0;
                 frame->ret_count = 0;
+                int prev_stop_depth = external_call_stop_depth_;
+                external_call_stop_depth_ = fiber->frame_count - 1;
                 execute(fiber);
+                external_call_stop_depth_ = prev_stop_depth;
                 fiber->stack_top = base; /* restore stack */
                 fiber->state = FIBER_RUNNING; /* reset after FIBER_DONE */
             }
@@ -931,9 +952,12 @@ namespace zen
             frame->func = cl->func;
             frame->ip = cl->func->code;
             frame->base = base;
-            frame->ret_reg = 0;
+            frame->ret_reg = (int)(base - fiber->frames[fiber->frame_count - 2].base);
             frame->ret_count = 1;
+            int prev_stop_depth = external_call_stop_depth_;
+            external_call_stop_depth_ = fiber->frame_count - 1;
             execute(fiber);
+            external_call_stop_depth_ = prev_stop_depth;
 
             Value result = base[0];
             fiber->stack_top = base; /* restore stack */
@@ -1102,6 +1126,16 @@ namespace zen
             if (result)
                 store_resolved(path);
             return result;
+        }
+
+        /* 1b. Try relative path from current working directory */
+        {
+            char *result = try_read(path, out_size);
+            if (result)
+            {
+                store_resolved(path);
+                return result;
+            }
         }
 
         /* 2. Try relative to the requesting file's directory */

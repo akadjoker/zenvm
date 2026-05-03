@@ -1,0 +1,18 @@
+ZEN HELP
+
+Available topics:
+  variables
+  control
+  functions
+  arrays
+  structs
+  classes
+  strings
+  maps
+  sets
+  math
+  processes
+  fibers
+
+Example:
+  zen --help variables

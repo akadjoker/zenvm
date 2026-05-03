@@ -95,6 +95,26 @@ namespace zen
         Value invoke(Value instance, const char *method, Value *args, int nargs);
         Value invoke(Value instance, int slot, Value *args, int nargs); /* vtable slot, O(1) */
 
+        enum OperatorSlot : int
+        {
+            SLOT_ADD = 0,
+            SLOT_RADD,
+            SLOT_SUB,
+            SLOT_RSUB,
+            SLOT_MUL,
+            SLOT_RMUL,
+            SLOT_DIV,
+            SLOT_RDIV,
+            SLOT_MOD,
+            SLOT_RMOD,
+            SLOT_NEG,
+            SLOT_EQ,
+            SLOT_LT,
+            SLOT_LE,
+            SLOT_STR,
+            SLOT_OPERATOR_COUNT
+        };
+
         /* --- Struct builder --- */
         struct StructBuilder
         {
@@ -277,6 +297,7 @@ namespace zen
         ObjFiber *main_fiber_;
         ObjFiber *current_fiber_; /* fiber actualmente a executar */
         int fiber_depth_;         /* current nested execute() depth */
+        int external_call_stop_depth_; /* return to C++ when nested script call unwinds here */
         bool had_error_;          /* runtime error occurred */
 
         /* Search paths for include/import */
@@ -314,6 +335,7 @@ namespace zen
         int intern_selector(const char *name, int len);
         int find_selector(const char *name, int len) const;
         int num_selectors() const { return num_selectors_; }
+        const char *selector_name(int idx) const { return (idx >= 0 && idx < num_selectors_ && selectors_[idx]) ? selectors_[idx]->chars : nullptr; }
     };
 
 } /* namespace zen */

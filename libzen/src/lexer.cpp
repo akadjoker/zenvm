@@ -87,7 +87,7 @@ void Lexer::skip_whitespace() {
                     while (peek() != '\n' && !is_at_end()) advance();
                 } else if (peek_next() == '*') {
                     /* Block comment: skip until */ 
-                    advance(); advance(); /* consume /* */
+                    advance(); advance(); 
                     int depth = 1;
                     while (depth > 0 && !is_at_end()) {
                         if (peek() == '/' && peek_next() == '*') {
@@ -394,7 +394,6 @@ TokenType Lexer::identifier_type() {
         case 'i':
             if (current_ - start_ > 1) {
                 switch (start_[1]) {
-                    case 'd': if (current_ - start_ == 2) return TOK_ID; break;
                     case 'f': if (current_ - start_ == 2) return TOK_IF; break;
                     case 'm': return check_keyword(2, 4, "port", TOK_IMPORT);
                     case 'n': if (current_ - start_ == 2) return TOK_IN;

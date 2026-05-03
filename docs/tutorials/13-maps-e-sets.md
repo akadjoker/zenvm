@@ -1,0 +1,175 @@
+# Tutorial 13 — Maps e Sets
+
+Este tutorial cobre mapas chave-valor e sets para coleções sem duplicados.
+
+## Objetivo
+
+Aprender a sintaxe e os padrões principais deste tópico em BuLang/Zen.
+
+## Código completo
+
+```zen
+// ============================================================
+// Tutorial 13 — Maps e Sets
+// ============================================================
+
+// Map  {}      — tabela de chave→valor (hash map)
+// Set  #{}     — conjunto de valores únicos
+
+// ==========================================================
+// MAP
+// ==========================================================
+
+// --- Criação e set/get ---
+var m = {};
+m.set("nome", "Luis");
+m.set("idade", 30);
+m.set("activo", true);
+
+print(m.get("nome"));     // Luis
+print(m.get("idade"));    // 30
+print(m.get("activo"));   // true
+
+// --- get com valor por omissão ---
+print(m.get("email", "n/a"));   // n/a  ← chave não existe
+
+// --- has / size ---
+print(m.has("nome"));      // true
+print(m.has("email"));     // false
+print(m.size());           // 3
+
+// --- delete ---
+m.set("temp", 99);
+print(m.size());           // 4
+m.delete("temp");
+print(m.size());           // 3
+print(m.has("temp"));      // false
+
+// --- keys / values ---
+var config = {};
+config.set("w", 1280);
+config.set("h", 720);
+config.set("fps", 60);
+
+var chaves = config.keys();
+print("chaves: {chaves.len()}");   // 3
+
+var valores = config.values();
+// valores estão em ordem não garantida — verificar individualmente
+print(config.get("w"));    // 1280
+print(config.get("fps"));  // 60
+
+// --- clear ---
+var tmp = {};
+tmp.set("x", 1);
+tmp.clear();
+print(tmp.size());   // 0
+
+// --- Map como registo de entidades ---
+def criar_jogador(nome, hp, nivel) {
+    var p = {};
+    p.set("nome", nome);
+    p.set("hp", hp);
+    p.set("nivel", nivel);
+    return p;
+}
+
+var j1 = criar_jogador("Djoker", 100, 5);
+var j2 = criar_jogador("Bot",    60,  2);
+
+print(j1.get("nome"));    // Djoker
+print(j2.get("hp"));      // 60
+
+j1.set("hp", j1.get("hp") - 25);
+print(j1.get("hp"));      // 75
+
+// --- Map de maps (nested) ---
+var mundo = {};
+mundo.set("jogadores", criar_jogador("Hero", 200, 10));
+mundo.set("boss",      criar_jogador("Dragon", 1000, 50));
+
+var boss = mundo.get("boss");
+print(boss.get("nome"));    // Dragon
+print(boss.get("hp"));      // 1000
+
+// ==========================================================
+// SET
+// ==========================================================
+
+// --- Criação e has ---
+var s = #{10, 20, 30};
+print(s.size());     // 3
+print(s.has(20));    // true
+print(s.has(99));    // false
+
+// --- Deduplicação automática ---
+var sd = #{1, 1, 2, 2, 3};
+print(sd.size());    // 3
+
+// --- add / delete ---
+var tags = #{"zen", "bulang"};
+tags.add("c++");
+print(tags.size());       // 3
+print(tags.has("c++"));   // true
+
+tags.delete("bulang");
+print(tags.size());           // 2
+print(tags.has("bulang"));    // false
+
+// --- clear ---
+var st = #{1, 2, 3};
+st.clear();
+print(st.size());    // 0
+
+// --- values() → converte para array ---
+var numeros = #{5, 3, 1, 4, 2};
+var arr = numeros.values();
+print(arr.len());    // 5
+// (ordem não garantida)
+
+// --- Set vazio ---
+var vazio = #{};
+print(vazio.size());    // 0
+
+// --- Set de strings ---
+var palavras = #{"olá", "mundo", "olá"};
+print(palavras.size());        // 2  (deduplicado)
+print(palavras.has("mundo"));  // true
+
+// --- Caso prático: IDs únicos visitados ---
+var visitados = #{};
+visitados.add(42);
+visitados.add(7);
+visitados.add(42);   // duplicado
+visitados.add(13);
+print("visitados: {visitados.size()}");   // 3
+
+def ja_visto(id) {
+    return visitados.has(id);
+}
+
+print(ja_visto(7));    // true
+print(ja_visto(99));   // false
+```
+
+## Como correr
+
+```bash
+zen examples/tutorial_13_maps_sets.zen
+```
+
+ou ajusta para o nome real do teu executável:
+
+```bash
+bulang examples/tutorial_13_maps_sets.zen
+```
+
+## O que observar
+
+- A sintaxe é direta e usa blocos com `{` e `}`.
+- Os exemplos usam `print()` para mostrar o resultado esperado.
+- Comentários no próprio código explicam cada secção.
+
+## Exercício sugerido
+
+Altera os valores do exemplo, corre outra vez e confirma se o output muda como esperas.

@@ -23,6 +23,17 @@ endif()
 # --- libzen (static + shared libraries) ---
 add_subdirectory(libzen)
 
+# --- Optional modules ---
+option(ZEN_ENABLE_STB_IMAGE "Enable stb_image image module" ON)
+if(ZEN_ENABLE_STB_IMAGE)
+    add_subdirectory(modules/stb_image)
+endif()
+
+option(ZEN_ENABLE_GLFW "Enable GLFW window module" ON)
+if(ZEN_ENABLE_GLFW)
+    add_subdirectory(modules/glfw)
+endif()
+
 # --- CLI (zen executable) ---
 add_subdirectory(cli)
 
@@ -36,7 +47,15 @@ add_subdirectory(tests/test_class_api)
 option(ZEN_BUILD_VISUAL "Build visual benchmark (requires raylib)" ON)
 if(ZEN_BUILD_VISUAL)
     add_subdirectory(test_visual)
+    add_subdirectory(test_visual_loop)
+    add_subdirectory(test_visual_intern)
+    add_subdirectory(test_visual_engine)
+    
 endif()
+
+
+
+
 
 option(ZEN_BUILD_GFX "Build graphics engine prototype (requires raylib)" ON)
 if(ZEN_BUILD_GFX)

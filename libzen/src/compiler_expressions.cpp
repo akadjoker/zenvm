@@ -105,13 +105,52 @@ namespace zen
         case TOK_YIELD:
         case TOK_FATHER:
         case TOK_SON:
-        case TOK_ID:
         case TOK_TYPE:
         case TOK_DEF:
             return true;
         default:
             return false;
         }
+    }
+
+    bool Compiler::looks_like_generic_call()
+    {
+        if (current_.type != TOK_LT)
+            return false;
+
+        LexerState saved = lexer_.save_state();
+        Token type_name = lexer_.next_token();
+        Token close = lexer_.next_token();
+        Token call = lexer_.next_token();
+        lexer_.restore_state(saved);
+
+        return type_name.type == TOK_IDENTIFIER &&
+               close.type == TOK_GT &&
+               call.type == TOK_LPAREN;
+    }
+
+    int Compiler::generic_type_arg(int dest)
+    {
+        if (check(TOK_LT))
+            advance();
+        else if (previous_.type != TOK_LT)
+            error("Expected '<' before generic type.");
+        consume(TOK_IDENTIFIER, "Expected type name in generic call.");
+        Token type_name = previous_;
+        consume(TOK_GT, "Expected '>' after generic type.");
+
+        char name_buf[256];
+        int len = type_name.length < 255 ? type_name.length : 255;
+        memcpy(name_buf, type_name.start, len);
+        name_buf[len] = '\0';
+
+        int gidx = vm_->find_global(name_buf);
+        if (gidx < 0)
+            gidx = vm_->def_global(name_buf, val_nil());
+
+        int reg = dest >= 0 ? dest : alloc_reg();
+        state_->emitter.emit_abx(OP_GETGLOBAL, reg, gidx, type_name.line);
+        return reg;
     }
 
     /* =========================================================
@@ -121,6 +160,15 @@ namespace zen
     int Compiler::expression(int dest)
     {
         return parse_precedence(PREC_ASSIGNMENT, dest);
+    }
+
+    int Compiler::expression_results(int dest, int nresults)
+    {
+        int saved = expected_results_;
+        expected_results_ = nresults;
+        int reg = parse_precedence(PREC_ASSIGNMENT, dest);
+        expected_results_ = saved;
+        return reg;
     }
 
     int Compiler::parse_precedence(Precedence prec, int dest)
@@ -140,11 +188,21 @@ namespace zen
         int reg = prefix_rule(token, dest, canAssign);
 
         /* Infix: keep consuming operators at this precedence or higher */
-        while (prec <= get_precedence(current_.type))
+        for (;;)
         {
+            Precedence op_prec = get_precedence(current_.type);
+            bool is_generic_call = current_.type == TOK_LT && looks_like_generic_call();
+            if (is_generic_call)
+                op_prec = PREC_CALL;
+            if (prec > op_prec)
+                break;
+
             Token op = current_;
             advance();
-            reg = infix_rule(op, reg, dest, canAssign);
+            if (is_generic_call)
+                reg = generic_call_expr(reg, dest);
+            else
+                reg = infix_rule(op, reg, dest, canAssign);
         }
 
         /* If we can assign but '=' is still sitting there, it's an error.
@@ -223,12 +281,6 @@ namespace zen
         case TOK_FATHER:
         case TOK_SON:
             return process_field_expr(token, dest);
-        case TOK_ID:
-        {
-            int reg = (dest >= 0) ? dest : alloc_reg();
-            state_->emitter.emit_abc(OP_PROC_GET, reg, 0, VM::PRIV_ID, previous_.line);
-            return reg;
-        }
         case TOK_TYPE:
         {
             int reg = (dest >= 0) ? dest : alloc_reg();
@@ -380,7 +432,11 @@ namespace zen
         int tmp = alloc_reg();
         expression(tmp);
         /* Convert expression to string */
-        state_->emitter.emit_abc(OP_TOSTRING, tmp, tmp, 0, token.line);
+        ObjClass *tmp_class = class_hint_for_reg(tmp);
+        int str_slot = vm_->find_selector("__str__", 7);
+        bool has_str = tmp_class && str_slot >= 0 && str_slot < tmp_class->vtable_size &&
+                       !is_nil(tmp_class->vtable[str_slot]);
+        state_->emitter.emit_abc(has_str ? OP_TOSTRING_OBJ : OP_TOSTRING, tmp, tmp, 0, token.line);
         /* Concat: reg = reg .. tmp */
         state_->emitter.emit_abc(OP_CONCAT, reg, reg, tmp, token.line);
         free_reg(tmp);
@@ -404,7 +460,10 @@ namespace zen
             /* Compile next expression */
             tmp = alloc_reg();
             expression(tmp);
-            state_->emitter.emit_abc(OP_TOSTRING, tmp, tmp, 0, token.line);
+            tmp_class = class_hint_for_reg(tmp);
+            has_str = tmp_class && str_slot >= 0 && str_slot < tmp_class->vtable_size &&
+                      !is_nil(tmp_class->vtable[str_slot]);
+            state_->emitter.emit_abc(has_str ? OP_TOSTRING_OBJ : OP_TOSTRING, tmp, tmp, 0, token.line);
             state_->emitter.emit_abc(OP_CONCAT, reg, reg, tmp, token.line);
             free_reg(tmp);
         }
@@ -511,6 +570,9 @@ namespace zen
                             int fn_reg = alloc_reg();
                             state_->emitter.emit_abx(OP_GETGLOBAL, fn_reg, fn_gidx, member.line);
                             int save_next = state_->next_reg;
+                            int call_results = expected_results_ > 0 ? expected_results_ : 1;
+                            int saved_expected_results = expected_results_;
+                            expected_results_ = 1;
                             int arg_count = 0;
                             if (!check(TOK_RPAREN))
                             {
@@ -523,7 +585,8 @@ namespace zen
                                 } while (match(TOK_COMMA));
                             }
                             consume(TOK_RPAREN, "Expected ')' after arguments.");
-                            state_->emitter.emit_abc(OP_CALL, fn_reg, arg_count, 0, member.line);
+                            expected_results_ = saved_expected_results;
+                            state_->emitter.emit_abc(OP_CALL, fn_reg, arg_count, call_results, member.line);
                             state_->next_reg = save_next;
                             int result = dest >= 0 ? dest : fn_reg;
                             if (result != fn_reg)
@@ -675,6 +738,8 @@ namespace zen
                 else
                 {
                     state_->emitter.emit_abx(OP_SETGLOBAL, val_reg, gidx, token.line);
+                    if (gidx >= 0 && gidx < MAX_GLOBALS)
+                        global_class_hints_[gidx] = last_call_class_def_ ? last_call_class_def_ : state_->reg_class_hints[val_reg];
                 }
                 if (dest >= 0 && dest != val_reg)
                 {
@@ -778,6 +843,8 @@ namespace zen
         if (reg < 0)
             reg = alloc_reg();
         state_->emitter.emit_abx(OP_GETGLOBAL, reg, gidx, token.line);
+        if (gidx >= 0 && gidx < MAX_GLOBALS && global_class_hints_[gidx])
+            state_->reg_class_hints[reg] = global_class_hints_[gidx];
 
         /* Track struct def for type inference (used by var_declaration) */
         Value gval = vm_->get_global(gidx);
@@ -785,7 +852,9 @@ namespace zen
             last_call_struct_def_ = as_struct_def(gval);
         else
             last_call_struct_def_ = nullptr;
-        if (is_class(gval))
+        if (gidx >= 0 && gidx < MAX_GLOBALS && global_class_hints_[gidx])
+            last_call_class_def_ = global_class_hints_[gidx];
+        else if (is_class(gval))
             last_call_class_def_ = as_class(gval);
         else
             last_call_class_def_ = nullptr;
@@ -807,7 +876,9 @@ namespace zen
         switch (token.type)
         {
         case TOK_MINUS:
-            state_->emitter.emit_abc(OP_NEG, reg, operand, 0, token.line);
+            state_->emitter.emit_abc(class_hint_for_reg(operand) ? OP_NEG_OBJ : OP_NEG,
+                                     reg, operand, 0, token.line);
+            last_call_class_def_ = class_hint_for_reg(operand);
             break;
         case TOK_BANG:
         case TOK_NOT:
@@ -822,6 +893,8 @@ namespace zen
 
         if (operand != reg)
             free_reg(operand);
+        if (reg >= 0 && reg < 256)
+            state_->reg_class_hints[reg] = last_call_class_def_;
         return reg;
     }
 
@@ -960,42 +1033,45 @@ namespace zen
         /* Parse right operand at one higher precedence (left-associative) */
         Precedence prec = (Precedence)(get_precedence(op.type) + 1);
         int right = parse_precedence(prec, -1);
+        ObjClass *left_class = class_hint_for_reg(left);
+        ObjClass *right_class = class_hint_for_reg(right);
+        bool use_obj_op = left_class || right_class;
 
         OpCode opcode;
         switch (op.type)
         {
         case TOK_PLUS:
-            opcode = OP_ADD;
+            opcode = use_obj_op ? OP_ADD_OBJ : OP_ADD;
             break;
         case TOK_MINUS:
-            opcode = OP_SUB;
+            opcode = use_obj_op ? OP_SUB_OBJ : OP_SUB;
             break;
         case TOK_STAR:
-            opcode = OP_MUL;
+            opcode = use_obj_op ? OP_MUL_OBJ : OP_MUL;
             break;
         case TOK_SLASH:
-            opcode = OP_DIV;
+            opcode = use_obj_op ? OP_DIV_OBJ : OP_DIV;
             break;
         case TOK_PERCENT:
-            opcode = OP_MOD;
+            opcode = use_obj_op ? OP_MOD_OBJ : OP_MOD;
             break;
         case TOK_EQ_EQ:
-            opcode = OP_EQ;
+            opcode = use_obj_op ? OP_EQ_OBJ : OP_EQ;
             break;
         case TOK_BANG_EQ:
-            opcode = OP_EQ;
+            opcode = use_obj_op ? OP_EQ_OBJ : OP_EQ;
             break; /* EQ + NOT */
         case TOK_LT:
-            opcode = OP_LT;
+            opcode = use_obj_op ? OP_LT_OBJ : OP_LT;
             break;
         case TOK_GT:
-            opcode = OP_LT;
+            opcode = use_obj_op ? OP_LT_OBJ : OP_LT;
             break; /* swap operands */
         case TOK_LT_EQ:
-            opcode = OP_LE;
+            opcode = use_obj_op ? OP_LE_OBJ : OP_LE;
             break;
         case TOK_GT_EQ:
-            opcode = OP_LE;
+            opcode = use_obj_op ? OP_LE_OBJ : OP_LE;
             break; /* swap operands */
         case TOK_LT_LT:
             opcode = OP_SHL;
@@ -1033,6 +1109,13 @@ namespace zen
         {
             state_->emitter.emit_abc(OP_NOT, reg, reg, 0, op.line);
         }
+
+        bool result_is_bool = op.type == TOK_EQ_EQ || op.type == TOK_BANG_EQ ||
+                              op.type == TOK_LT || op.type == TOK_GT ||
+                              op.type == TOK_LT_EQ || op.type == TOK_GT_EQ;
+        last_call_class_def_ = (use_obj_op && !result_is_bool) ? (left_class ? left_class : right_class) : nullptr;
+        if (reg >= 0 && reg < 256)
+            state_->reg_class_hints[reg] = last_call_class_def_;
 
         if (right != reg)
             free_reg(right);
@@ -1118,6 +1201,10 @@ namespace zen
         }
 
         /* Arguments go in consecutive registers after base */
+        int call_results = expected_results_ > 0 ? expected_results_ : 1;
+        int saved_expected_results = expected_results_;
+        expected_results_ = 1;
+
         int arg_count = 0;
 
         if (state_->next_reg <= base)
@@ -1141,7 +1228,8 @@ namespace zen
         /* Emit CALL: R[base] = func, args are R[base+1]..R[base+arg_count] */
         /* Result goes back into R[base] (or dest) */
         int result_reg = dest >= 0 ? dest : base;
-        state_->emitter.emit_abc(OP_CALL, base, arg_count, 1, previous_.line);
+        expected_results_ = saved_expected_results;
+        state_->emitter.emit_abc(OP_CALL, base, arg_count, call_results, previous_.line);
 
         /* Restore register allocation */
         state_->next_reg = save_next > base + 1 ? save_next : base + 1;
@@ -1153,6 +1241,63 @@ namespace zen
         {
             emit_move(result_reg, base);
         }
+        if (result_reg >= 0 && result_reg < 256)
+            state_->reg_class_hints[result_reg] = last_call_class_def_;
+        return result_reg;
+    }
+
+    int Compiler::generic_call_expr(int func_reg, int dest)
+    {
+        int base;
+        int save_next = state_->next_reg;
+        ObjStructDef *saved_struct_def = last_call_struct_def_;
+
+        if (is_local_reg(func_reg))
+        {
+            if (state_->next_reg <= func_reg)
+                state_->next_reg = func_reg + 1;
+            base = alloc_reg();
+            emit_move(base, func_reg);
+        }
+        else
+        {
+            base = func_reg;
+        }
+
+        if (state_->next_reg <= base)
+            state_->next_reg = base + 1;
+
+        int arg_count = 0;
+        int type_reg = alloc_reg();
+        if (type_reg != base + 1)
+        {
+            /* Keep call arguments consecutive even if the allocator had moved. */
+            state_->next_reg = base + 1;
+            type_reg = alloc_reg();
+        }
+        generic_type_arg(type_reg);
+        arg_count++;
+
+        consume(TOK_LPAREN, "Expected '(' after generic type.");
+        if (!check(TOK_RPAREN))
+        {
+            do
+            {
+                int arg_reg = alloc_reg();
+                expression(arg_reg);
+                state_->next_reg = arg_reg + 1;
+                arg_count++;
+            } while (match(TOK_COMMA));
+        }
+        consume(TOK_RPAREN, "Expected ')' after arguments.");
+
+        int result_reg = dest >= 0 ? dest : base;
+        state_->emitter.emit_abc(OP_CALL, base, arg_count, 1, previous_.line);
+        state_->next_reg = save_next > base + 1 ? save_next : base + 1;
+        last_call_struct_def_ = saved_struct_def;
+
+        if (result_reg != base)
+            emit_move(result_reg, base);
         return result_reg;
     }
 
@@ -1259,7 +1404,7 @@ namespace zen
             }
         }
         /* Try to resolve class field index (self.x inside a method) */
-        if (field_idx < 0 && current_class_fields_ && state_->is_method)
+        if (field_idx < 0 && current_class_fields_ && state_->is_method && obj_reg == 0)
         {
             for (int i = 0; i < current_class_fields_->count; i++)
             {
@@ -1334,11 +1479,11 @@ namespace zen
             return dest >= 0 ? dest : alloc_reg();
         }
 
-        /* Not assignment — check for method call: a.b(args) */
-        if (check(TOK_LPAREN))
+        /* Not assignment — check for method call: a.b(args) or a.b<T>(args) */
+        bool has_generic_arg = check(TOK_LT) && looks_like_generic_call();
+        if (has_generic_arg || check(TOK_LPAREN))
         {
             /* Method invocation — emit OP_INVOKE (2-word) */
-            advance(); /* consume '(' */
 
             /* Put receiver at base register */
             int base = alloc_reg();
@@ -1352,12 +1497,26 @@ namespace zen
             if (state_->next_reg <= base)
                 state_->next_reg = base + 1;
 
+            if (has_generic_arg)
+            {
+                int type_reg = alloc_reg();
+                if (type_reg != base + 1)
+                {
+                    state_->next_reg = base + 1;
+                    type_reg = alloc_reg();
+                }
+                generic_type_arg(type_reg);
+                arg_count++;
+            }
+
+            consume(TOK_LPAREN, "Expected '(' after generic type.");
             if (!check(TOK_RPAREN))
             {
                 do
                 {
                     int arg_reg = alloc_reg();
                     expression(arg_reg);
+                    state_->next_reg = arg_reg + 1;
                     arg_count++;
                 } while (match(TOK_COMMA));
             }
@@ -1560,35 +1719,19 @@ namespace zen
 
     int Compiler::spawn_expression(int dest)
     {
-        /* spawn name(arg1, arg2, ...)
-        ** Compiles callee into reg, args into reg+1..reg+N,
-        ** then OP_SPAWN reg, N → R[reg] = process ID */
+        /* spawn expr
+        ** Compiles expr to a closure and wraps it in a Fiber.
+        ** Process declarations do not use this path: calling a process
+        ** closure already spawns a process in OP_CALL. */
         int reg = (dest >= 0) ? dest : alloc_reg();
 
-        /* Parse callee (identifier or expression) */
-        int callee_reg = expression(reg);
-        (void)callee_reg; /* should be == reg due to dest */
-
-        /* Parse arguments */
-        consume(TOK_LPAREN, "Expected '(' after spawn target.");
-        int nargs = 0;
-        if (!check(TOK_RPAREN))
+        int closure_reg = expression(reg);
+        if (closure_reg != reg)
         {
-            do
-            {
-                int arg_reg = alloc_reg();
-                expression(arg_reg);
-                state_->next_reg = arg_reg + 1;
-                nargs++;
-            } while (match(TOK_COMMA));
+            emit_move(reg, closure_reg);
+            free_reg(closure_reg);
         }
-        consume(TOK_RPAREN, "Expected ')' after spawn arguments.");
-
-        state_->emitter.emit_abc(OP_SPAWN, reg, nargs, 0, previous_.line);
-
-        /* Free arg regs */
-        for (int i = 0; i < nargs; i++)
-            free_reg(reg + nargs - i);
+        state_->emitter.emit_abc(OP_NEWFIBER, reg, reg, 0, previous_.line);
 
         return reg;
     }
@@ -1656,6 +1799,7 @@ namespace zen
         fn_state.function = new_func(gc_);
         fn_state.emitter = Emitter(gc_);
         fn_state.local_count = 0;
+        memset(fn_state.reg_class_hints, 0, sizeof(fn_state.reg_class_hints));
         fn_state.scope_depth = 0;
         fn_state.next_reg = 0;
         fn_state.max_reg = 0;

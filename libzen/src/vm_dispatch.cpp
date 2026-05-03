@@ -18,6 +18,16 @@
 namespace zen
 {
 
+    static inline void copy_native_results(Value *dst, Value *src, int nret, int nresults)
+    {
+        int wanted = nresults <= 0 ? 0 : nresults;
+        int copy_count = nret > 0 ? (nret < wanted ? nret : wanted) : 0;
+        for (int j = 0; j < copy_count; j++)
+            dst[j] = src[j];
+        for (int j = copy_count; j < wanted; j++)
+            dst[j] = val_nil();
+    }
+
     /* Fast int→string (replaces snprintf "%lld" — ~10-30x faster) */
     static inline int int_to_cstr(int64_t n, char *buf)
     {
@@ -31,6 +41,111 @@ namespace zen
         int len = 20 - i;
         memcpy(buf, tmp + i, (size_t)len + 1);
         return len;
+    }
+
+    static const char *value_debug_type(Value v)
+    {
+        switch (v.type)
+        {
+        case VAL_NIL: return "nil";
+        case VAL_BOOL: return "bool";
+        case VAL_INT: return "int";
+        case VAL_FLOAT: return "float";
+        case VAL_PTR: return "ptr";
+        case VAL_OBJ:
+            if (!v.as.obj) return "obj(null)";
+            switch (v.as.obj->type)
+            {
+            case OBJ_STRING: return "string";
+            case OBJ_FUNC: return "function";
+            case OBJ_NATIVE: return "native";
+            case OBJ_UPVALUE: return "upvalue";
+            case OBJ_CLOSURE: return "closure";
+            case OBJ_FIBER: return "fiber";
+            case OBJ_PROCESS: return "process";
+            case OBJ_ARRAY: return "array";
+            case OBJ_MAP: return "map";
+            case OBJ_SET: return "set";
+            case OBJ_BUFFER: return "buffer";
+            case OBJ_STRUCT_DEF: return "struct_def";
+            case OBJ_STRUCT: return "struct";
+            case OBJ_NATIVE_STRUCT_DEF: return "native_struct_def";
+            case OBJ_NATIVE_STRUCT: return "native_struct";
+            case OBJ_CLASS: return "class";
+            case OBJ_INSTANCE: return "instance";
+            }
+            return "obj(unknown)";
+        }
+        return "unknown";
+    }
+
+    static bool instance_has_method_slot(Value receiver, int slot)
+    {
+        if (!is_instance(receiver) || slot < 0)
+            return false;
+
+        ObjClass *klass = as_instance(receiver)->klass;
+        return slot < klass->vtable_size && !is_nil(klass->vtable[slot]);
+    }
+
+    static bool try_binary_operator(VM *vm, Value lhs, Value rhs,
+                                    int slot, int reflected_slot,
+                                    Value *out)
+    {
+        if (instance_has_method_slot(lhs, slot))
+        {
+            Value args[1] = { rhs };
+            *out = vm->invoke(lhs, slot, args, 1);
+            return true;
+        }
+
+        if (reflected_slot >= 0 && instance_has_method_slot(rhs, reflected_slot))
+        {
+            Value args[1] = { lhs };
+            *out = vm->invoke(rhs, reflected_slot, args, 1);
+            return true;
+        }
+
+        return false;
+    }
+
+    static bool try_unary_operator(VM *vm, Value operand, int slot, Value *out)
+    {
+        if (!instance_has_method_slot(operand, slot))
+            return false;
+
+        *out = vm->invoke(operand, slot, nullptr, 0);
+        return true;
+    }
+
+    static bool try_string_operator(VM *vm, Value receiver, Value *out)
+    {
+        if (!instance_has_method_slot(receiver, VM::SLOT_STR))
+            return false;
+
+        *out = vm->invoke(receiver, VM::SLOT_STR, nullptr, 0);
+        return true;
+    }
+
+    static Value default_to_string(GC *gc, Value v)
+    {
+        if (is_string(v))
+            return v;
+
+        char buf[64];
+        int len = 0;
+        if (is_nil(v))
+            len = snprintf(buf, sizeof(buf), "nil");
+        else if (is_bool(v))
+            len = snprintf(buf, sizeof(buf), "%s", v.as.boolean ? "true" : "false");
+        else if (is_int(v))
+            len = int_to_cstr(v.as.integer, buf);
+        else if (is_float(v))
+            len = snprintf(buf, sizeof(buf), "%g", v.as.number);
+        else
+            len = snprintf(buf, sizeof(buf), "<object>");
+
+        return val_obj((Obj *)new_string(gc, buf, len));
     }
 
     void VM::execute(ObjFiber *fiber)
@@ -85,6 +200,15 @@ namespace zen
             &&lbl_OP_DIV,
             &&lbl_OP_MOD,
             &&lbl_OP_NEG,
+            &&lbl_OP_ADD_OBJ,
+            &&lbl_OP_SUB_OBJ,
+            &&lbl_OP_MUL_OBJ,
+            &&lbl_OP_DIV_OBJ,
+            &&lbl_OP_MOD_OBJ,
+            &&lbl_OP_NEG_OBJ,
+            &&lbl_OP_EQ_OBJ,
+            &&lbl_OP_LT_OBJ,
+            &&lbl_OP_LE_OBJ,
             &&lbl_OP_ADDI,
             &&lbl_OP_SUBI,
             &&lbl_OP_BAND,
@@ -135,6 +259,7 @@ namespace zen
             &&lbl_OP_CONCAT,
             &&lbl_OP_STRADD,
             &&lbl_OP_TOSTRING,
+            &&lbl_OP_TOSTRING_OBJ,
             &&lbl_OP_LEN,
             &&lbl_OP_PRINT,
             &&lbl_OP_SIN,
@@ -305,8 +430,9 @@ namespace zen
         CASE(OP_DIV)
         {
             uint32_t i = *ip;
+            Value vb = R[ZEN_B(i)], vc = R[ZEN_C(i)];
             /* Divisão sempre float (evitar div by zero int) */
-            R[ZEN_A(i)] = val_float(to_number(R[ZEN_B(i)]) / to_number(R[ZEN_C(i)]));
+            R[ZEN_A(i)] = val_float(to_number(vb) / to_number(vc));
             NEXT();
         }
         CASE(OP_MOD)
@@ -339,6 +465,160 @@ namespace zen
                 R[ZEN_A(i)] = val_int((int64_t)(-(uint64_t)v.as.integer));
             else
                 R[ZEN_A(i)] = val_float(-to_number(v));
+            NEXT();
+        }
+
+        CASE(OP_ADD_OBJ)
+        {
+            uint32_t i = *ip;
+            uint8_t dst = ZEN_A(i);
+            Value result;
+            SAVE_IP();
+            if (!try_binary_operator(this, R[ZEN_B(i)], R[ZEN_C(i)], SLOT_ADD, SLOT_RADD, &result))
+            {
+                LOAD_STATE();
+                runtime_error("object does not implement operator +");
+                return;
+            }
+            if (had_error_) return;
+            LOAD_STATE();
+            R[dst] = result;
+            NEXT();
+        }
+        CASE(OP_SUB_OBJ)
+        {
+            uint32_t i = *ip;
+            uint8_t dst = ZEN_A(i);
+            Value result;
+            SAVE_IP();
+            if (!try_binary_operator(this, R[ZEN_B(i)], R[ZEN_C(i)], SLOT_SUB, SLOT_RSUB, &result))
+            {
+                LOAD_STATE();
+                runtime_error("object does not implement operator -");
+                return;
+            }
+            if (had_error_) return;
+            LOAD_STATE();
+            R[dst] = result;
+            NEXT();
+        }
+        CASE(OP_MUL_OBJ)
+        {
+            uint32_t i = *ip;
+            uint8_t dst = ZEN_A(i);
+            Value result;
+            SAVE_IP();
+            if (!try_binary_operator(this, R[ZEN_B(i)], R[ZEN_C(i)], SLOT_MUL, SLOT_RMUL, &result))
+            {
+                LOAD_STATE();
+                runtime_error("object does not implement operator *");
+                return;
+            }
+            if (had_error_) return;
+            LOAD_STATE();
+            R[dst] = result;
+            NEXT();
+        }
+        CASE(OP_DIV_OBJ)
+        {
+            uint32_t i = *ip;
+            uint8_t dst = ZEN_A(i);
+            Value result;
+            SAVE_IP();
+            if (!try_binary_operator(this, R[ZEN_B(i)], R[ZEN_C(i)], SLOT_DIV, SLOT_RDIV, &result))
+            {
+                LOAD_STATE();
+                runtime_error("object does not implement operator /");
+                return;
+            }
+            if (had_error_) return;
+            LOAD_STATE();
+            R[dst] = result;
+            NEXT();
+        }
+        CASE(OP_MOD_OBJ)
+        {
+            uint32_t i = *ip;
+            uint8_t dst = ZEN_A(i);
+            Value result;
+            SAVE_IP();
+            if (!try_binary_operator(this, R[ZEN_B(i)], R[ZEN_C(i)], SLOT_MOD, SLOT_RMOD, &result))
+            {
+                LOAD_STATE();
+                runtime_error("object does not implement operator %%");
+                return;
+            }
+            if (had_error_) return;
+            LOAD_STATE();
+            R[dst] = result;
+            NEXT();
+        }
+        CASE(OP_NEG_OBJ)
+        {
+            uint32_t i = *ip;
+            uint8_t dst = ZEN_A(i);
+            Value result;
+            SAVE_IP();
+            if (!try_unary_operator(this, R[ZEN_B(i)], SLOT_NEG, &result))
+            {
+                LOAD_STATE();
+                runtime_error("object does not implement unary operator -");
+                return;
+            }
+            if (had_error_) return;
+            LOAD_STATE();
+            R[dst] = result;
+            NEXT();
+        }
+        CASE(OP_EQ_OBJ)
+        {
+            uint32_t i = *ip;
+            uint8_t dst = ZEN_A(i);
+            Value result;
+            SAVE_IP();
+            if (!try_binary_operator(this, R[ZEN_B(i)], R[ZEN_C(i)], SLOT_EQ, -1, &result))
+            {
+                LOAD_STATE();
+                R[dst] = val_bool(values_equal(R[ZEN_B(i)], R[ZEN_C(i)]));
+                NEXT();
+            }
+            if (had_error_) return;
+            LOAD_STATE();
+            R[dst] = val_bool(is_truthy(result));
+            NEXT();
+        }
+        CASE(OP_LT_OBJ)
+        {
+            uint32_t i = *ip;
+            uint8_t dst = ZEN_A(i);
+            Value result;
+            SAVE_IP();
+            if (!try_binary_operator(this, R[ZEN_B(i)], R[ZEN_C(i)], SLOT_LT, -1, &result))
+            {
+                LOAD_STATE();
+                runtime_error("object does not implement operator <");
+                return;
+            }
+            if (had_error_) return;
+            LOAD_STATE();
+            R[dst] = val_bool(is_truthy(result));
+            NEXT();
+        }
+        CASE(OP_LE_OBJ)
+        {
+            uint32_t i = *ip;
+            uint8_t dst = ZEN_A(i);
+            Value result;
+            SAVE_IP();
+            if (!try_binary_operator(this, R[ZEN_B(i)], R[ZEN_C(i)], SLOT_LE, -1, &result))
+            {
+                LOAD_STATE();
+                runtime_error("object does not implement operator <=");
+                return;
+            }
+            if (had_error_) return;
+            LOAD_STATE();
+            R[dst] = val_bool(is_truthy(result));
             NEXT();
         }
 
@@ -414,7 +694,8 @@ namespace zen
         CASE(OP_EQ)
         {
             uint32_t i = *ip;
-            R[ZEN_A(i)] = val_bool(values_equal(R[ZEN_B(i)], R[ZEN_C(i)]));
+            Value vb = R[ZEN_B(i)], vc = R[ZEN_C(i)];
+            R[ZEN_A(i)] = val_bool(values_equal(vb, vc));
             NEXT();
         }
         CASE(OP_LT)
@@ -516,10 +797,8 @@ namespace zen
             {
                 ObjNative *nat = as_native(callee);
                 int nret = nat->fn(this, &R[a + 1], nargs);
-                if (nret > 0)
-                    R[a] = R[a + 1];
-                else
-                    R[a] = val_nil();
+                if (had_error_) return;
+                copy_native_results(&R[a], &R[a + 1], nret, nresults);
                 DISPATCH();
             }
             if (is_struct_def(callee))
@@ -669,10 +948,8 @@ namespace zen
             {
                 ObjNative *nat = as_native(callee);
                 int nret = nat->fn(this, &R[a + 1], nargs);
-                if (nret > 0)
-                    R[a] = R[a + 1];
-                else
-                    R[a] = val_nil();
+                if (had_error_) return;
+                copy_native_results(&R[a], &R[a + 1], nret, nresults);
                 DISPATCH();
             }
             runtime_error("attempt to call non-function");
@@ -735,6 +1012,10 @@ namespace zen
             }
 
             fiber->stack_top = caller_base + caller_frame->func->num_regs;
+            if (external_call_stop_depth_ >= 0 && fiber->frame_count <= external_call_stop_depth_)
+            {
+                return;
+            }
             LOAD_STATE();
             DISPATCH();
         }
@@ -755,10 +1036,15 @@ namespace zen
             cl->obj.gc_next = gc_.objects;
             gc_.objects = (Obj *)cl;
             cl->func = fn;
-            cl->upvalue_count = nuv;
+            cl->upvalues = nullptr;
+            cl->upvalue_count = 0;
+            R[a] = val_obj((Obj *)cl);
             if (nuv > 0)
             {
                 cl->upvalues = (ObjUpvalue **)zen_alloc(&gc_, nuv * sizeof(ObjUpvalue *));
+                for (int j = 0; j < nuv; j++)
+                    cl->upvalues[j] = nullptr;
+                cl->upvalue_count = nuv;
                 for (int j = 0; j < nuv; j++)
                 {
                     UpvalDesc &desc = fn->upval_descs[j];
@@ -776,10 +1062,8 @@ namespace zen
             }
             else
             {
-                cl->upvalues = nullptr;
+                cl->upvalue_count = 0;
             }
-
-            R[a] = val_obj((Obj *)cl);
             NEXT();
         }
 
@@ -808,6 +1092,11 @@ namespace zen
         CASE(OP_NEWFIBER)
         {
             uint32_t i = *ip;
+            if (!is_closure(R[ZEN_B(i)]))
+            {
+                runtime_error("spawn expects a function");
+                return;
+            }
             ObjClosure *cl = as_closure(R[ZEN_B(i)]);
             ObjFiber *f = new_fiber(cl, 256);
             R[ZEN_A(i)] = val_obj((Obj *)f);
@@ -819,6 +1108,11 @@ namespace zen
             uint32_t i = *ip;
             int a = ZEN_A(i);
             int nargs = ZEN_B(i);
+            if (!is_closure(R[a]))
+            {
+                runtime_error("spawn expects a process function");
+                return;
+            }
             ObjClosure *cl = as_closure(R[a]);
             int pid = spawn_process(cl, &R[a + 1], nargs);
             R[a] = val_int(pid);
@@ -890,6 +1184,11 @@ namespace zen
         CASE(OP_RESUME)
         {
             uint32_t i = *ip;
+            if (!is_fiber(R[ZEN_B(i)]))
+            {
+                runtime_error("resume expects a fiber");
+                return;
+            }
             ObjFiber *target = as_fiber(R[ZEN_B(i)]);
             Value send_val = R[ZEN_C(i)];
             ++ip;
@@ -1193,10 +1492,38 @@ namespace zen
             /* R[A] = R[B].fields[C] — O(1) direct index */
             uint32_t i = *ip;
             Value obj = R[ZEN_B(i)];
+            const int field_idx = ZEN_C(i);
             if (is_instance(obj))
-                R[ZEN_A(i)] = as_instance(obj)->fields[ZEN_C(i)];
+            {
+                ObjInstance *inst = as_instance(obj);
+                if (field_idx < 0 || field_idx >= inst->klass->num_fields)
+                {
+                    SAVE_IP();
+                    runtime_error("GETFIELD_IDX out of bounds: receiver=R%d class=%s field_index=%d field_count=%d",
+                                  ZEN_B(i), inst->klass->name->chars, field_idx, inst->klass->num_fields);
+                    return;
+                }
+                R[ZEN_A(i)] = inst->fields[field_idx];
+            }
+            else if (is_struct(obj))
+            {
+                ObjStruct *st = as_struct(obj);
+                if (field_idx < 0 || field_idx >= st->def->num_fields)
+                {
+                    SAVE_IP();
+                    runtime_error("GETFIELD_IDX out of bounds: receiver=R%d struct=%s field_index=%d field_count=%d",
+                                  ZEN_B(i), st->def->name->chars, field_idx, st->def->num_fields);
+                    return;
+                }
+                R[ZEN_A(i)] = st->fields[field_idx];
+            }
             else
-                R[ZEN_A(i)] = as_struct(obj)->fields[ZEN_C(i)];
+            {
+                SAVE_IP();
+                runtime_error("GETFIELD_IDX expected instance/struct: dst=R%d receiver=R%d receiver_type=%s field_index=%d",
+                              ZEN_A(i), ZEN_B(i), value_debug_type(obj), field_idx);
+                return;
+            }
             NEXT();
         }
         CASE(OP_SETFIELD_IDX)
@@ -1204,10 +1531,38 @@ namespace zen
             /* R[A].fields[B] = R[C] — O(1) direct index */
             uint32_t i = *ip;
             Value obj = R[ZEN_A(i)];
+            const int field_idx = ZEN_B(i);
             if (is_instance(obj))
-                as_instance(obj)->fields[ZEN_B(i)] = R[ZEN_C(i)];
+            {
+                ObjInstance *inst = as_instance(obj);
+                if (field_idx < 0 || field_idx >= inst->klass->num_fields)
+                {
+                    SAVE_IP();
+                    runtime_error("SETFIELD_IDX out of bounds: receiver=R%d class=%s field_index=%d field_count=%d value=R%d",
+                                  ZEN_A(i), inst->klass->name->chars, field_idx, inst->klass->num_fields, ZEN_C(i));
+                    return;
+                }
+                inst->fields[field_idx] = R[ZEN_C(i)];
+            }
+            else if (is_struct(obj))
+            {
+                ObjStruct *st = as_struct(obj);
+                if (field_idx < 0 || field_idx >= st->def->num_fields)
+                {
+                    SAVE_IP();
+                    runtime_error("SETFIELD_IDX out of bounds: receiver=R%d struct=%s field_index=%d field_count=%d value=R%d",
+                                  ZEN_A(i), st->def->name->chars, field_idx, st->def->num_fields, ZEN_C(i));
+                    return;
+                }
+                st->fields[field_idx] = R[ZEN_C(i)];
+            }
             else
-                as_struct(obj)->fields[ZEN_B(i)] = R[ZEN_C(i)];
+            {
+                SAVE_IP();
+                runtime_error("SETFIELD_IDX expected instance/struct: receiver=R%d receiver_type=%s field_index=%d value=R%d",
+                              ZEN_A(i), value_debug_type(obj), field_idx, ZEN_C(i));
+                return;
+            }
             NEXT();
         }
         CASE(OP_GETINDEX)
@@ -1548,38 +1903,54 @@ namespace zen
         CASE(OP_TOSTRING)
         {
             uint32_t i = *ip;
+            uint8_t dst = ZEN_A(i);
             Value v = R[ZEN_B(i)];
-            if (is_string(v))
+            if (is_instance(v) && instance_has_method_slot(v, SLOT_STR))
             {
-                R[ZEN_A(i)] = v;
+                Value result;
+                SAVE_IP();
+                if (!try_string_operator(this, v, &result))
+                {
+                    LOAD_STATE();
+                    R[dst] = default_to_string(&gc_, v);
+                    NEXT();
+                }
+                if (had_error_) return;
+                LOAD_STATE();
+                if (!is_string(result))
+                {
+                    runtime_error("__str__ must return a string");
+                    return;
+                }
+                R[dst] = result;
             }
             else
             {
-                /* Convert value to string representation */
-                char buf[64];
-                int len = 0;
-                if (is_nil(v))
-                {
-                    len = snprintf(buf, sizeof(buf), "nil");
-                }
-                else if (is_bool(v))
-                {
-                    len = snprintf(buf, sizeof(buf), "%s", v.as.boolean ? "true" : "false");
-                }
-                else if (is_int(v))
-                {
-                    len = int_to_cstr(v.as.integer, buf);
-                }
-                else if (is_float(v))
-                {
-                    len = snprintf(buf, sizeof(buf), "%g", v.as.number);
-                }
-                else
-                {
-                    len = snprintf(buf, sizeof(buf), "<object>");
-                }
-                R[ZEN_A(i)] = val_obj((Obj *)new_string(&gc_, buf, len));
+                R[dst] = default_to_string(&gc_, v);
             }
+            NEXT();
+        }
+
+        CASE(OP_TOSTRING_OBJ)
+        {
+            uint32_t i = *ip;
+            uint8_t dst = ZEN_A(i);
+            Value result;
+            SAVE_IP();
+            if (!try_string_operator(this, R[ZEN_B(i)], &result))
+            {
+                LOAD_STATE();
+                runtime_error("object does not implement __str__");
+                return;
+            }
+            if (had_error_) return;
+            LOAD_STATE();
+            if (!is_string(result))
+            {
+                runtime_error("__str__ must return a string");
+                return;
+            }
+            R[dst] = result;
             NEXT();
         }
 
@@ -1632,9 +2003,33 @@ namespace zen
                 }
                 case VAL_OBJ:
                     if (v.as.obj->type == OBJ_STRING)
+                    {
                         zen_write(((ObjString *)v.as.obj)->chars, (size_t)((ObjString *)v.as.obj)->length);
+                    }
+                    else if (is_instance(v) && instance_has_method_slot(v, SLOT_STR))
+                    {
+                        Value result;
+                        SAVE_IP();
+                        if (!try_string_operator(this, v, &result))
+                        {
+                            LOAD_STATE();
+                            print_value(v);
+                            break;
+                        }
+                        if (had_error_) return;
+                        LOAD_STATE();
+                        if (!is_string(result))
+                        {
+                            runtime_error("__str__ must return a string");
+                            return;
+                        }
+                        ObjString *s = as_string(result);
+                        zen_write(s->chars, (size_t)s->length);
+                    }
                     else
+                    {
                         print_value(v);
+                    }
                     break;
                 case VAL_PTR:
                 {

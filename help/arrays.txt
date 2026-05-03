@@ -1,0 +1,11 @@
+ZEN HELP: arrays
+
+Create arrays with []:
+
+  var a = [1, 2, 3];
+  a.push(4);
+  print(a[0]);
+  print(a.len());
+
+Useful methods:
+  push pop len contains index_of reverse slice insert remove clear join sort

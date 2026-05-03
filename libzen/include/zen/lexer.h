@@ -97,7 +97,6 @@ namespace zen
         TOK_SELF,
         TOK_FATHER,
         TOK_SON,
-        TOK_ID,
         TOK_TYPE,
 
         /* Special */

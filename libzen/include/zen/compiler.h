@@ -81,6 +81,7 @@ namespace zen
         Emitter emitter;       /* bytecode emitter */
 
         Local locals[256];
+        ObjClass *reg_class_hints[256]; /* transient type hints for temps/copies */
         int local_count;
         int scope_depth;
         int next_reg; /* next available register */
@@ -149,6 +150,7 @@ namespace zen
 
         /* --- Expressions (Pratt parser) --- */
         int expression(int dest = -1); /* returns register with result */
+        int expression_results(int dest, int nresults);
         int parse_precedence(Precedence prec, int dest);
         int prefix_rule(Token token, int dest, bool canAssign);
         int infix_rule(Token op_token, int left_reg, int dest, bool canAssign);
@@ -171,6 +173,7 @@ namespace zen
         /* Infix handlers */
         int binary(Token op, int left, int dest);
         int call_expr(int func_reg, int dest);
+        int generic_call_expr(int func_reg, int dest);
         int index_expr(int obj_reg, int dest, bool canAssign);
         int dot_expr(int obj_reg, int dest, bool canAssign);
         int and_expr(int left, int dest);
@@ -187,6 +190,8 @@ namespace zen
         /* --- Helpers --- */
         Precedence get_precedence(TokenType type);
         bool is_prefix(TokenType type);
+        bool looks_like_generic_call();
+        int generic_type_arg(int dest);
 
         /* --- Variable resolution --- */
         int resolve_local(CompilerState *state, Token *name);
@@ -203,6 +208,7 @@ namespace zen
         void set_next_reg(int reg); /* reset temp reg to a specific point */
         bool is_local_reg(int reg);
         Local *find_local_by_reg(int reg); /* find local owning a register */
+        ObjClass *class_hint_for_reg(int reg);
 
         /* --- Code emission shortcuts --- */
         void emit_move(int dst, int src);
@@ -237,12 +243,14 @@ namespace zen
         static const int MAX_IMPORTS = 16;
         ImportedMod imports_[MAX_IMPORTS];
         int num_imports_;
+        int expected_results_; /* requested results for current top-level call expression */
 
         /* Struct type inference: set by call_expr when callee is a struct def */
         ObjStructDef *last_call_struct_def_;
 
         /* Class type inference: set when callee is a class */
         ObjClass *last_call_class_def_;
+        ObjClass *global_class_hints_[MAX_GLOBALS];
 
         /* Class field indexing: set during method compilation */
         struct ClassFieldInfo

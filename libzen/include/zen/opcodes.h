@@ -39,6 +39,17 @@ namespace zen
         OP_MOD, /* R[A] = R[B] % R[C]                      */
         OP_NEG, /* R[A] = -R[B]                            */
 
+        /* --- Object operator overloads (compiler-selected cold path) --- */
+        OP_ADD_OBJ, /* R[A] = R[B].__add__(R[C])              */
+        OP_SUB_OBJ, /* R[A] = R[B].__sub__(R[C])              */
+        OP_MUL_OBJ, /* R[A] = R[B].__mul__(R[C])              */
+        OP_DIV_OBJ, /* R[A] = R[B].__div__(R[C])              */
+        OP_MOD_OBJ, /* R[A] = R[B].__mod__(R[C])              */
+        OP_NEG_OBJ, /* R[A] = R[B].__neg__()                  */
+        OP_EQ_OBJ,  /* R[A] = R[B].__eq__(R[C])               */
+        OP_LT_OBJ,  /* R[A] = R[B].__lt__(R[C])               */
+        OP_LE_OBJ,  /* R[A] = R[B].__le__(R[C])               */
+
         /* --- Aritmética imediata (superinstruções) --- */
         OP_ADDI, /* R[A] = R[B] + (signed)C                 */
         OP_SUBI, /* R[A] = R[B] - (signed)C                 */
@@ -110,6 +121,7 @@ namespace zen
         OP_CONCAT,   /* R[A] = R[B] .. R[C]  (string concat)   */
         OP_STRADD,   /* R[A] = R[A] + R[B]  (in-place append)  */
         OP_TOSTRING, /* R[A] = tostring(R[B])                   */
+        OP_TOSTRING_OBJ, /* R[A] = R[B].__str__()                */
         OP_LEN,      /* R[A] = #R[B]                            */
         OP_PRINT,    /* print R[A]; B=1 → newline               */
 

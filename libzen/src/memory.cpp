@@ -1,5 +1,6 @@
 #include "memory.h"
 #include "vm.h"
+#include <cmath>
 
 namespace zen
 {
@@ -1090,13 +1091,29 @@ namespace zen
     void buffer_set(ObjBuffer *buf, int32_t index, double val)
     {
         uint8_t *p = buf->data + (size_t)index * buffer_elem_size[buf->btype];
+        auto wrap_unsigned = [](double v, double mod) -> uint64_t {
+            if (!std::isfinite(v))
+                return 0;
+            double wrapped = std::fmod(std::trunc(v), mod);
+            if (wrapped < 0)
+                wrapped += mod;
+            return (uint64_t)wrapped;
+        };
+        auto wrap_signed = [&](double v, int bits) -> int64_t {
+            double mod = std::ldexp(1.0, bits);
+            uint64_t wrapped = wrap_unsigned(v, mod);
+            uint64_t sign_bit = (uint64_t)1 << (bits - 1);
+            if (wrapped >= sign_bit)
+                return (int64_t)wrapped - (int64_t)((uint64_t)1 << bits);
+            return (int64_t)wrapped;
+        };
         switch (buf->btype) {
-            case BUF_INT8:    *(int8_t *)p   = (int8_t)val;   break;
-            case BUF_INT16:   *(int16_t *)p  = (int16_t)val;  break;
-            case BUF_INT32:   *(int32_t *)p  = (int32_t)val;  break;
-            case BUF_UINT8:   *(uint8_t *)p  = (uint8_t)val;  break;
-            case BUF_UINT16:  *(uint16_t *)p = (uint16_t)val; break;
-            case BUF_UINT32:  *(uint32_t *)p = (uint32_t)val; break;
+            case BUF_INT8:    *(int8_t *)p   = (int8_t)wrap_signed(val, 8);       break;
+            case BUF_INT16:   *(int16_t *)p  = (int16_t)wrap_signed(val, 16);      break;
+            case BUF_INT32:   *(int32_t *)p  = (int32_t)wrap_signed(val, 32);      break;
+            case BUF_UINT8:   *(uint8_t *)p  = (uint8_t)wrap_unsigned(val, 256.0); break;
+            case BUF_UINT16:  *(uint16_t *)p = (uint16_t)wrap_unsigned(val, 65536.0); break;
+            case BUF_UINT32:  *(uint32_t *)p = (uint32_t)wrap_unsigned(val, 4294967296.0); break;
             case BUF_FLOAT32: *(float *)p    = (float)val;    break;
             case BUF_FLOAT64: *(double *)p   = val;           break;
         }
@@ -1145,6 +1162,7 @@ namespace zen
     {
         ObjInstance *inst;
         int nf = klass->num_fields;
+        size_t saved_next_gc = gc->next_gc;
 
         if (klass->persistent)
         {
@@ -1159,6 +1177,10 @@ namespace zen
         }
         else
         {
+            /* The field array allocation below can trigger GC. Until this
+            ** function returns, the new instance is not yet reachable from a
+            ** VM root, so keep GC disabled during construction. */
+            gc->next_gc = (size_t)-1;
             inst = (ObjInstance *)alloc_obj(gc, sizeof(ObjInstance), OBJ_INSTANCE);
         }
 
@@ -1174,6 +1196,7 @@ namespace zen
         {
             inst->fields = nullptr;
         }
+        gc->next_gc = saved_next_gc;
         return inst;
     }
 
@@ -1597,8 +1620,35 @@ namespace zen
     }
 
     /* Sweep: percorre TODOS os objectos, free os WHITE */
+    static void gc_rebuild_intern_table(GC *gc)
+    {
+        ObjString **old_table = gc->strings;
+        int old_capacity = gc->string_capacity;
+        ObjString **new_table = (ObjString **)calloc((size_t)old_capacity, sizeof(ObjString *));
+        int new_count = 0;
+
+        for (int i = 0; i < old_capacity; i++)
+        {
+            ObjString *s = old_table[i];
+            if (!s || s->obj.color == GC_WHITE)
+                continue;
+
+            uint32_t idx = s->obj.hash & (uint32_t)(old_capacity - 1);
+            while (new_table[idx] != nullptr)
+                idx = (idx + 1) & (uint32_t)(old_capacity - 1);
+            new_table[idx] = s;
+            new_count++;
+        }
+
+        free(old_table);
+        gc->strings = new_table;
+        gc->string_count = new_count;
+    }
+
     static void gc_sweep(GC *gc)
     {
+        gc_rebuild_intern_table(gc);
+
         Obj **ptr = &gc->objects;
         while (*ptr)
         {
@@ -1686,6 +1736,13 @@ namespace zen
 
         /* Reset gray list */
         gc->gray_count = 0;
+
+        /* Full collection: every tracked object must be considered white
+        ** before root marking. New allocations are born BLACK to survive the
+        ** allocation that just created them, but BLACK roots still need their
+        ** children traced on the next collection. */
+        for (Obj *obj = gc->objects; obj; obj = obj->gc_next)
+            obj->color = GC_WHITE;
 
         /* Mark roots */
         vm->gc_mark_roots();
