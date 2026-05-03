@@ -1,9 +1,14 @@
 cmake_minimum_required(VERSION 3.10)
 project(zen LANGUAGES CXX)
+if(POLICY CMP0072)
+    cmake_policy(SET CMP0072 NEW)
+endif()
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+include(SystemRaylib)
 
 # Common warnings
 add_compile_options(-Wall -Wextra -Wno-unused-parameter)
@@ -45,6 +50,16 @@ add_subdirectory(tests/test_class_api)
 
 # --- Visual benchmark (raylib, process system) ---
 option(ZEN_BUILD_VISUAL "Build visual benchmark (requires raylib)" ON)
+option(ZEN_BUILD_GFX "Build graphics engine prototype (requires raylib)" ON)
+if(ZEN_BUILD_VISUAL OR ZEN_BUILD_GFX)
+    zen_find_system_raylib(ZEN_SYSTEM_RAYLIB_FOUND)
+    if(NOT ZEN_SYSTEM_RAYLIB_FOUND)
+        message(WARNING "System raylib not found; disabling raylib demos. Install raylib or set ZEN_BUILD_VISUAL=OFF/ZEN_BUILD_GFX=OFF.")
+        set(ZEN_BUILD_VISUAL OFF)
+        set(ZEN_BUILD_GFX OFF)
+    endif()
+endif()
+
 if(ZEN_BUILD_VISUAL)
     add_subdirectory(test_visual)
     add_subdirectory(test_visual_loop)
@@ -52,12 +67,6 @@ if(ZEN_BUILD_VISUAL)
     add_subdirectory(test_visual_engine)
     
 endif()
-
-
-
-
-
-option(ZEN_BUILD_GFX "Build graphics engine prototype (requires raylib)" ON)
 if(ZEN_BUILD_GFX)
     add_subdirectory(test_gfx)
 endif()

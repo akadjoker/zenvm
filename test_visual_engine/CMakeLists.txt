@@ -2,19 +2,17 @@ project(test_visual_engine)
 cmake_policy(SET CMP0072 NEW)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
-set(RAYLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(RAYLIB_BUILD_GAMES OFF CACHE BOOL "" FORCE)
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
 if(NOT TARGET raylib)
-    add_subdirectory(${CMAKE_SOURCE_DIR}/vendor/raylib vendor/raylib EXCLUDE_FROM_ALL)
+    include(${CMAKE_SOURCE_DIR}/cmake/SystemRaylib.cmake)
+    zen_find_system_raylib(ZEN_SYSTEM_RAYLIB_FOUND)
+    if(NOT ZEN_SYSTEM_RAYLIB_FOUND)
+        message(FATAL_ERROR "System raylib not found. Install raylib or disable ZEN_BUILD_VISUAL.")
+    endif()
 endif()
 
 add_executable(test_visual_engine main.cpp)
 target_link_libraries(test_visual_engine PRIVATE zen_static raylib)
-target_include_directories(test_visual_engine PRIVATE
-    ${CMAKE_SOURCE_DIR}/vendor/raylib/src
-)
 target_compile_definitions(test_visual_engine PRIVATE
     ZENVM_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
