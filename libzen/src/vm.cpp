@@ -19,7 +19,7 @@ namespace zen
     ** Construtor / Destrutor
     ** ========================================================= */
 
-    VM::VM() : on_process_start(nullptr), on_process_update(nullptr), on_process_end(nullptr), num_globals_(0), main_fiber_(nullptr), current_fiber_(nullptr), fiber_depth_(0), external_call_stop_depth_(-1), had_error_(false), num_search_paths_(0), num_libs_(0), num_plugins_(0), num_selectors_(0), pool_(nullptr), num_alive_(0), pool_capacity_(0), next_process_id_(1), current_process_id_(-1), current_slot_idx_(-1)
+    VM::VM() : on_process_start(nullptr), on_process_update(nullptr), on_process_end(nullptr), num_globals_(0), main_fiber_(nullptr), current_fiber_(nullptr), fiber_depth_(0), external_call_stop_depth_(-1), had_error_(false), num_search_paths_(0), num_libs_(0), num_plugins_(0), selectors_(nullptr), num_selectors_(0), selectors_capacity_(0), pool_(nullptr), num_alive_(0), pool_capacity_(0), next_process_id_(1), current_process_id_(-1), current_slot_idx_(-1)
     {
         gc_init(&gc_);
         gc_.vm = this;
@@ -27,7 +27,10 @@ namespace zen
         memset(global_names_, 0, sizeof(global_names_));
         memset(search_paths_, 0, sizeof(search_paths_));
         memset(plugin_handles_, 0, sizeof(plugin_handles_));
-        memset(selectors_, 0, sizeof(selectors_));
+
+        /* Allocate initial selector array (dynamic, grows in intern_selector). */
+        selectors_capacity_ = kInitSelectorCapacity;
+        selectors_ = (ObjString **)calloc(selectors_capacity_, sizeof(ObjString *));
 
         static const char *operator_names[] = {
             "__add__", "__radd__", "__sub__", "__rsub__", "__mul__", "__rmul__",
@@ -65,6 +68,16 @@ namespace zen
         /* Free process pool (fibers + array) */
         kill_all_processes();
         free(pool_);
+
+        /* Free selector table (the ObjString* it holds are GC-owned and
+        ** will be released by gc_sweep_all below). */
+        if (selectors_)
+        {
+            free(selectors_);
+            selectors_ = nullptr;
+            selectors_capacity_ = 0;
+            num_selectors_ = 0;
+        }
 
         /* Free all objects via GC sweep */
         gc_sweep_all(&gc_);
@@ -299,11 +312,27 @@ namespace zen
     {
         int idx = find_selector(name, len);
         if (idx >= 0) return idx;
-        if (num_selectors_ >= MAX_SELECTORS)
+
+        /* Grow if full. The pointer array may move; previously-returned
+        ** slot indices are integers and remain valid (we never reorder). */
+        if (num_selectors_ >= selectors_capacity_)
         {
-            runtime_error("too many method selectors");
-            return -1;
+            int new_cap = selectors_capacity_ ? selectors_capacity_ * 2
+                                              : kInitSelectorCapacity;
+            ObjString **grown = (ObjString **)realloc(selectors_,
+                                  (size_t)new_cap * sizeof(ObjString *));
+            if (!grown)
+            {
+                runtime_error("out of memory growing selector table");
+                return -1;
+            }
+            /* Zero the new tail so any stray reads see nullptr, not garbage. */
+            for (int i = selectors_capacity_; i < new_cap; i++)
+                grown[i] = nullptr;
+            selectors_ = grown;
+            selectors_capacity_ = new_cap;
         }
+
         idx = num_selectors_++;
         selectors_[idx] = intern_string(&gc_, name, len, hash_string(name, len));
         return idx;

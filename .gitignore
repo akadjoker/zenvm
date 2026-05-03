@@ -9,4 +9,4 @@
 *.so
 *.a
 /DIV
-/bin
+/bin/CMakeFiles/

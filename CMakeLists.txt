@@ -39,6 +39,11 @@ if(ZEN_ENABLE_GLFW)
     add_subdirectory(modules/glfw)
 endif()
 
+option(ZEN_ENABLE_SDL2 "Enable SDL2 window module" OFF)
+if(ZEN_ENABLE_SDL2)
+    add_subdirectory(modules/sdl2)
+endif()
+
 # --- CLI (zen executable) ---
 add_subdirectory(cli)
 

@@ -315,10 +315,18 @@ namespace zen
         void *plugin_handles_[MAX_PLUGINS];
         int num_plugins_;
 
-        /* Method selector table (for vtable dispatch) */
-        static const int MAX_SELECTORS = 256;
-        ObjString *selectors_[MAX_SELECTORS]; /* interned method names */
+        /* Method selector table (for vtable dispatch).
+        ** Dynamic: grows on demand via intern_selector().
+        ** The array of pointers may move on realloc, but:
+        **   - Slot indices (int) returned to callers stay valid forever
+        **     (we only append, never reorder).
+        **   - The ObjString* objects themselves are GC-allocated and never
+        **     move when this array reallocates.
+        ** So no caller is at risk of dangling references after a grow. */
+        static const int kInitSelectorCapacity = 32;
+        ObjString **selectors_;       /* interned method names (heap-allocated) */
         int num_selectors_;
+        int selectors_capacity_;
 
         /* Process pool (dynamic, compact, swap-remove) */
         ProcessSlot *pool_;         /* dynamic array of alive processes */
