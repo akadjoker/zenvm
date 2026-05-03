@@ -441,7 +441,7 @@ namespace zen
             Value vb = R[ZEN_B(i)], vc = R[ZEN_C(i)];
             if (vb.type == VAL_INT && vc.type == VAL_INT)
             {
-                int32_t divisor = vc.as.integer;
+                int64_t divisor = vc.as.integer;
                 if (divisor == 0)
                     R[ZEN_A(i)] = val_int(0);
                 else

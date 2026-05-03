@@ -1267,6 +1267,7 @@ namespace zen
         {
             ObjFunc *fn = (ObjFunc *)obj;
             gc_mark_obj(gc, (Obj *)fn->name);
+            gc_mark_obj(gc, (Obj *)fn->source);
             for (int i = 0; i < fn->const_count; i++)
                 gc_mark_value(gc, fn->constants[i]);
             break;
@@ -1385,25 +1386,39 @@ namespace zen
         }
 
         case OBJ_STRUCT_DEF:
-            /* Struct definition — field names are interned strings (no GC refs) */
+        {
+            ObjStructDef *def = (ObjStructDef *)obj;
+            gc_mark_obj(gc, (Obj *)def->name);
+            for (int32_t i = 0; i < def->num_fields; i++)
+                gc_mark_obj(gc, (Obj *)def->field_names[i]);
             break;
+        }
 
         case OBJ_STRUCT:
         {
-            /* Struct instance — mark field values */
+            /* Struct instance — mark definition and field values */
             ObjStruct *s = (ObjStruct *)obj;
+            gc_mark_obj(gc, (Obj *)s->def);
             for (int32_t i = 0; i < s->def->num_fields; i++)
                 gc_mark_value(gc, s->fields[i]);
             break;
         }
 
         case OBJ_NATIVE_STRUCT_DEF:
-            /* Native struct def — no GC refs (field defs are static) */
+        {
+            NativeStructDef *def = (NativeStructDef *)obj;
+            gc_mark_obj(gc, (Obj *)def->name);
+            for (int16_t i = 0; i < def->num_fields; i++)
+                gc_mark_obj(gc, (Obj *)def->fields[i].name);
             break;
+        }
 
         case OBJ_NATIVE_STRUCT:
-            /* Native struct instance — raw buffer, no Value refs to mark */
+        {
+            ObjNativeStruct *ns = (ObjNativeStruct *)obj;
+            gc_mark_obj(gc, (Obj *)ns->def);
             break;
+        }
 
         case OBJ_PROCESS:
             /* TODO: when process system is implemented */
@@ -1480,11 +1495,11 @@ namespace zen
         {
             ObjFunc *fn = (ObjFunc *)obj;
             if (fn->code)
-                zen_free(gc, fn->code, sizeof(Instruction) * fn->code_count);
+                zen_free(gc, fn->code, sizeof(Instruction) * fn->code_capacity);
             if (fn->lines)
-                zen_free(gc, fn->lines, sizeof(int32_t) * fn->code_count);
+                zen_free(gc, fn->lines, sizeof(int32_t) * fn->code_capacity);
             if (fn->constants)
-                zen_free(gc, fn->constants, sizeof(Value) * fn->const_count);
+                zen_free(gc, fn->constants, sizeof(Value) * fn->const_capacity);
             if (fn->upval_descs)
                 zen_free(gc, fn->upval_descs, sizeof(UpvalDesc) * fn->upvalue_count);
             break;
@@ -1647,6 +1662,8 @@ namespace zen
 
     static void gc_sweep(GC *gc)
     {
+        /* Rebuild the intern table first: only surviving (non-WHITE) strings
+        ** are re-inserted, so dead strings are already excluded. */
         gc_rebuild_intern_table(gc);
 
         Obj **ptr = &gc->objects;
@@ -1657,25 +1674,8 @@ namespace zen
                 Obj *dead = *ptr;
                 *ptr = dead->gc_next;
 
-                /* Remove da intern table se for string */
-                if (dead->type == OBJ_STRING)
-                {
-                    ObjString *s = (ObjString *)dead;
-                    uint32_t idx = s->obj.hash & (gc->string_capacity - 1);
-                    while (gc->strings[idx] != s)
-                    {
-                        if (gc->strings[idx] == nullptr)
-                            break;
-                        idx = (idx + 1) & (gc->string_capacity - 1);
-                    }
-                    if (gc->strings[idx] == s)
-                    {
-                        gc->strings[idx] = nullptr;
-                        gc->string_count--;
-                        /* NOTA: tombstone simplificado — pode degradar.
-                           Para produção: rehash periódico. */
-                    }
-                }
+                /* No need to remove strings from intern table here:
+                ** gc_rebuild_intern_table already excluded WHITE strings. */
 
                 free_obj(gc, dead);
             }

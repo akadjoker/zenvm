@@ -94,6 +94,8 @@ namespace zen
         ObjFiber *fiber = (ObjFiber *)zen_alloc(&gc_, sizeof(ObjFiber));
         fiber->obj.type = OBJ_FIBER;
         fiber->obj.color = GC_BLACK;
+        fiber->obj.interned = 0;
+        fiber->obj._pad = 0;
         fiber->obj.hash = 0;
 
         /* Initialize ALL fields BEFORE linking to GC list */
@@ -155,6 +157,8 @@ namespace zen
         ObjClosure *cl = (ObjClosure *)zen_alloc(&gc_, sizeof(ObjClosure));
         cl->obj.type = OBJ_CLOSURE;
         cl->obj.color = GC_BLACK;
+        cl->obj.interned = 0;
+        cl->obj._pad = 0;
         cl->obj.hash = 0;
         cl->obj.gc_next = gc_.objects;
         gc_.objects = (Obj *)cl;
@@ -551,6 +555,8 @@ namespace zen
         ObjUpvalue *created = (ObjUpvalue *)zen_alloc(&gc_, sizeof(ObjUpvalue));
         created->obj.type = OBJ_UPVALUE;
         created->obj.color = GC_BLACK;
+        created->obj.interned = 0;
+        created->obj._pad = 0;
         created->obj.hash = 0;
         created->obj.gc_next = gc_.objects;
         gc_.objects = (Obj *)created;
@@ -1091,11 +1097,11 @@ namespace zen
             fclose(f);
             return nullptr;
         }
-        fread(buf, 1, (size_t)size, f);
-        buf[size] = '\0';
+        size_t nread = fread(buf, 1, (size_t)size, f);
+        buf[nread] = '\0';
         fclose(f);
         if (out_size)
-            *out_size = size;
+            *out_size = (long)nread;
         return buf;
     }
 
@@ -1322,6 +1328,8 @@ namespace zen
         ObjFiber *fiber = (ObjFiber *)malloc(sizeof(ObjFiber));
         fiber->obj.type = OBJ_FIBER;
         fiber->obj.color = GC_BLACK;
+        fiber->obj.interned = 0;
+        fiber->obj._pad = 0;
         fiber->obj.hash = 0;
         fiber->obj.gc_next = nullptr; /* NOT in GC list */
 
