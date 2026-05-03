@@ -30,7 +30,6 @@ namespace zen
     struct GC
     {
         Obj *objects;    /* linked list de TODOS os objectos */
-        Obj *gray_stack; /* lista de objectos gray (para processar) */
         int gray_count;
         int gray_capacity;
         Obj **gray_list; /* array dinâmico de gray objects */
