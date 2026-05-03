@@ -1,0 +1,2 @@
+[line 9] Error at '}': Class with fields must define init().
+zen: compilation failed.

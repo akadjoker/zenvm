@@ -1,0 +1,6 @@
+ok: 100k strings
+ok: 50k closures
+ok: 50k arrays
+ok: 50k maps
+[zen runtime error] cannot index value
+  at /media/projectos/projects/cpp/zenvm/tests/gc_stress.zen() [/media/projectos/projects/cpp/zenvm/tests/gc_stress.zen:20]

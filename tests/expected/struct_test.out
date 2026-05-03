@@ -1,0 +1,2 @@
+[zen runtime error] attempt to call non-function
+  at /media/projectos/projects/cpp/zenvm/tests/struct_test.zen() [/media/projectos/projects/cpp/zenvm/tests/struct_test.zen:2]
