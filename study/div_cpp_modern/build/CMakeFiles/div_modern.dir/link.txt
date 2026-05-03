@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/div_modern.dir/builtins.cpp.o CMakeFiles/div_modern.dir/main.cpp.o CMakeFiles/div_modern.dir/vm.cpp.o -o div_modern 

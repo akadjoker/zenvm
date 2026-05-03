@@ -20,12 +20,13 @@ namespace zen
 
     Compiler::Compiler()
         : gc_(nullptr), vm_(nullptr), state_(nullptr),
-          had_error_(false), panic_mode_(false), current_file_(nullptr), include_count_(0), include_depth_(0), num_imports_(0),
+          had_error_(false), panic_mode_(false), current_file_(nullptr), include_count_(0), include_depth_(0), num_imports_(0), expected_results_(1),
           last_call_struct_def_(nullptr), last_call_class_def_(nullptr),
           current_class_fields_(nullptr)
     {
         current_.type = TOK_EOF;
         previous_.type = TOK_EOF;
+        memset(global_class_hints_, 0, sizeof(global_class_hints_));
     }
 
     Compiler::~Compiler()
@@ -57,6 +58,7 @@ namespace zen
         script_state.function = new_func(gc);
         script_state.emitter = Emitter(gc);
         script_state.local_count = 0;
+        memset(script_state.reg_class_hints, 0, sizeof(script_state.reg_class_hints));
         script_state.scope_depth = 0;
         script_state.next_reg = 0;
         script_state.max_reg = 0;
@@ -301,6 +303,7 @@ namespace zen
         local.captured = false;
         local.struct_type = nullptr;
         local.class_type = nullptr;
+        state_->reg_class_hints[reg] = nullptr;
         return reg;
     }
 
@@ -311,6 +314,8 @@ namespace zen
     int Compiler::alloc_reg()
     {
         int reg = state_->next_reg++;
+        if (reg >= 0 && reg < 256)
+            state_->reg_class_hints[reg] = nullptr;
         if (state_->next_reg > state_->max_reg)
             state_->max_reg = state_->next_reg;
         if (reg >= kMaxRegs)
@@ -354,6 +359,16 @@ namespace zen
         return nullptr;
     }
 
+    ObjClass *Compiler::class_hint_for_reg(int reg)
+    {
+        Local *loc = find_local_by_reg(reg);
+        if (loc && loc->class_type)
+            return loc->class_type;
+        if (reg >= 0 && reg < 256)
+            return state_->reg_class_hints[reg];
+        return nullptr;
+    }
+
     /* =========================================================
     ** Emission helpers
     ** ========================================================= */
@@ -363,6 +378,8 @@ namespace zen
         if (dst != src)
         {
             state_->emitter.emit_abc(OP_MOVE, dst, src, 0, previous_.line);
+            if (dst >= 0 && dst < 256)
+                state_->reg_class_hints[dst] = class_hint_for_reg(src);
         }
     }
 

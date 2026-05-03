@@ -1372,6 +1372,82 @@ static bool test_generic_call_sugar()
     return true;
 }
 
+static bool test_class_operator_overloads()
+{
+    VM vm;
+
+    const char *script = R"(
+        class Vec2 {
+            var x;
+            var y;
+
+            def init(x, y) {
+                self.x = x;
+                self.y = y;
+            }
+
+            def __add__(other) {
+                return Vec2(self.x + other.x, self.y + other.y);
+            }
+
+            def __sub__(other) {
+                return Vec2(self.x - other.x, self.y - other.y);
+            }
+
+            def __mul__(scale) {
+                return Vec2(self.x * scale, self.y * scale);
+            }
+
+            def __rmul__(scale) {
+                return Vec2(self.x * scale, self.y * scale);
+            }
+
+            def __neg__() {
+                return Vec2(-self.x, -self.y);
+            }
+
+            def __eq__(other) {
+                return self.x == other.x && self.y == other.y;
+            }
+        }
+
+        def run_vec2_ops() {
+            var a = Vec2(1, 2);
+            var b = Vec2(3, 4);
+            var c = a + b;
+            var d = c - a;
+            var e = d * 2;
+            var f = 3 * a;
+            var g = -b;
+
+            ok_add = c.x == 4 && c.y == 6;
+            ok_sub = d.x == 3 && d.y == 4;
+            ok_mul = e.x == 6 && e.y == 8;
+            ok_rmul = f.x == 3 && f.y == 6;
+            ok_neg = g.x == -3 && g.y == -4;
+            ok_eq = Vec2(1, 2) == a;
+        }
+
+        run_vec2_ops();
+    )";
+
+    Compiler compiler;
+    ObjFunc *fn = compiler.compile(&vm.get_gc(), &vm, script, "<operator-overloads>");
+    CHECK(fn != nullptr, "operator overload script compiled");
+    CHECK(!compiler.had_error(), "no compile errors");
+    vm.run(fn);
+    CHECK(!vm.had_error(), "no runtime error");
+
+    CHECK(vm.get_global("ok_add").as.boolean, "Vec2 __add__ works");
+    CHECK(vm.get_global("ok_sub").as.boolean, "Vec2 __sub__ works");
+    CHECK(vm.get_global("ok_mul").as.boolean, "Vec2 __mul__ works");
+    CHECK(vm.get_global("ok_rmul").as.boolean, "Vec2 __rmul__ works");
+    CHECK(vm.get_global("ok_neg").as.boolean, "Vec2 __neg__ works");
+    CHECK(vm.get_global("ok_eq").as.boolean, "Vec2 __eq__ works");
+
+    return true;
+}
+
 int main()
 {
     printf("=== Class API Tests ===\n\n");
@@ -1390,6 +1466,7 @@ int main()
     RUN_TEST(test_native_method_creates_instance);
     RUN_TEST(test_raylib_pattern);
     RUN_TEST(test_generic_call_sugar);
+    RUN_TEST(test_class_operator_overloads);
 
     printf("\n=== %d / %d PASSED ===\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;

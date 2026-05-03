@@ -1,0 +1,10 @@
+ZEN HELP: classes
+
+Classes use fields with var and methods with def.
+init() is the constructor. self references the current instance.
+
+  class Counter {
+      var value;
+      def init() { self.value = 0; }
+      def inc() { self.value = self.value + 1; }
+  }

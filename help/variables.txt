@@ -1,0 +1,12 @@
+ZEN HELP: variables
+
+Declare variables with var:
+
+  var hp = 100;
+  var name = "Player";
+  var alive = true;
+  var target = null;
+
+Strings support interpolation:
+
+  print("hp: {hp}");

@@ -1,0 +1,98 @@
+# Tutorial 04 — Arrays
+
+Este tutorial cobre criação de arrays, push, pop, acesso por índice, iteração e padrões práticos como remoção rápida.
+
+## Objetivo
+
+Aprender a sintaxe e os padrões principais deste tópico em BuLang/Zen.
+
+## Código completo
+
+```zen
+// ============================================================
+// Tutorial 04 — Arrays
+// ============================================================
+
+// --- Criação ---
+var lista = [];
+var numeros = [1, 2, 3, 4, 5];
+
+// --- push / pop / len ---
+lista.push(10);
+lista.push(20);
+lista.push(30);
+print("tamanho: {lista.len()}");   // 3
+print("ultimo: {lista.pop()}");    // 30
+print("tamanho: {lista.len()}");   // 2
+
+// --- Acesso por índice ---
+var cores = ["vermelho", "verde", "azul"];
+print(cores[0]);    // vermelho
+print(cores[2]);    // azul
+
+// Modificar elemento
+cores[1] = "amarelo";
+print(cores[1]);    // amarelo
+
+// --- Iterar ---
+var i = 0;
+while (i < numeros.len()) {
+    print("numeros[{i}] = {numeros[i]}");
+    i = i + 1;
+}
+
+// --- Swap (truque para remover elemento do meio) ---
+// Substitui o elemento i pelo último e faz pop — O(1)
+def array_remove(arr, i) {
+    var ultimo = arr.len() - 1;
+    if (i != ultimo) {
+        arr[i] = arr[ultimo];
+    }
+    arr.pop();
+}
+
+var items = [10, 20, 30, 40, 50];
+array_remove(items, 1);   // remove o 20
+print("após remover índice 1:");
+var j = 0;
+while (j < items.len()) {
+    print("  {items[j]}");
+    j = j + 1;
+}
+
+// --- Array como fila simples (queue) ---
+var fila = [];
+fila.push("primeiro");
+fila.push("segundo");
+fila.push("terceiro");
+
+// Remover da frente (shift manual com swap-remove não preserva ordem,
+// mas para filas de eventos sem ordem importa só o len)
+print("na fila: {fila.len()} items");
+
+// --- Array de structs (ver tutorial 05) ---
+// var entidades = [];
+// entidades.push(Ponto(10, 20));
+```
+
+## Como correr
+
+```bash
+zen examples/tutorial_04_arrays.zen
+```
+
+ou ajusta para o nome real do teu executável:
+
+```bash
+bulang examples/tutorial_04_arrays.zen
+```
+
+## O que observar
+
+- A sintaxe é direta e usa blocos com `{` e `}`.
+- Os exemplos usam `print()` para mostrar o resultado esperado.
+- Comentários no próprio código explicam cada secção.
+
+## Exercício sugerido
+
+Altera os valores do exemplo, corre outra vez e confirma se o output muda como esperas.

@@ -1,0 +1,204 @@
+# Tutorial 15 — Math Built-ins, Operadores Bitwise e do-while
+
+Este tutorial mostra funções matemáticas, operadores bitwise e o ciclo do-while.
+
+## Objetivo
+
+Aprender a sintaxe e os padrões principais deste tópico em BuLang/Zen.
+
+## Código completo
+
+```zen
+// ============================================================
+// Tutorial 15 — Math Built-ins, Operadores Bitwise e do-while
+// ============================================================
+
+// ==========================================================
+// MATH BUILT-INS (sem import — estão no core)
+// ==========================================================
+
+// --- Trigonometria ---
+print(sin(0));         // 0
+print(cos(0));         // 1
+print(tan(0));         // 0
+
+// atan2(y, x) → ângulo em radianos
+print(atan2(1, 1));    // ~0.785398 (π/4)
+
+// --- Conversão de ângulos ---
+print(rad(180));       // ~3.14159  (graus → radianos)
+print(deg(3.14159));   // ~180      (radianos → graus)
+
+// --- Potência e raiz ---
+print(sqrt(16));       // 4
+print(sqrt(2));        // ~1.41421
+print(pow(2, 10));     // 1024
+print(pow(3, 3));      // 27
+
+// --- Valor absoluto ---
+print(abs(-99));       // 99
+print(abs(5));         // 5
+
+// --- Arredondamento ---
+print(floor(2.9));     // 2
+print(ceil(2.1));      // 3
+
+// --- Logaritmo / exponencial ---
+print(log(1));         // 0
+print(exp(0));         // 1
+
+// --- Tempo (clock retorna float em segundos) ---
+var t0 = clock();
+// ... alguma operação ...
+var t1 = clock();
+print(t1 > t0);        // true  (tempo passou)
+
+// --- Uso prático: direcção normalizada ---
+def normalizar(dx, dy) {
+    var l = sqrt(dx * dx + dy * dy);
+    if (l == 0) { return [0, 0]; }
+    return [dx / l, dy / l];
+}
+
+var dir = normalizar(3, 4);
+print(dir[0]);   // 0.6
+print(dir[1]);   // 0.8
+
+// --- Distância entre dois pontos ---
+def distancia(x1, y1, x2, y2) {
+    var dx = x2 - x1;
+    var dy = y2 - y1;
+    return sqrt(dx * dx + dy * dy);
+}
+
+print(distancia(0, 0, 3, 4));   // 5
+
+// --- Ângulo entre dois pontos ---
+def angulo(x1, y1, x2, y2) {
+    return atan2(y2 - y1, x2 - x1);
+}
+
+var ang = angulo(0, 0, 1, 0);
+print(deg(ang));   // 0  (para a direita)
+
+// ==========================================================
+// OPERADORES BITWISE
+// ==========================================================
+
+// AND — ambos os bits a 1
+print(0xFF & 0x0F);    // 15   (0000 1111)
+
+// OR — pelo menos um bit a 1
+print(0xF0 | 0x0F);    // 255  (1111 1111)
+
+// XOR — bits diferentes
+print(0xFF ^ 0x0F);    // 240  (1111 0000)
+
+// NOT — inverte todos os bits
+print(~0);             // -1
+print(~1);             // -2
+
+// Deslocamento à esquerda (shift left)
+print(1 << 4);         // 16
+print(1 << 8);         // 256
+
+// Deslocamento à direita (shift right aritmético)
+print(16 >> 2);        // 4
+print(-1 >> 1);        // -1  (aritmético: preserva sinal)
+
+// --- Uso prático: flags de bits ---
+var FLAG_ACTIVO   = 1 << 0;   // 0001
+var FLAG_VISIVEL  = 1 << 1;   // 0010
+var FLAG_COLISAO  = 1 << 2;   // 0100
+var FLAG_INIMIGO  = 1 << 3;   // 1000
+
+var estado = 0;
+estado = estado | FLAG_ACTIVO;
+estado = estado | FLAG_VISIVEL;
+estado = estado | FLAG_INIMIGO;
+
+print(estado & FLAG_ACTIVO  != 0);   // true
+print(estado & FLAG_COLISAO != 0);   // false
+
+// Remover flag
+estado = estado & ~FLAG_VISIVEL;
+print(estado & FLAG_VISIVEL != 0);   // false
+
+// Toggle flag
+estado = estado ^ FLAG_COLISAO;
+print(estado & FLAG_COLISAO != 0);   // true
+
+// --- Extrair canal de cor de RGBA packed ---
+var cor_rgba = 0xFF8040E0;
+var r = (cor_rgba >> 24) & 0xFF;
+var g = (cor_rgba >> 16) & 0xFF;
+var b = (cor_rgba >>  8) & 0xFF;
+var a =  cor_rgba        & 0xFF;
+print(r);   // 255
+print(g);   // 128
+print(b);   // 64
+print(a);   // 224
+
+// ==========================================================
+// DO-WHILE
+// ==========================================================
+
+// Executa sempre pelo menos uma vez antes de verificar condição
+
+var x = 0;
+do {
+    x = x + 1;
+} while (x < 3);
+print(x);   // 3
+
+// Com condição falsa à partida: executa uma vez mesmo assim
+var y = 10;
+do {
+    y = y + 1;
+} while (false);
+print(y);   // 11  ← executou uma vez
+
+// --- Leitura de input (padrão clássico de do-while) ---
+// Simula: "pede pelo menos uma vez, repete se inválido"
+var tentativas = 0;
+var valor = -1;
+do {
+    tentativas = tentativas + 1;
+    valor = tentativas * 3;   // simula input
+} while (valor < 10);
+print("tentativas: {tentativas}");   // 4 (3,6,9 falham; 12 ok)
+
+// --- Do-while aninhado ---
+var outer = 0;
+do {
+    outer = outer + 1;
+    var inner = 0;
+    do {
+        inner = inner + 1;
+        if (inner == 3) { break; }
+    } while (inner < 10);
+    print("{outer} {inner}");   // 1 3 / 2 3 / 3 3
+} while (outer < 3);
+```
+
+## Como correr
+
+```bash
+zen examples/tutorial_15_math_bitwise.zen
+```
+
+ou ajusta para o nome real do teu executável:
+
+```bash
+bulang examples/tutorial_15_math_bitwise.zen
+```
+
+## O que observar
+
+- A sintaxe é direta e usa blocos com `{` e `}`.
+- Os exemplos usam `print()` para mostrar o resultado esperado.
+- Comentários no próprio código explicam cada secção.
+
+## Exercício sugerido
+
+Altera os valores do exemplo, corre outra vez e confirma se o output muda como esperas.

@@ -1,0 +1,108 @@
+// ============================================================
+// Tutorial 07 — Processos e Concorrência
+// ============================================================
+
+// process é a construção central do BuLang.
+// Chamar um process SPAWN-a — corre em paralelo cooperativo.
+// frame  → suspende o processo actual até ao próximo tick.
+// loop   → loop infinito (process vive até break ou fim do corpo).
+// father → acesso ao processo pai (quem fez spawn deste).
+// son    → acesso ao processo filho mais recente.
+
+// --- Processo simples ---
+process contar_ate(n) {
+    var i = 1;
+    while (i <= n) {
+        print("contando: {i}");
+        i = i + 1;
+        frame;   // cede controlo — continua no próximo tick
+    }
+    print("chegou a {n}!");
+}
+
+contar_ate(5);   // spawn — corre em paralelo
+
+// --- loop infinito com break ---
+process relogio(nome) {
+    var ticks = 0;
+    loop {
+        ticks = ticks + 1;
+        print("[{nome}] tick {ticks}");
+        if (ticks >= 3) { break; }
+        frame;
+    }
+    print("[{nome}] parou");
+}
+
+relogio("A");
+relogio("B");
+
+// --- Comunicação pai/filho via father/son ---
+
+process filho(msg) {
+    print("filho diz: {msg}");
+    print("filho vê pai.x = {father.x}");
+
+    father.x = 999;           // modifica campo do pai
+    frame;
+
+    print("filho: após frame, pai.x = {father.x}");
+}
+
+process pai(x, y) {
+    print("pai: ({x}, {y})");
+    filho("olá pai!");            // spawn filho
+
+    print("pai vê filho.x = {son.x}");   // acesso ao filho
+    frame;
+
+    print("pai: após frame, x = {x}");   // filho alterou x para 999
+}
+
+pai(100, 200);
+
+// --- Processo como entidade de jogo ---
+process bola(x, y, vx, vy) {
+    loop {
+        // física simples
+        vy = vy + 0.5;      // gravidade
+        x = x + vx;
+        y = y + vy;
+
+        // colisão com paredes
+        if (x < 0)    { x = 0;    vx = -vx * 0.8; }
+        if (x > 1280) { x = 1280; vx = -vx * 0.8; }
+        if (y > 720)  { y = 720;  vy = -vy * 0.7; }
+
+        print("bola: ({int(x)}, {int(y)})");
+        frame;
+    }
+}
+
+// Spawna 3 bolas com velocidades diferentes
+bola(640, 0,  2,  0);
+bola(640, 0, -3,  1);
+bola(640, 0,  1, -2);
+
+// --- Spawner: cria processos dinamicamente ---
+process spawner() {
+    var count = 0;
+    loop {
+        if (count < 5) {
+            bola(640, 0, count - 2, -count);
+            count = count + 1;
+        }
+        frame;
+    }
+}
+
+spawner();
+
+for(var i=0;i<1000;i=i+1)
+{
+     advance_process();
+}
+
+
+
+

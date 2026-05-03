@@ -1,0 +1,109 @@
+// ============================================================
+// Tutorial 12 — Typed Buffers
+// ============================================================
+
+// Typed buffers são arrays de tamanho fixo com tipo numérico
+// definido. São alocados de uma vez, têm acesso O(1) e não
+// fazem boxing dos valores — ideais para dados de baixo nível
+// (geometria, pixels, amostras de áudio, etc.)
+//
+// Tipos disponíveis:
+//   Int8Array    Uint8Array
+//   Int16Array   Uint16Array
+//   Int32Array   Uint32Array
+//   Float32Array Float64Array
+
+// --- Criação ---
+var ai = Int32Array(4);          // 4 inteiros a zero
+var af = Float64Array(3);        // 3 doubles a zero
+var ab = Uint8Array([65,66,67]); // inicializar de array
+
+// --- Acesso e escrita ---
+ai[0] = 10;
+ai[1] = 20;
+ai[2] = 30;
+ai[3] = 40;
+print(ai[0]);   // 10
+print(ai[3]);   // 40
+
+// --- len() e byte_len() ---
+print(ai.len());       // 4
+print(ai.byte_len());  // 16  (4 × 4 bytes)
+
+var fb = Float64Array(4);
+print(fb.byte_len());  // 32  (4 × 8 bytes)
+
+// --- fill() — preenche todos os elementos ---
+var buf = Int32Array(5);
+buf.fill(99);
+print(buf[0]);   // 99
+print(buf[4]);   // 99
+
+// --- Truncamento e overflow ---
+var ti = Int32Array(1);
+ti[0] = 3.9;
+print(ti[0]);   // 3  (float truncado para int)
+
+var tu = Uint8Array(1);
+tu[0] = 256;
+print(tu[0]);   // 0  (overflow: 256 % 256)
+
+tu[0] = 255;
+print(tu[0]);   // 255
+
+// --- Uint8Array como buffer de bytes ---
+var bytes = Uint8Array([65, 66, 67]);  // 'A', 'B', 'C'
+print(bytes[0]);   // 65
+print(bytes[1]);   // 66
+print(bytes[2]);   // 67
+
+// --- Float32Array para gráficos ---
+var verts = Float32Array(6);   // 2 triângulos × 3 coords
+verts[0] = 0.0;  verts[1] = 0.5;   // topo
+verts[2] = -0.5; verts[3] = -0.5;  // esq
+verts[4] = 0.5;  verts[5] = -0.5;  // dir
+print(verts[1]);   // 0.5
+print(verts[4]);   // 0.5
+
+// --- Escrita em loop ---
+var tabela = Int32Array(10);
+var i = 0;
+while (i < 10) {
+    tabela[i] = i * i;
+    i = i + 1;
+}
+print(tabela[5]);   // 25
+print(tabela[9]);   // 81
+
+// --- Comparação de performance: buffer vs array normal ---
+// Para 1 milhão de escritas, Int32Array é muito mais rápido
+// que um array dinâmico porque não há boxing nem GC pressure.
+
+var grande = Int32Array(1000000);
+var j = 0;
+while (j < 1000000) {
+    grande[j] = j;
+    j = j + 1;
+}
+print(grande[999999]);   // 999999
+
+// --- len() como função global também funciona ---
+var buf2 = Uint8Array(7);
+print(len(buf2));   // 7
+
+// --- Tipos com sinal vs sem sinal ---
+var s8  = Int8Array(1);
+s8[0] = -50;
+print(s8[0]);   // -50
+
+var u16 = Uint16Array(1);
+u16[0] = 65535;
+print(u16[0]);   // 65535
+
+var s16 = Int16Array(1);
+s16[0] = -1000;
+print(s16[0]);   // -1000
+
+var u32 = Uint32Array(1);
+u32[0] = 4000000000;
+print(u32[0]);   // 4000000000

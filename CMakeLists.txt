@@ -23,6 +23,17 @@ endif()
 # --- libzen (static + shared libraries) ---
 add_subdirectory(libzen)
 
+# --- Optional modules ---
+option(ZEN_ENABLE_STB_IMAGE "Enable stb_image image module" ON)
+if(ZEN_ENABLE_STB_IMAGE)
+    add_subdirectory(modules/stb_image)
+endif()
+
+option(ZEN_ENABLE_GLFW "Enable GLFW window module" ON)
+if(ZEN_ENABLE_GLFW)
+    add_subdirectory(modules/glfw)
+endif()
+
 # --- CLI (zen executable) ---
 add_subdirectory(cli)
 

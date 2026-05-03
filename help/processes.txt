@@ -1,0 +1,12 @@
+ZEN HELP: processes
+
+Processes are cooperative tasks useful for gameplay logic.
+
+  process task() {
+      loop {
+          frame;
+      }
+  }
+
+  task();
+  advance_process();

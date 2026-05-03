@@ -853,6 +853,19 @@ namespace zen
         return 0;
     }
 
+    static int nat_advance_process(VM *vm, Value *args, int nargs)
+    {
+        float dt = 0.016f;
+        if (nargs >= 1)
+            dt = (float)to_number(args[0]);
+
+        int alive = vm->tick_processes(dt);
+        args[0] = val_int(alive);
+        return 1;
+    }
+
+
+
     /* =========================================================
     ** Registration table
     ** ========================================================= */
@@ -885,6 +898,7 @@ namespace zen
         {"let_me_alone", nat_let_me_alone, 0},
         {"get_id", nat_get_id, 1},
         {"advance", nat_advance, -1},
+        {"advance_process", nat_advance_process, -1},
     };
 
     static const NativeConst base_constants[] = {
@@ -897,7 +911,7 @@ namespace zen
     const NativeLib zen_lib_base = {
         "base",
         base_functions,
-        27,   /* num_functions */
+        28,   /* num_functions */
         base_constants,
         4,    /* num_constants */
     };

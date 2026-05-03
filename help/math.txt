@@ -1,0 +1,7 @@
+ZEN HELP: math
+
+Core math functions:
+  sin cos tan atan2 rad deg sqrt pow abs floor ceil log exp clock
+
+Example:
+  var d = sqrt(x * x + y * y);

@@ -130,8 +130,11 @@ namespace zen
             /* Evaluate RHS — multi-return call */
             /* For now: evaluate into consecutive registers */
             int base = state_->next_reg;
-            expression(base);
-            /* TODO: handle multi-return from calls properly */
+            expression_results(base, name_count);
+            if (state_->next_reg < base + name_count)
+                state_->next_reg = base + name_count;
+            if (state_->max_reg < state_->next_reg)
+                state_->max_reg = state_->next_reg;
 
             /* Assign to locals */
             for (int i = 0; i < name_count; i++)
@@ -155,6 +158,8 @@ namespace zen
                     if (gidx < 0)
                         gidx = vm_->def_global(buf, val_nil());
                     state_->emitter.emit_abx(OP_SETGLOBAL, base + i, gidx, names[i].line);
+                    if (gidx >= 0 && gidx < MAX_GLOBALS)
+                        global_class_hints_[gidx] = state_->reg_class_hints[base + i];
                 }
             }
             consume(TOK_SEMICOLON, "Expected ';' after declaration.");
@@ -187,7 +192,8 @@ namespace zen
             local.reg = reg;
             local.captured = false;
             local.struct_type = last_call_struct_def_;
-            local.class_type = last_call_class_def_;
+            local.class_type = last_call_class_def_ ? last_call_class_def_ : state_->reg_class_hints[reg];
+            state_->reg_class_hints[reg] = local.class_type;
             last_call_struct_def_ = nullptr;
             last_call_class_def_ = nullptr;
         }
@@ -207,11 +213,17 @@ namespace zen
                 int reg = alloc_reg();
                 expression(reg);
                 state_->emitter.emit_abx(OP_SETGLOBAL, reg, gidx, name.line);
+                if (gidx >= 0 && gidx < MAX_GLOBALS)
+                    global_class_hints_[gidx] = last_call_class_def_ ? last_call_class_def_ : state_->reg_class_hints[reg];
                 free_reg(reg);
+                last_call_struct_def_ = nullptr;
+                last_call_class_def_ = nullptr;
             }
             else
             {
                 /* nil by default — already set */
+                if (gidx >= 0 && gidx < MAX_GLOBALS)
+                    global_class_hints_[gidx] = nullptr;
             }
         }
 
@@ -234,6 +246,7 @@ namespace zen
         fn_state.function = new_func(gc_);
         fn_state.emitter = Emitter(gc_);
         fn_state.local_count = 0;
+        memset(fn_state.reg_class_hints, 0, sizeof(fn_state.reg_class_hints));
         fn_state.scope_depth = 0;
         fn_state.next_reg = 0;
         fn_state.max_reg = 0;
@@ -345,6 +358,7 @@ namespace zen
         fn_state.function = new_func(gc_);
         fn_state.emitter = Emitter(gc_);
         fn_state.local_count = 0;
+        memset(fn_state.reg_class_hints, 0, sizeof(fn_state.reg_class_hints));
         fn_state.scope_depth = 0;
         fn_state.next_reg = 0;
         fn_state.max_reg = 0;
@@ -508,6 +522,7 @@ namespace zen
         };
         MethodInfo methods[64];
         int method_count = 0;
+        bool has_init_method = false;
 
         while (!check(TOK_RBRACE) && !check(TOK_EOF))
         {
@@ -537,6 +552,8 @@ namespace zen
                 int mnlen = method_name.length < 63 ? method_name.length : 63;
                 memcpy(methods[method_count].name, method_name.start, mnlen);
                 methods[method_count].name[mnlen] = '\0';
+                if (mnlen == 4 && memcmp(methods[method_count].name, "init", 4) == 0)
+                    has_init_method = true;
 
                 /* Compile method as a function with implicit 'self' at reg 0 */
                 CompilerState fn_state;
@@ -544,6 +561,7 @@ namespace zen
                 fn_state.function = new_func(gc_);
                 fn_state.emitter = Emitter(gc_);
                 fn_state.local_count = 0;
+                memset(fn_state.reg_class_hints, 0, sizeof(fn_state.reg_class_hints));
                 fn_state.scope_depth = 0;
                 fn_state.next_reg = 0;
                 fn_state.max_reg = 0;
@@ -634,6 +652,10 @@ namespace zen
             }
         }
         consume(TOK_RBRACE, "Expected '}' after class body.");
+        if (field_count > 0 && !has_init_method)
+        {
+            error("Class with fields must define init().");
+        }
 
         /* Build ObjClass now (compile-time, like structs) */
         ObjString *cls_name = intern_string(gc_, name_buf, nlen,
