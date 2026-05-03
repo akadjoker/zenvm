@@ -46,7 +46,11 @@ add_subdirectory(cli)
 #add_subdirectory(test_functions)
 
 # --- Class API tests (C++ ↔ Script vtable) ---
-add_subdirectory(tests/test_class_api)
+if(EXISTS "${CMAKE_SOURCE_DIR}/tests/test_class_api/CMakeLists.txt")
+    add_subdirectory(tests/test_class_api)
+elseif(EXISTS "${CMAKE_SOURCE_DIR}/test_class_api/CMakeLists.txt")
+    add_subdirectory(test_class_api)
+endif()
 
 # --- Visual benchmark (raylib, process system) ---
 option(ZEN_BUILD_VISUAL "Build visual benchmark (requires raylib)" ON)

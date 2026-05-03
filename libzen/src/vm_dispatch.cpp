@@ -1,14 +1,3 @@
-/*
-** vm_dispatch.cpp — Dispatch loop da VM zen.
-**
-** Um único ficheiro com #ifdef ZEN_COMPUTED_GOTO para seleccionar:
-**   - Computed goto (GCC/Clang) — ~45% mais rápido
-**   - Switch (portável, MSVC)
-**
-** O código dos opcodes é IDÊNTICO em ambos os modos.
-** Macros CASE/NEXT/DISPATCH adaptam-se automaticamente.
-*/
-
 #include "vm.h"
 #include "debug.h"
 #include "zenconf.h"
@@ -28,7 +17,7 @@ namespace zen
             dst[j] = val_nil();
     }
 
-    /* Fast int→string (replaces snprintf "%lld" — ~10-30x faster) */
+
     static inline int int_to_cstr(int64_t n, char *buf)
     {
         bool neg = n < 0;

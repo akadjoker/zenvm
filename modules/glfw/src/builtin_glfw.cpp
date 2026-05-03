@@ -10,6 +10,8 @@
 
 namespace zen
 {
+    #define ZEN_ARRAY_COUNT(a) ((int)(sizeof(a) / sizeof((a)[0])))
+
     static bool expect_window(VM *vm, Value v, GLFWwindow **window, const char *fn)
     {
         if (!is_ptr(v) || !as_ptr(v))
@@ -210,6 +212,18 @@ namespace zen
         return 1;
     }
 
+    static int nat_glfw_set_time(VM *vm, Value *args, int nargs)
+    {
+        if (nargs < 1 || !is_number(args[0]))
+        {
+            vm->runtime_error("glfwSetTime() expects (time).");
+            return 0;
+        }
+        glfwSetTime(get_number(args[0]));
+        args[0] = val_nil();
+        return 1;
+    }
+
     static int nat_glfw_swap_interval(VM *vm, Value *args, int nargs)
     {
         if (nargs < 1 || !is_int(args[0]))
@@ -247,6 +261,34 @@ namespace zen
         return 2;
     }
 
+    static int nat_glfw_wait_events(VM *vm, Value *args, int nargs)
+    {
+        (void)vm; (void)args; (void)nargs;
+        glfwWaitEvents();
+        args[0] = val_nil();
+        return 1;
+    }
+
+    static int nat_glfw_wait_events_timeout(VM *vm, Value *args, int nargs)
+    {
+        if (nargs < 1 || !is_number(args[0]))
+        {
+            vm->runtime_error("glfwWaitEventsTimeout() expects (timeout).");
+            return 0;
+        }
+        glfwWaitEventsTimeout(get_number(args[0]));
+        args[0] = val_nil();
+        return 1;
+    }
+
+    static int nat_glfw_post_empty_event(VM *vm, Value *args, int nargs)
+    {
+        (void)vm; (void)args; (void)nargs;
+        glfwPostEmptyEvent();
+        args[0] = val_nil();
+        return 1;
+    }
+
     static int nat_glfw_set_cursor_pos(VM *vm, Value *args, int nargs)
     {
         GLFWwindow *window = nullptr;
@@ -272,6 +314,19 @@ namespace zen
         }
         glfwSetInputMode(window, (int)args[1].as.integer, (int)args[2].as.integer);
         args[0] = val_nil();
+        return 1;
+    }
+
+    static int nat_glfw_get_input_mode(VM *vm, Value *args, int nargs)
+    {
+        GLFWwindow *window = nullptr;
+        if (nargs < 2 || !expect_window(vm, args[0], &window, "glfwGetInputMode()") || !is_int(args[1]))
+        {
+            if (!vm->had_error())
+                vm->runtime_error("glfwGetInputMode() expects (window, mode).");
+            return 0;
+        }
+        args[0] = val_int(glfwGetInputMode(window, (int)args[1].as.integer));
         return 1;
     }
 
@@ -345,6 +400,78 @@ namespace zen
         return 1;
     }
 
+    static int nat_glfw_show_window(VM *vm, Value *args, int nargs)
+    {
+        GLFWwindow *window = nullptr;
+        if (nargs < 1 || !expect_window(vm, args[0], &window, "glfwShowWindow()"))
+            return 0;
+        glfwShowWindow(window);
+        args[0] = val_nil();
+        return 1;
+    }
+
+    static int nat_glfw_hide_window(VM *vm, Value *args, int nargs)
+    {
+        GLFWwindow *window = nullptr;
+        if (nargs < 1 || !expect_window(vm, args[0], &window, "glfwHideWindow()"))
+            return 0;
+        glfwHideWindow(window);
+        args[0] = val_nil();
+        return 1;
+    }
+
+    static int nat_glfw_focus_window(VM *vm, Value *args, int nargs)
+    {
+        GLFWwindow *window = nullptr;
+        if (nargs < 1 || !expect_window(vm, args[0], &window, "glfwFocusWindow()"))
+            return 0;
+        glfwFocusWindow(window);
+        args[0] = val_nil();
+        return 1;
+    }
+
+    static int nat_glfw_get_current_context(VM *vm, Value *args, int nargs)
+    {
+        (void)vm; (void)nargs;
+        GLFWwindow *window = glfwGetCurrentContext();
+        args[0] = window ? val_ptr(window) : val_nil();
+        return 1;
+    }
+
+    static int nat_glfw_get_window_attrib(VM *vm, Value *args, int nargs)
+    {
+        GLFWwindow *window = nullptr;
+        if (nargs < 2 || !expect_window(vm, args[0], &window, "glfwGetWindowAttrib()") || !is_int(args[1]))
+        {
+            if (!vm->had_error())
+                vm->runtime_error("glfwGetWindowAttrib() expects (window, attrib).");
+            return 0;
+        }
+        args[0] = val_int(glfwGetWindowAttrib(window, (int)args[1].as.integer));
+        return 1;
+    }
+
+    static int nat_glfw_set_window_attrib(VM *vm, Value *args, int nargs)
+    {
+        GLFWwindow *window = nullptr;
+        if (nargs < 3 || !expect_window(vm, args[0], &window, "glfwSetWindowAttrib()") || !is_int(args[1]) || !is_int(args[2]))
+        {
+            if (!vm->had_error())
+                vm->runtime_error("glfwSetWindowAttrib() expects (window, attrib, value).");
+            return 0;
+        }
+        glfwSetWindowAttrib(window, (int)args[1].as.integer, (int)args[2].as.integer);
+        args[0] = val_nil();
+        return 1;
+    }
+
+    static int nat_glfw_raw_mouse_motion_supported(VM *vm, Value *args, int nargs)
+    {
+        (void)vm; (void)nargs;
+        args[0] = val_bool(glfwRawMouseMotionSupported() == GLFW_TRUE);
+        return 1;
+    }
+
     static const NativeReg glfw_funcs[] = {
         {"glfwInit", nat_glfw_init, 0},
         {"glfwTerminate", nat_glfw_terminate, 0},
@@ -363,17 +490,29 @@ namespace zen
         {"glfwSetWindowTitle", nat_glfw_set_window_title, 2},
         {"glfwGetKey", nat_glfw_get_key, 2},
         {"glfwGetTime", nat_glfw_get_time, 0},
+        {"glfwSetTime", nat_glfw_set_time, 1},
         {"glfwSwapInterval", nat_glfw_swap_interval, 1},
         {"glfwGetMouseButton", nat_glfw_get_mouse_button, 2},
         {"glfwGetCursorPos", nat_glfw_get_cursor_pos, 1},
         {"glfwSetCursorPos", nat_glfw_set_cursor_pos, 3},
+        {"glfwWaitEvents", nat_glfw_wait_events, 0},
+        {"glfwWaitEventsTimeout", nat_glfw_wait_events_timeout, 1},
+        {"glfwPostEmptyEvent", nat_glfw_post_empty_event, 0},
         {"glfwSetInputMode", nat_glfw_set_input_mode, 3},
+        {"glfwGetInputMode", nat_glfw_get_input_mode, 2},
         {"glfwSetWindowPos", nat_glfw_set_window_pos, 3},
         {"glfwGetWindowPos", nat_glfw_get_window_pos, 1},
         {"glfwSetWindowSize", nat_glfw_set_window_size, 3},
         {"glfwMaximizeWindow", nat_glfw_maximize_window, 1},
         {"glfwIconifyWindow", nat_glfw_iconify_window, 1},
         {"glfwRestoreWindow", nat_glfw_restore_window, 1},
+        {"glfwShowWindow", nat_glfw_show_window, 1},
+        {"glfwHideWindow", nat_glfw_hide_window, 1},
+        {"glfwFocusWindow", nat_glfw_focus_window, 1},
+        {"glfwGetCurrentContext", nat_glfw_get_current_context, 0},
+        {"glfwGetWindowAttrib", nat_glfw_get_window_attrib, 2},
+        {"glfwSetWindowAttrib", nat_glfw_set_window_attrib, 3},
+        {"glfwRawMouseMotionSupported", nat_glfw_raw_mouse_motion_supported, 0},
     };
 
     static const NativeConst glfw_constants[] = {
@@ -513,11 +652,26 @@ namespace zen
         {"GLFW_CONTEXT_VERSION_MAJOR", val_int(GLFW_CONTEXT_VERSION_MAJOR)},
         {"GLFW_CONTEXT_VERSION_MINOR", val_int(GLFW_CONTEXT_VERSION_MINOR)},
         {"GLFW_OPENGL_PROFILE", val_int(GLFW_OPENGL_PROFILE)},
+        {"GLFW_OPENGL_ANY_PROFILE", val_int(GLFW_OPENGL_ANY_PROFILE)},
         {"GLFW_OPENGL_CORE_PROFILE", val_int(GLFW_OPENGL_CORE_PROFILE)},
         {"GLFW_OPENGL_COMPAT_PROFILE", val_int(GLFW_OPENGL_COMPAT_PROFILE)},
+        {"GLFW_OPENGL_FORWARD_COMPAT", val_int(GLFW_OPENGL_FORWARD_COMPAT)},
+        {"GLFW_CLIENT_API", val_int(GLFW_CLIENT_API)},
+        {"GLFW_OPENGL_API", val_int(GLFW_OPENGL_API)},
+        {"GLFW_OPENGL_ES_API", val_int(GLFW_OPENGL_ES_API)},
+        {"GLFW_NO_API", val_int(GLFW_NO_API)},
+        {"GLFW_SAMPLES", val_int(GLFW_SAMPLES)},
+        {"GLFW_TRANSPARENT_FRAMEBUFFER", val_int(GLFW_TRANSPARENT_FRAMEBUFFER)},
+        {"GLFW_FOCUS_ON_SHOW", val_int(GLFW_FOCUS_ON_SHOW)},
+        {"GLFW_SCALE_TO_MONITOR", val_int(GLFW_SCALE_TO_MONITOR)},
         {"GLFW_MOUSE_BUTTON_1", val_int(GLFW_MOUSE_BUTTON_1)},
         {"GLFW_MOUSE_BUTTON_2", val_int(GLFW_MOUSE_BUTTON_2)},
         {"GLFW_MOUSE_BUTTON_3", val_int(GLFW_MOUSE_BUTTON_3)},
+        {"GLFW_MOUSE_BUTTON_4", val_int(GLFW_MOUSE_BUTTON_4)},
+        {"GLFW_MOUSE_BUTTON_5", val_int(GLFW_MOUSE_BUTTON_5)},
+        {"GLFW_MOUSE_BUTTON_6", val_int(GLFW_MOUSE_BUTTON_6)},
+        {"GLFW_MOUSE_BUTTON_7", val_int(GLFW_MOUSE_BUTTON_7)},
+        {"GLFW_MOUSE_BUTTON_8", val_int(GLFW_MOUSE_BUTTON_8)},
         {"GLFW_MOUSE_BUTTON_LEFT", val_int(GLFW_MOUSE_BUTTON_LEFT)},
         {"GLFW_MOUSE_BUTTON_RIGHT", val_int(GLFW_MOUSE_BUTTON_RIGHT)},
         {"GLFW_MOUSE_BUTTON_MIDDLE", val_int(GLFW_MOUSE_BUTTON_MIDDLE)},
@@ -525,10 +679,11 @@ namespace zen
         {"GLFW_CURSOR_NORMAL", val_int(GLFW_CURSOR_NORMAL)},
         {"GLFW_CURSOR_HIDDEN", val_int(GLFW_CURSOR_HIDDEN)},
         {"GLFW_CURSOR_DISABLED", val_int(GLFW_CURSOR_DISABLED)},
+        {"GLFW_RAW_MOUSE_MOTION", val_int(GLFW_RAW_MOUSE_MOTION)},
     };
 
     const NativeLib zen_lib_glfw = {
-        "glfw", glfw_funcs, 28, glfw_constants, 148
+        "glfw", glfw_funcs, ZEN_ARRAY_COUNT(glfw_funcs), glfw_constants, ZEN_ARRAY_COUNT(glfw_constants)
     };
 }
 
