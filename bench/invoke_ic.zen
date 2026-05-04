@@ -1,0 +1,48 @@
+// Benchmark: method invoke without type hints (exercises inline cache)
+class Vec3 {
+    var x;
+    var y;
+    var z;
+
+    def init(x, y, z) {
+        self.x = x;
+        self.y = y;
+        self.z = z;
+    }
+
+    def add(other) {
+        return Vec3(self.x + other.x, self.y + other.y, self.z + other.z);
+    }
+
+    def scale(s) {
+        return Vec3(self.x * s, self.y * s, self.z * s);
+    }
+
+    def dot(other) {
+        return self.x * other.x + self.y * other.y + self.z * other.z;
+    }
+
+    def length_sq() {
+        return self.x * self.x + self.y * self.y + self.z * self.z;
+    }
+}
+
+var n = 200000;
+var a = Vec3(1.0, 2.0, 3.0);
+var b = Vec3(4.0, 5.0, 6.0);
+var sum = 0.0;
+
+var t0 = clock();
+var i = 0;
+while (i < n) {
+    var c = a.add(b);
+    var d = c.scale(0.5);
+    sum = sum + d.dot(a);
+    sum = sum + d.length_sq();
+    i = i + 1;
+}
+var elapsed = clock() - t0;
+print("invoke_ic_bench");
+print("n=" + str(n));
+print("seconds=" + str(elapsed));
+print("sum=" + str(sum));

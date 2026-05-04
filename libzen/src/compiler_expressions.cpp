@@ -1695,15 +1695,17 @@ namespace zen
                 else
                 {
                     /* Fallback: method not in vtable (maybe added later) */
+                    int sel_slot = vm_->intern_selector(field_tok.start, field_tok.length);
                     state_->emitter.emit_abc(OP_INVOKE, base, arg_count, 0, previous_.line);
-                    state_->emitter.emit((uint32_t)name_ki, previous_.line);
+                    state_->emitter.emit((uint32_t)((sel_slot << 16) | (name_ki & 0xFFFF)), previous_.line);
                 }
             }
             else
             {
-                /* No type info — emit 2-word OP_INVOKE */
+                /* No type info — emit 2-word OP_INVOKE with selector slot */
+                int sel_slot = vm_->intern_selector(field_tok.start, field_tok.length);
                 state_->emitter.emit_abc(OP_INVOKE, base, arg_count, 0, previous_.line);
-                state_->emitter.emit((uint32_t)name_ki, previous_.line);
+                state_->emitter.emit((uint32_t)((sel_slot << 16) | (name_ki & 0xFFFF)), previous_.line);
             }
 
             /* Result is in R[base]. Without explicit return-type tracking,

@@ -1067,6 +1067,7 @@ namespace zen
             if (is_struct_def(callee))
             {
                 ObjStructDef *def = as_struct_def(callee);
+                gc_pause(&gc_);
                 ObjStruct *s = (ObjStruct *)zen_alloc(&gc_, sizeof(ObjStruct));
                 s->obj.type = OBJ_STRUCT;
                 s->obj.color = GC_BLACK;
@@ -1077,6 +1078,7 @@ namespace zen
                 gc_.objects = (Obj *)s;
                 s->def = def;
                 s->fields = (Value *)zen_alloc(&gc_, sizeof(Value) * def->num_fields);
+                gc_resume(&gc_);
                 for (int32_t fi = 0; fi < def->num_fields; fi++)
                     s->fields[fi] = (fi < nargs) ? R[a + 1 + fi] : val_nil();
                 R[a] = val_obj((Obj *)s);
@@ -1085,6 +1087,7 @@ namespace zen
             if (is_native_struct_def(callee))
             {
                 NativeStructDef *def = as_native_struct_def(callee);
+                gc_pause(&gc_);
                 ObjNativeStruct *ns = (ObjNativeStruct *)zen_alloc(&gc_, sizeof(ObjNativeStruct));
                 ns->obj.type = OBJ_NATIVE_STRUCT;
                 ns->obj.color = GC_BLACK;
@@ -1095,6 +1098,7 @@ namespace zen
                 gc_.objects = (Obj *)ns;
                 ns->def = def;
                 ns->data = zen_alloc(&gc_, def->struct_size);
+                gc_resume(&gc_);
                 memset(ns->data, 0, def->struct_size);
                 if (def->ctor)
                     def->ctor(this, ns->data, nargs, &R[a + 1]);
@@ -1954,7 +1958,9 @@ namespace zen
             uint32_t i = *ip;
             uint8_t base = ZEN_A(i);
             uint8_t arg_count = ZEN_B(i);
-            uint32_t name_ki = *(++ip); /* second word: method name constant index */
+            uint32_t word2 = *(++ip); /* packed: (selector_slot << 16) | name_ki */
+            uint16_t sel_slot = (uint16_t)(word2 >> 16);
+            uint16_t name_ki = (uint16_t)(word2 & 0xFFFF);
             Value receiver = R[base];
             ObjString *method = as_string(K[name_ki]);
             const char *mname = method->chars;
@@ -1982,22 +1988,16 @@ namespace zen
             }
             else if (is_instance(receiver))
             {
-                /* Method call on class instance */
+                /* Vtable dispatch using compile-time selector slot */
                 ObjInstance *inst = as_instance(receiver);
                 ObjClass *klass = inst->klass;
 
-                /* Look up method in class hierarchy */
-                bool mfound = false;
-                Value mval;
-                ObjClass *search = klass;
-                while (search)
-                {
-                    mval = map_get(search->methods, val_obj((Obj *)method), &mfound);
-                    if (mfound) break;
-                    search = search->parent;
-                }
+                /* Direct vtable lookup — O(1), no hash map walk */
+                Value mval = val_nil();
+                if (sel_slot < klass->vtable_size)
+                    mval = klass->vtable[sel_slot];
 
-                if (!mfound)
+                if (is_nil(mval))
                 {
                     runtime_error("'%s' has no method '%s'", klass->name->chars, mname);
                     return;
@@ -2007,8 +2007,6 @@ namespace zen
                 {
                     ObjClosure *cl = as_closure(mval);
                     ObjFunc *fn = cl->func;
-                    /* self goes at R[base], args at R[base+1..] */
-                    /* R[base] already has receiver (self) */
                     if (fn->arity >= 0 && arg_count != fn->arity)
                     {
                         runtime_error("%s.%s() expects %d args but got %d",
