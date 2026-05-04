@@ -73,6 +73,11 @@ namespace zen
         /* --- Accessors --- */
         int current_offset() const { return func_->code_count; }
         int last_line() const { return last_line_; }
+        Instruction instruction_at(int offset) const { return func_->code[offset]; }
+        void rewrite_opcode_at(int offset, OpCode new_op)
+        {
+            func_->code[offset] = (func_->code[offset] & 0x00FFFFFF) | ((uint32_t)new_op << 24);
+        }
 
         /* Error from escape processing */
         bool has_escape_error() const { return escape_error_[0] != '\0'; }

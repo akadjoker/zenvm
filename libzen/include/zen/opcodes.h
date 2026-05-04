@@ -111,6 +111,7 @@ namespace zen
         OP_SETINDEX, /* R[A][R[B]] = R[C]                       */
         OP_INVOKE,   /* R[A].method(R[A+1]..R[A+B]) → R[A]; C=name_idx (2-word: word2=name_ki) */
         OP_INVOKE_VT, /* R[A].vtable[C](R[A+1]..R[A+B]) → R[A]; single-word, O(1) */
+        OP_SUPER_INVOKE, /* like OP_INVOKE but dispatches on parent class vtable (2-word) */
 
         /* --- Classes --- */
         OP_NEWCLASS,    /* R[A] = new class (nome em constants[B]) */
@@ -151,6 +152,13 @@ namespace zen
         /* --- Numeric for loop (superinstruction) --- */
         OP_FORPREP, /* R[A]-=R[A+2]; if R[A]>=R[A+1]: pc+=sBx (skip) */
         OP_FORLOOP, /* R[A]+=R[A+2]; if R[A]<R[A+1]: pc+=sBx (loop)  */
+
+        /* --- Fused field+arith (2-word superinstructions) --- */
+        OP_GETFIELD_MUL, /* word1: R[A]=R[B].fields[C]; word2: R[A]=R[B]*R[C] */
+        OP_GETFIELD_SUB, /* word1: R[A]=R[B].fields[C]; word2: R[A]=R[B]-R[C] */
+
+        /* --- Iteration (foreach) --- */
+        OP_ITER_ELEM, /* R[A] = iter_elem(R[B], R[C]) — ordinal access for foreach */
 
         OP_HALT,
     };

@@ -9,11 +9,11 @@ class Vec3 {
         self.z = z;
     }
 
-    def __add__(other) {
+    def __add__(other: Vec3) : Vec3 {
         return Vec3(self.x + other.x, self.y + other.y, self.z + other.z);
     }
 
-    def __mul__(scale) {
+    def __mul__(scale) : Vec3 {
         return Vec3(self.x * scale, self.y * scale, self.z * scale);
     }
 }
@@ -31,7 +31,7 @@ class Quat {
         self.w = w;
     }
 
-    def __mul__(other) {
+    def __mul__(other: Quat) : Quat {
         return Quat(
             self.w * other.x + self.x * other.w + self.y * other.z - self.z * other.y,
             self.w * other.y - self.x * other.z + self.y * other.w + self.z * other.x,
@@ -79,19 +79,19 @@ class Mat4 {
     }
 }
 
-def quat_axis_angle(ax, ay, az, angle) {
+def quat_axis_angle(ax, ay, az, angle) : Quat {
     var axis_len = sqrt(ax * ax + ay * ay + az * az);
     var half = angle * 0.5;
     var s = sin(half) / axis_len;
     return Quat(ax * s, ay * s, az * s, cos(half));
 }
 
-def quat_normalize(q) {
+def quat_normalize(q: Quat) : Quat {
     var inv = 1.0 / sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
     return Quat(q.x * inv, q.y * inv, q.z * inv, q.w * inv);
 }
 
-def mat4_from_trs(p, q, s) {
+def mat4_from_trs(p: Vec3, q: Quat, s: Vec3) : Mat4 {
     var x2 = q.x + q.x;
     var y2 = q.y + q.y;
     var z2 = q.z + q.z;

@@ -1,22 +1,22 @@
-# Tutorial 09 — Projecto Prático: Snake
+# Tutorial 09 — Practical Project: Snake
 
-Este tutorial mostra esta parte da linguagem através de exemplos práticos.
+This tutorial walks through a small Snake-style gameplay example written in pure script logic.
 
-## Objetivo
+## Goal
 
-Aprender a sintaxe e os padrões principais deste tópico em BuLang/Zen.
+Learn the main syntax and patterns for this topic in BuLang/Zen.
 
-## Código completo
+## Full code
 
 ```zen
 // ============================================================
-// Tutorial 09 — Projecto Prático: Snake
-// (lógica pura — sem API gráfica)
+// Tutorial 09 — Practical Project: Snake
+// (pure logic - no graphics API)
 // ============================================================
 
 import math;
 
-// --- Constantes do mundo ---
+// --- World constants ---
 var COLS = 20;
 var ROWS = 15;
 var DIR_UP    = 0;
@@ -25,162 +25,161 @@ var DIR_LEFT  = 2;
 var DIR_RIGHT = 3;
 
 // --- Structs ---
-struct Celula { x, y }
+struct Cell { x, y }
 
-// --- Geração de comida aleatória ---
-def nova_comida() {
-    return Celula(math.random(COLS), math.random(ROWS));
+// --- Random food generation ---
+def new_food() {
+    return Cell(math.random(COLS), math.random(ROWS));
 }
 
-// --- Verifica se célula está na cobra ---
-def cobra_tem(cobra, x, y) {
+// --- Check whether a cell is inside the snake ---
+def snake_has(snake, x, y) {
     var i = 0;
-    while (i < cobra.len()) {
-        var seg = cobra[i];
+    while (i < snake.len()) {
+        var seg = snake[i];
         if (seg.x == x && seg.y == y) { return true; }
         i = i + 1;
     }
     return false;
 }
 
-// --- Mover cobra ---
-// Retorna: 0 = ok, 1 = comeu, -1 = morreu
-def mover(cobra, dir, comida) {
-    var cabeca = cobra[0];
-    var nx = cabeca.x;
-    var ny = cabeca.y;
+// --- Move snake ---
+// Returns: 0 = ok, 1 = ate, -1 = died
+def move(snake, dir, food) {
+    var head = snake[0];
+    var nx = head.x;
+    var ny = head.y;
 
     if (dir == DIR_UP)    { ny = ny - 1; }
     if (dir == DIR_DOWN)  { ny = ny + 1; }
     if (dir == DIR_LEFT)  { nx = nx - 1; }
     if (dir == DIR_RIGHT) { nx = nx + 1; }
 
-    // colisão com parede
+    // wall collision
     if (nx < 0 or nx >= COLS or ny < 0 or ny >= ROWS) {
         return -1;
     }
 
-    // colisão consigo própria
-    if (cobra_tem(cobra, nx, ny)) {
+    // self collision
+    if (snake_has(snake, nx, ny)) {
         return -1;
     }
 
-    var nova_cabeca = Celula(nx, ny);
+    var new_head = Cell(nx, ny);
 
-    // crescer ou mover
-    var comeu = (nx == comida.x && ny == comida.y);
-    if (!comeu) {
-        // remove cauda (swap-remove preserva ordem aqui? não — usa pop do fim)
-        // a cauda é o último elemento
-        cobra.pop();
+    // grow or move
+    var ate = (nx == food.x && ny == food.y);
+    if (!ate) {
+        // remove tail (order matters here, so pop the last segment)
+        snake.pop();
     }
 
-    // insere nova cabeça na frente: rebuild array
-    var nova_cobra = [];
-    nova_cobra.push(nova_cabeca);
+    // insert new head at the front: rebuild the array
+    var new_snake = [];
+    new_snake.push(new_head);
     var i = 0;
-    while (i < cobra.len()) {
-        nova_cobra.push(cobra[i]);
+    while (i < snake.len()) {
+        new_snake.push(snake[i]);
         i = i + 1;
     }
-    // Copiar de volta para cobra (zen passa arrays por referência)
-    cobra.clear();
+    // Copy back into snake (Zen passes arrays by reference)
+    snake.clear();
     var j = 0;
-    while (j < nova_cobra.len()) {
-        cobra.push(nova_cobra[j]);
+    while (j < new_snake.len()) {
+        snake.push(new_snake[j]);
         j = j + 1;
     }
 
-    if (comeu) { return 1; }
+    if (ate) { return 1; }
     return 0;
 }
 
-// --- Imprimir grelha (ASCII) ---
-def imprimir_grelha(cobra, comida) {
+// --- Print grid (ASCII) ---
+def print_grid(snake, food) {
     var y = 0;
     while (y < ROWS) {
-        var linha = "";
+        var line = "";
         var x = 0;
         while (x < COLS) {
-            if (cobra_tem(cobra, x, y)) {
-                if (x == cobra[0].x && y == cobra[0].y) {
-                    linha = "{linha}O";   // cabeça
+            if (snake_has(snake, x, y)) {
+                if (x == snake[0].x && y == snake[0].y) {
+                    line = "{line}O";   // head
                 } else {
-                    linha = "{linha}#";   // corpo
+                    line = "{line}#";   // body
                 }
             } else {
-                if (x == comida.x && y == comida.y) {
-                    linha = "{linha}*";   // comida
+                if (x == food.x && y == food.y) {
+                    line = "{line}*";   // food
                 } else {
-                    linha = "{linha}.";
+                    line = "{line}.";
                 }
             }
             x = x + 1;
         }
-        print(linha);
+        print(line);
         y = y + 1;
     }
 }
 
-// --- Loop de jogo (simulação de 20 passos) ---
-var cobra = [];
-cobra.push(Celula(5, 5));
-cobra.push(Celula(4, 5));
-cobra.push(Celula(3, 5));
+// --- Game loop (20-step simulation) ---
+var snake = [];
+snake.push(Cell(5, 5));
+snake.push(Cell(4, 5));
+snake.push(Cell(3, 5));
 
-var comida = nova_comida();
+var food = new_food();
 var dir = DIR_RIGHT;
-var pontos = 0;
-var vivo = true;
-var passo = 0;
+var score = 0;
+var alive = true;
+var step = 0;
 
-while (passo < 20 && vivo) {
-    // IA simples: vai em frente ou vira aleatoriamente
+while (step < 20 && alive) {
+    // Simple AI: keep moving or turn randomly
     var r = math.random(4);
     if (r == 0 && dir != DIR_LEFT)  { dir = DIR_RIGHT; }
     if (r == 1 && dir != DIR_RIGHT) { dir = DIR_LEFT;  }
     if (r == 2 && dir != DIR_DOWN)  { dir = DIR_UP;    }
     if (r == 3 && dir != DIR_UP)    { dir = DIR_DOWN;  }
 
-    var res = mover(cobra, dir, comida);
+    var res = move(snake, dir, food);
 
     if (res == -1) {
         print("=== GAME OVER ===");
-        vivo = false;
+        alive = false;
     } else {
         if (res == 1) {
-            pontos = pontos + 1;
-            print("Comeu! pontos={pontos} tamanho={cobra.len()}");
-            comida = nova_comida();
+            score = score + 1;
+            print("Ate! score={score} size={snake.len()}");
+            food = new_food();
         }
     }
 
-    passo = passo + 1;
+    step = step + 1;
 }
 
-print("--- Estado final ---");
-imprimir_grelha(cobra, comida);
-print("Pontos: {pontos}  Tamanho: {cobra.len()}");
+print("--- Final state ---");
+print_grid(snake, food);
+print("Score: {score}  Size: {snake.len()}");
 ```
 
-## Como correr
+## How to run
 
 ```bash
 zen examples/tutorial_09_snake.zen
 ```
 
-ou ajusta para o nome real do teu executável:
+or adjust the command to match your executable name:
 
 ```bash
 bulang examples/tutorial_09_snake.zen
 ```
 
-## O que observar
+## What to look for
 
-- A sintaxe é direta e usa blocos com `{` e `}`.
-- Os exemplos usam `print()` para mostrar o resultado esperado.
-- Comentários no próprio código explicam cada secção.
+- The syntax is direct and uses `{` and `}` blocks.
+- The examples use `print()` to show the expected result.
+- Inline comments explain each section of the example.
 
-## Exercício sugerido
+## Suggested exercise
 
-Altera os valores do exemplo, corre outra vez e confirma se o output muda como esperas.
+Change the example values, run it again, and confirm that the output changes as expected.

@@ -593,6 +593,10 @@ namespace zen
                 gc_mark_obj(gc, (Obj *)uv);
                 uv = uv->next;
             }
+
+            /* Mark privates (may hold GC objects like func, strings, etc.) */
+            for (int p = 0; p < MAX_PRIVATES; p++)
+                gc_mark_value(gc, pool_[i].privates[p]);
         }
     }
 

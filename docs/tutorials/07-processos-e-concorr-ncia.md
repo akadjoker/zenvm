@@ -1,106 +1,106 @@
-# Tutorial 07 — Processos e Concorrência
+# Tutorial 07 — Processes and Concurrency
 
-Este tutorial mostra esta parte da linguagem através de exemplos práticos.
+This tutorial introduces cooperative processes, scheduling, and parent/child process relationships through practical examples.
 
-## Objetivo
+## Goal
 
-Aprender a sintaxe e os padrões principais deste tópico em BuLang/Zen.
+Learn the main syntax and patterns for this topic in BuLang/Zen.
 
-## Código completo
+## Full code
 
 ```zen
 // ============================================================
-// Tutorial 07 — Processos e Concorrência
+// Tutorial 07 — Processes and Concurrency
 // ============================================================
 
-// process é a construção central do BuLang.
-// Chamar um process SPAWN-a — corre em paralelo cooperativo.
-// frame  → suspende o processo actual até ao próximo tick.
-// loop   → loop infinito (process vive até break ou fim do corpo).
-// father → acesso ao processo pai (quem fez spawn deste).
-// son    → acesso ao processo filho mais recente.
+// process is the central cooperative runtime construct in BuLang.
+// Calling a process spawns it and runs it in cooperative parallel.
+// frame  -> suspends the current process until the next tick.
+// loop   -> infinite loop (the process lives until break or return).
+// father -> access to the parent process (the one that spawned this one).
+// son    -> access to the most recent child process.
 
-// --- Processo simples ---
-process contar_ate(n) {
+// --- Simple process ---
+process count_to(n) {
     var i = 1;
     while (i <= n) {
-        print("contando: {i}");
+        print("counting: {i}");
         i = i + 1;
-        frame;   // cede controlo — continua no próximo tick
+        frame;   // yield control until the next tick
     }
-    print("chegou a {n}!");
+    print("reached {n}!");
 }
 
-contar_ate(5);   // spawn — corre em paralelo
+count_to(5);   // spawn - runs in parallel
 
-// --- loop infinito com break ---
-process relogio(nome) {
+// --- Infinite loop with break ---
+process clock(name) {
     var ticks = 0;
     loop {
         ticks = ticks + 1;
-        print("[{nome}] tick {ticks}");
+        print("[{name}] tick {ticks}");
         if (ticks >= 3) { break; }
         frame;
     }
-    print("[{nome}] parou");
+    print("[{name}] stopped");
 }
 
-relogio("A");
-relogio("B");
+clock("A");
+clock("B");
 
-// --- Comunicação pai/filho via father/son ---
+// --- Parent/child communication through father/son ---
 
-process filho(msg) {
-    print("filho diz: {msg}");
-    print("filho vê pai.x = {father.x}");
+process child(msg) {
+    print("child says: {msg}");
+    print("child sees parent.x = {father.x}");
 
-    father.x = 999;           // modifica campo do pai
+    father.x = 999;           // modify the parent's field
     frame;
 
-    print("filho: após frame, pai.x = {father.x}");
+    print("child: after frame, parent.x = {father.x}");
 }
 
-process pai(x, y) {
-    print("pai: ({x}, {y})");
-    filho("olá pai!");            // spawn filho
+process parent(x, y) {
+    print("parent: ({x}, {y})");
+    child("hello parent!");            // spawn child
 
-    print("pai vê filho.x = {son.x}");   // acesso ao filho
+    print("parent sees child.x = {son.x}");   // access child fields
     frame;
 
-    print("pai: após frame, x = {x}");   // filho alterou x para 999
+    print("parent: after frame, x = {x}");   // child changed x to 999
 }
 
-pai(100, 200);
+parent(100, 200);
 
-// --- Processo como entidade de jogo ---
-process bola(x, y, vx, vy) {
+// --- Process as a game entity ---
+process ball(x, y, vx, vy) {
     loop {
-        // física simples
-        vy = vy + 0.5;      // gravidade
+        // simple physics
+        vy = vy + 0.5;      // gravity
         x = x + vx;
         y = y + vy;
 
-        // colisão com paredes
+        // wall collision
         if (x < 0)    { x = 0;    vx = -vx * 0.8; }
         if (x > 1280) { x = 1280; vx = -vx * 0.8; }
         if (y > 720)  { y = 720;  vy = -vy * 0.7; }
 
-        print("bola: ({int(x)}, {int(y)})");
+        print("ball: ({int(x)}, {int(y)})");
         frame;
     }
 }
 
-// Spawna 3 bolas com velocidades diferentes
-bola(640, 0,  2,  0);
-bola(640, 0, -3,  1);
-bola(640, 0,  1, -2);
+// Spawn 3 balls with different velocities
+ball(640, 0,  2,  0);
+ball(640, 0, -3,  1);
+ball(640, 0,  1, -2);
 
-// --- Spawner: cria processos dinamicamente ---
+// --- Spawner: creates processes dynamically ---
 process spawner() {
     var count = 0;
     loop {
         if (count < 5) {
-            bola(640, 0, count - 2, -count);
+            ball(640, 0, count - 2, -count);
             count = count + 1;
         }
         frame;
@@ -115,24 +115,24 @@ for(var i=0;i<1000;i=i+1)
 }
 ```
 
-## Como correr
+## How to run
 
 ```bash
 zen examples/tutorial_07_processos.zen
 ```
 
-ou ajusta para o nome real do teu executável:
+or adjust the command to match your executable name:
 
 ```bash
 bulang examples/tutorial_07_processos.zen
 ```
 
-## O que observar
+## What to look for
 
-- A sintaxe é direta e usa blocos com `{` e `}`.
-- Os exemplos usam `print()` para mostrar o resultado esperado.
-- Comentários no próprio código explicam cada secção.
+- The syntax is direct and uses `{` and `}` blocks.
+- The examples use `print()` to show the expected result.
+- Inline comments explain each section of the example.
 
-## Exercício sugerido
+## Suggested exercise
 
-Altera os valores do exemplo, corre outra vez e confirma se o output muda como esperas.
+Change the example values, run it again, and confirm that the output changes as expected.

@@ -30,6 +30,7 @@ namespace
         BC_FUNC = 5,
         BC_CLOSURE = 6,
         BC_CLASS = 7,
+        BC_STRUCT_DEF = 8,
     };
 
     static void set_error(char *err, int err_len, const char *fmt, ...)
@@ -242,7 +243,8 @@ namespace
 
     static bool should_write_global_value(Value value)
     {
-        return value.type == VAL_OBJ && value.as.obj && value.as.obj->type == OBJ_CLASS;
+        return value.type == VAL_OBJ && value.as.obj &&
+               (value.as.obj->type == OBJ_CLASS || value.as.obj->type == OBJ_STRUCT_DEF);
     }
 
     static bool write_global_names(BytecodeWriter &w, VM *vm, bool strip_debug, BytecodeStats *stats, char *err, int err_len)
@@ -354,6 +356,22 @@ namespace
             }
             if (value.as.obj->type == OBJ_CLASS)
                 return w.write_u8(BC_CLASS) && write_class(w, (ObjClass *)value.as.obj, strip_debug, stats, err, err_len);
+            if (value.as.obj->type == OBJ_STRUCT_DEF)
+            {
+                ObjStructDef *sd = (ObjStructDef *)value.as.obj;
+                if (!w.write_u8(BC_STRUCT_DEF))
+                    return false;
+                if (!write_string(w, sd->name, stats, err, err_len))
+                    return false;
+                if (!w.write_u32((uint32_t)sd->num_fields))
+                    return false;
+                for (int i = 0; i < sd->num_fields; i++)
+                {
+                    if (!write_string(w, sd->field_names[i], stats, err, err_len))
+                        return false;
+                }
+                return true;
+            }
             set_error(err, err_len, "unsupported object constant type %d", (int)value.as.obj->type);
             return false;
         case VAL_PTR:
@@ -766,6 +784,37 @@ namespace
             if (!klass)
                 return false;
             *out = val_obj((Obj *)klass);
+            return true;
+        }
+        case BC_STRUCT_DEF:
+        {
+            GC *gc = &vm->get_gc();
+            ObjString *name = nullptr;
+            if (!read_string(vm, r, &name, err, err_len))
+                return false;
+            uint32_t num_fields = 0;
+            if (!r.read_u32(&num_fields))
+            {
+                set_error(err, err_len, "truncated struct_def field count");
+                return false;
+            }
+            ObjStructDef *sd = (ObjStructDef *)zen_alloc(gc, sizeof(ObjStructDef));
+            sd->obj.type = OBJ_STRUCT_DEF;
+            sd->obj.color = GC_BLACK;
+            sd->obj.interned = 0;
+            sd->obj._pad = 0;
+            sd->obj.hash = 0;
+            sd->obj.gc_next = gc->objects;
+            gc->objects = (Obj *)sd;
+            sd->name = name;
+            sd->num_fields = (int32_t)num_fields;
+            sd->field_names = (ObjString **)zen_alloc(gc, sizeof(ObjString *) * num_fields);
+            for (uint32_t i = 0; i < num_fields; i++)
+            {
+                if (!read_string(vm, r, &sd->field_names[i], err, err_len))
+                    return false;
+            }
+            *out = val_obj((Obj *)sd);
             return true;
         }
         default:

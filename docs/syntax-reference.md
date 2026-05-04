@@ -71,6 +71,14 @@ def name(a, b) {
 }
 ```
 
+Optional struct/class type hints are allowed on parameters and return values:
+
+```zen
+def name(a: Vec2, b: Vec2) : Vec2 {
+    return Vec2(a.x + b.x, a.y + b.y);
+}
+```
+
 ## If / else
 
 ```zen
@@ -178,6 +186,14 @@ process name() {
 }
 ```
 
+Process parameters can also use optional type hints:
+
+```zen
+process follow(target: Player) {
+    frame;
+}
+```
+
 ## Modules
 
 ```zen
@@ -185,3 +201,12 @@ import math;
 ```
 
 The exact module system depends on your VM implementation, but the tutorial examples show `import` support.
+
+## Bytecode
+
+```bash
+./bin/zen --dump app.znb app.zen
+./bin/zen app.znb
+```
+
+Bytecode can be used to ship script-only applications without shipping the original `.zen` source.

@@ -1,31 +1,31 @@
-# Tutorial 01 — Variáveis, Tipos e Operadores
+# Tutorial 01 — Variables, Types, and Operators
 
-Este tutorial apresenta variáveis, valores básicos, operadores aritméticos, comparação, lógica, atribuição composta, conversões e interpolação de strings.
+This tutorial introduces variables, primitive values, arithmetic, comparisons, logic, compound assignment, conversions, and string interpolation.
 
-## Objetivo
+## Goal
 
-Aprender a sintaxe e os padrões principais deste tópico em BuLang/Zen.
+Learn the main syntax and patterns for this topic in BuLang/Zen.
 
-## Código completo
+## Full code
 
 ```zen
 // ============================================================
-// Tutorial 01 — Variáveis, Tipos e Operadores
+// Tutorial 01 — Variables, Types, and Operators
 // ============================================================
 
-// --- Declaração de variáveis ---
+// --- Variable declarations ---
 var x = 10;
 var y = 3.14;
-var nome = "BuLang";
-var activo = true;
-var nada = null;
+var name = "BuLang";
+var active = true;
+var nothing = null;
 
 print(x);        // 10
 print(y);        // 3.14
-print(nome);     // BuLang
-print(activo);   // true
+print(name);     // BuLang
+print(active);   // true
 
-// --- Operadores aritméticos ---
+// --- Arithmetic operators ---
 var a = 10;
 var b = 3;
 
@@ -33,56 +33,56 @@ print(a + b);    // 13
 print(a - b);    // 7
 print(a * b);    // 30
 print(a / b);    // 3.333...
-print(a % b);    // 1  (resto)
+print(a % b);    // 1  (remainder)
 
-// --- Operadores de comparação ---
+// --- Comparison operators ---
 print(a == b);   // false
 print(a != b);   // true
 print(a > b);    // true
 print(a <= b);   // false
 
-// --- Operadores lógicos ---
+// --- Logical operators ---
 var p = true;
 var q = false;
 
-print(p && q);   // false  (também: p and q)
-print(p || q);   // true   (também: p or q)
-print(!p);       // false  (também: not p)
+print(p && q);   // false  (also: p and q)
+print(p || q);   // true   (also: p or q)
+print(!p);       // false  (also: not p)
 
-// --- Atribuição composta ---
+// --- Compound assignment ---
 var n = 10;
 n += 5;   print(n);   // 15
 n -= 3;   print(n);   // 12
 n *= 2;   print(n);   // 24
 
-// --- Conversões ---
+// --- Conversions ---
 var f = 9.99;
-print(int(f));   // 9  (trunca para inteiro)
+print(int(f));   // 9  (truncates to integer)
 
-// --- Interpolação de strings ---
-var pontos = 42;
-print("A tua pontuação é: {pontos}");
-print("Soma: {a + b}");
+// --- String interpolation ---
+var points = 42;
+print("Your score is: {points}");
+print("Sum: {a + b}");
 ```
 
-## Como correr
+## How to run
 
 ```bash
 zen examples/tutorial_01_variaveis.zen
 ```
 
-ou ajusta para o nome real do teu executável:
+or adjust the command to match your executable name:
 
 ```bash
 bulang examples/tutorial_01_variaveis.zen
 ```
 
-## O que observar
+## What to look for
 
-- A sintaxe é direta e usa blocos com `{` e `}`.
-- Os exemplos usam `print()` para mostrar o resultado esperado.
-- Comentários no próprio código explicam cada secção.
+- The syntax is direct and uses `{` and `}` blocks.
+- The examples use `print()` to show the expected result.
+- Inline comments explain each section of the example.
 
-## Exercício sugerido
+## Suggested exercise
 
-Altera os valores do exemplo, corre outra vez e confirma se o output muda como esperas.
+Change the example values, run it again, and confirm that the output changes as expected.

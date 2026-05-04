@@ -214,6 +214,8 @@ namespace zen
                     state_->emitter.emit_abx(OP_SETGLOBAL, reg, gidx, name.line);
                     if (ensure_global_class_hint(gidx))
                         global_class_hints_[gidx] = last_call_class_def_ ? last_call_class_def_ : state_->reg_class_hints[reg];
+                    if (ensure_global_struct_hint(gidx))
+                        global_struct_hints_[gidx] = last_call_struct_def_;
                 }
                 free_reg(reg);
                 last_call_struct_def_ = nullptr;
@@ -276,10 +278,33 @@ namespace zen
             {
                 consume(TOK_IDENTIFIER, "Expected parameter name.");
                 add_local(previous_);
+                try_parse_type_hint();
                 arity++;
             } while (match(TOK_COMMA));
         }
         consume(TOK_RPAREN, "Expected ')' after parameters.");
+
+        /* Optional return type hint: def foo(x) : TypeName { ... } */
+        ObjStructDef *ret_struct = nullptr;
+        ObjClass *ret_class = nullptr;
+        if (match(TOK_COLON))
+        {
+            consume(TOK_IDENTIFIER, "Expected return type name after ':'.");
+            Token rt = previous_;
+            char rbuf[128];
+            int rlen = rt.length < 127 ? rt.length : 127;
+            memcpy(rbuf, rt.start, rlen);
+            rbuf[rlen] = '\0';
+            int gidx = vm_->find_global(rbuf);
+            if (gidx >= 0)
+            {
+                Value gval = vm_->get_global(gidx);
+                if (is_struct_def(gval))
+                    ret_struct = as_struct_def(gval);
+                else if (is_class(gval))
+                    ret_class = as_class(gval);
+            }
+        }
 
         /* Body */
         consume(TOK_LBRACE, "Expected '{' before function body.");
@@ -291,6 +316,8 @@ namespace zen
 
         ObjFunc *fn = state_->emitter.end(state_->max_reg);
         fn->arity = arity;
+        fn->return_struct = ret_struct;
+        fn->return_class = ret_class;
 
         /* Copy upvalue descriptors to ObjFunc */
         int nuv = state_->upvalue_count;
@@ -327,6 +354,8 @@ namespace zen
                 state_->emitter.emit_abx(OP_CLOSURE, reg, ki, name.line);
                 state_->emitter.emit_abx(OP_SETGLOBAL, reg, gidx, name.line);
                 free_reg(reg);
+                if (ret_struct || ret_class)
+                    set_global_return_hint(gidx, ret_struct, ret_class);
             }
         }
     }
@@ -394,6 +423,7 @@ namespace zen
                 int pidx = VM::resolve_private(previous_.start, previous_.length);
                 if (arity < 16) priv_map[arity] = (int8_t)pidx;
                 add_local(previous_);
+                try_parse_type_hint();
                 arity++;
             } while (match(TOK_COMMA));
         }
@@ -492,6 +522,7 @@ namespace zen
         ClassFieldInfo cfi;
         cfi.count = 0;
         cfi.parent_field_count = 0;
+        cfi.parent_class = nullptr;
 
         /* Resolve parent class early for field layout */
         ObjClass *parent_class = nullptr;
@@ -514,6 +545,7 @@ namespace zen
                 cfi.count++;
             }
             cfi.parent_field_count = cfi.count;
+            cfi.parent_class = parent_class;
         }
 
         /* We'll store compiled methods temporarily */
@@ -617,10 +649,33 @@ namespace zen
                     {
                         consume(TOK_IDENTIFIER, "Expected parameter name.");
                         add_local(previous_);
+                        try_parse_type_hint();
                         arity++;
                     } while (match(TOK_COMMA));
                 }
                 consume(TOK_RPAREN, "Expected ')' after parameters.");
+
+                /* Optional return type hint for methods */
+                ObjStructDef *m_ret_struct = nullptr;
+                ObjClass *m_ret_class = nullptr;
+                if (match(TOK_COLON))
+                {
+                    consume(TOK_IDENTIFIER, "Expected return type name after ':'.");
+                    Token rt = previous_;
+                    char rbuf[128];
+                    int rlen = rt.length < 127 ? rt.length : 127;
+                    memcpy(rbuf, rt.start, rlen);
+                    rbuf[rlen] = '\0';
+                    int gidx = vm_->find_global(rbuf);
+                    if (gidx >= 0)
+                    {
+                        Value gval = vm_->get_global(gidx);
+                        if (is_struct_def(gval))
+                            m_ret_struct = as_struct_def(gval);
+                        else if (is_class(gval))
+                            m_ret_class = as_class(gval);
+                    }
+                }
 
                 /* Body */
                 consume(TOK_LBRACE, "Expected '{' before method body.");
@@ -641,6 +696,8 @@ namespace zen
 
                 ObjFunc *fn = state_->emitter.end(state_->max_reg);
                 fn->arity = arity; /* does NOT count self — VM adds it implicitly */
+                fn->return_struct = m_ret_struct;
+                fn->return_class = m_ret_class;
 
                 /* Copy upvalue descriptors */
                 int nuv = state_->upvalue_count;
@@ -1642,6 +1699,7 @@ namespace zen
 
     /* =========================================================
     ** foreach (x in expr) { body }
+    ** foreach (i, x in expr) { body }  — i = index, x = element
     ** ========================================================= */
 
     void Compiler::foreach_statement()
@@ -1649,7 +1707,17 @@ namespace zen
         begin_scope();
         consume(TOK_LPAREN, "Expected '(' after 'foreach'.");
         consume(TOK_IDENTIFIER, "Expected variable name.");
-        Token iter_name = previous_;
+        Token first_name = previous_;
+        Token second_name;
+        bool has_index = false;
+
+        if (match(TOK_COMMA)) {
+            /* Two-variable form: foreach (i, x in ...) */
+            consume(TOK_IDENTIFIER, "Expected second variable name.");
+            second_name = previous_;
+            has_index = true;
+        }
+
         consume(TOK_IN, "Expected 'in' after variable name.");
 
         /* Evaluate iterable */
@@ -1664,8 +1732,13 @@ namespace zen
         int len_reg = alloc_reg();
         state_->emitter.emit_abc(OP_LEN, len_reg, iterable_reg, 0, previous_.line);
 
-        /* Loop variable */
-        int var_reg = add_local(iter_name);
+        /* Loop variables */
+        int idx_var_reg = -1;
+        if (has_index) {
+            idx_var_reg = add_local(first_name);
+        }
+        Token &elem_name = has_index ? second_name : first_name;
+        int var_reg = add_local(elem_name);
 
         int loop_start = state_->emitter.current_offset();
 
@@ -1682,8 +1755,13 @@ namespace zen
         int exit_jump = state_->emitter.emit_jump(OP_JMPIFNOT, cond_reg, previous_.line);
         free_reg(cond_reg);
 
-        /* Load current element: var = iterable[idx] */
-        state_->emitter.emit_abc(OP_GETINDEX, var_reg, iterable_reg, idx_reg, previous_.line);
+        /* Expose index to user variable if two-variable form */
+        if (has_index) {
+            state_->emitter.emit_abc(OP_MOVE, idx_var_reg, idx_reg, 0, previous_.line);
+        }
+
+        /* Load current element: var = iter_elem(iterable, idx) */
+        state_->emitter.emit_abc(OP_ITER_ELEM, var_reg, iterable_reg, idx_reg, previous_.line);
 
         /* Body */
         consume(TOK_LBRACE, "Expected '{' after foreach.");

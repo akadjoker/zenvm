@@ -185,6 +185,7 @@ namespace zen
         int resume_expression(int dest);
         int yield_expression(int dest);
         int process_field_expr(Token token, int dest);
+        int super_invoke(int dest);
         int anonymous_function(int dest);
 
         /* --- Helpers --- */
@@ -200,6 +201,7 @@ namespace zen
         int add_upvalue(CompilerState *state, int index, bool is_local);
         void declare_local(Token name);
         int add_local(Token name);
+        void try_parse_type_hint(); /* parse optional ': TypeName' and set local type */
         void begin_scope();
         void end_scope();
 
@@ -255,12 +257,24 @@ namespace zen
         int global_class_hints_capacity_;
         bool ensure_global_class_hint(int idx);
 
+        /* Struct type inference for globals */
+        ObjStructDef **global_struct_hints_;
+        int global_struct_hints_capacity_;
+        bool ensure_global_struct_hint(int idx);
+
+        /* Return type hints for global functions (compile-time side table) */
+        ObjStructDef **global_return_struct_;
+        ObjClass **global_return_class_;
+        int global_return_hints_capacity_;
+        void set_global_return_hint(int gidx, ObjStructDef *s, ObjClass *c);
+
         /* Class field indexing: set during method compilation */
         struct ClassFieldInfo
         {
             char fields[64][64];
             int count;
             int parent_field_count; /* fields from parent come first */
+            ObjClass *parent_class; /* static parent for super dispatch */
         };
         ClassFieldInfo *current_class_fields_; /* non-null while compiling a method */
     };

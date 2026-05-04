@@ -73,6 +73,7 @@ namespace zen
         case TOK_NIL:
         case TOK_IDENTIFIER:
         case TOK_SELF:
+        case TOK_SUPER:
         case TOK_MINUS:
         case TOK_BANG:
         case TOK_TILDE:
@@ -245,6 +246,8 @@ namespace zen
         case TOK_IDENTIFIER:
         case TOK_SELF:
             return variable(token, dest, canAssign);
+        case TOK_SUPER:
+            return super_invoke(dest);
         case TOK_MINUS:
         case TOK_BANG:
         case TOK_TILDE:
@@ -761,6 +764,8 @@ namespace zen
                     state_->emitter.emit_abx(OP_SETGLOBAL, val_reg, gidx, token.line);
                     if (ensure_global_class_hint(gidx))
                         global_class_hints_[gidx] = last_call_class_def_ ? last_call_class_def_ : state_->reg_class_hints[val_reg];
+                    if (ensure_global_struct_hint(gidx))
+                        global_struct_hints_[gidx] = last_call_struct_def_;
                 }
                 if (dest >= 0 && dest != val_reg)
                 {
@@ -846,8 +851,19 @@ namespace zen
 
         if (local_reg != -1)
         {
+            /* If an infix operator follows (dot, index, call, binary), skip the
+               MOVE — the infix handler will read directly from local_reg.
+               This eliminates thousands of redundant MOVEs like:
+                 MOVE R3, R1; GETFIELD R3, R3, x  →  GETFIELD R3, R1, x */
             if (reg >= 0 && reg != local_reg)
             {
+                Precedence next_prec = get_precedence(current_.type);
+                bool next_is_generic = current_.type == TOK_LT && looks_like_generic_call();
+                if (next_prec > PREC_NONE || next_is_generic)
+                {
+                    /* Infix follows — don't MOVE, return the local's own register */
+                    return local_reg;
+                }
                 emit_move(reg, local_reg);
                 return reg;
             }
@@ -882,12 +898,18 @@ namespace zen
         Value gval = vm_->get_global(gidx);
         if (is_struct_def(gval))
             last_call_struct_def_ = as_struct_def(gval);
+        else if (gidx >= 0 && gidx < global_struct_hints_capacity_ && global_struct_hints_[gidx])
+            last_call_struct_def_ = global_struct_hints_[gidx];
+        else if (gidx >= 0 && gidx < global_return_hints_capacity_ && global_return_struct_[gidx])
+            last_call_struct_def_ = global_return_struct_[gidx];
         else
             last_call_struct_def_ = nullptr;
         if (gidx >= 0 && gidx < global_class_hints_capacity_ && global_class_hints_[gidx])
             last_call_class_def_ = global_class_hints_[gidx];
         else if (is_class(gval))
             last_call_class_def_ = as_class(gval);
+        else if (gidx >= 0 && gidx < global_return_hints_capacity_ && global_return_class_[gidx])
+            last_call_class_def_ = global_return_class_[gidx];
         else
             last_call_class_def_ = nullptr;
 
@@ -1083,6 +1105,9 @@ namespace zen
         int right = parse_precedence(prec, -1);
         ObjClass *left_class = class_hint_for_reg(left);
         ObjClass *right_class = class_hint_for_reg(right);
+        /* Use _OBJ opcodes when either operand has a class hint.
+         * The VM _OBJ opcodes try the operator first, then fall back to
+         * base behaviour (string concat / numeric), so this is always safe. */
         bool use_obj_op = left_class || right_class;
 
         OpCode opcode;
@@ -1150,6 +1175,42 @@ namespace zen
         else
         {
             state_->emitter.emit_abc(opcode, reg, left, right, op.line);
+        }
+
+        /* Peephole: fuse GETFIELD_IDX + MUL → OP_GETFIELD_MUL (2-word) */
+        if (opcode == OP_MUL)
+        {
+            int mul_off = state_->emitter.current_offset() - 1;
+            if (mul_off >= 1)
+            {
+                Instruction prev = state_->emitter.instruction_at(mul_off - 1);
+                if (ZEN_OP(prev) == OP_GETFIELD_IDX)
+                {
+                    uint8_t gf_dest = ZEN_A(prev);
+                    if (gf_dest == left || gf_dest == right)
+                    {
+                        state_->emitter.rewrite_opcode_at(mul_off - 1, OP_GETFIELD_MUL);
+                    }
+                }
+            }
+        }
+
+        /* Peephole: fuse GETFIELD_IDX + SUB → OP_GETFIELD_SUB (2-word) */
+        if (opcode == OP_SUB)
+        {
+            int sub_off = state_->emitter.current_offset() - 1;
+            if (sub_off >= 1)
+            {
+                Instruction prev = state_->emitter.instruction_at(sub_off - 1);
+                if (ZEN_OP(prev) == OP_GETFIELD_IDX)
+                {
+                    uint8_t gf_dest = ZEN_A(prev);
+                    if (gf_dest == left || gf_dest == right)
+                    {
+                        state_->emitter.rewrite_opcode_at(sub_off - 1, OP_GETFIELD_SUB);
+                    }
+                }
+            }
         }
 
         /* != is EQ + NOT */
@@ -1455,6 +1516,20 @@ namespace zen
                 }
             }
         }
+        /* Try struct hint from global (set by GETGLOBAL when struct_hints_ is populated) */
+        if (field_idx < 0 && last_call_struct_def_)
+        {
+            ObjStructDef *def = last_call_struct_def_;
+            for (int i = 0; i < def->num_fields; i++)
+            {
+                if (def->field_names[i]->length == field_tok.length &&
+                    memcmp(def->field_names[i]->chars, field_tok.start, field_tok.length) == 0)
+                {
+                    field_idx = i;
+                    break;
+                }
+            }
+        }
         /* Try to resolve class field index (self.x inside a method) */
         if (field_idx < 0 && current_class_fields_ && state_->is_method && obj_reg == 0)
         {
@@ -1466,6 +1541,23 @@ namespace zen
                 {
                     field_idx = i;
                     break;
+                }
+            }
+        }
+        /* Try to resolve class field index via class hint on register */
+        if (field_idx < 0)
+        {
+            ObjClass *hint = class_hint_for_reg(obj_reg);
+            if (hint)
+            {
+                for (int i = 0; i < hint->num_fields; i++)
+                {
+                    if (hint->field_names[i]->length == field_tok.length &&
+                        memcmp(hint->field_names[i]->chars, field_tok.start, field_tok.length) == 0)
+                    {
+                        field_idx = i;
+                        break;
+                    }
                 }
             }
         }
@@ -1483,6 +1575,7 @@ namespace zen
                 /* a.b = expr */
                 int val_reg = alloc_reg();
                 expression(val_reg);
+
                 if (field_idx >= 0)
                     state_->emitter.emit_abc(OP_SETFIELD_IDX, obj_reg, field_idx, val_reg, previous_.line);
                 else
@@ -1497,25 +1590,28 @@ namespace zen
                     state_->emitter.emit_abc(OP_GETFIELD_IDX, cur_reg, obj_reg, field_idx, previous_.line);
                 else
                     state_->emitter.emit_abc(OP_GETFIELD, cur_reg, obj_reg, name_ki, previous_.line);
+
                 int rhs_reg = alloc_reg();
                 expression(rhs_reg);
+
+                bool use_obj = class_hint_for_reg(cur_reg) || class_hint_for_reg(rhs_reg);
                 OpCode op;
                 switch (assign_op)
                 {
                 case TOK_PLUS_EQ:
-                    op = OP_ADD;
+                    op = use_obj ? OP_ADD_OBJ : OP_ADD;
                     break;
                 case TOK_MINUS_EQ:
-                    op = OP_SUB;
+                    op = use_obj ? OP_SUB_OBJ : OP_SUB;
                     break;
                 case TOK_STAR_EQ:
-                    op = OP_MUL;
+                    op = use_obj ? OP_MUL_OBJ : OP_MUL;
                     break;
                 case TOK_SLASH_EQ:
-                    op = OP_DIV;
+                    op = use_obj ? OP_DIV_OBJ : OP_DIV;
                     break;
                 default:
-                    op = OP_ADD;
+                    op = use_obj ? OP_ADD_OBJ : OP_ADD;
                     break;
                 }
                 state_->emitter.emit_abc(op, cur_reg, cur_reg, rhs_reg, previous_.line);
@@ -1578,6 +1674,8 @@ namespace zen
             ObjClass *known_class = nullptr;
             if (loc && loc->class_type)
                 known_class = loc->class_type;
+            else if (obj_reg >= 0 && obj_reg < 256 && state_->reg_class_hints[obj_reg])
+                known_class = state_->reg_class_hints[obj_reg];
             else if (current_class_fields_ && state_->is_method && obj_reg == 0)
             {
                 /* self inside a method — find the class being compiled */
@@ -1600,15 +1698,17 @@ namespace zen
                 else
                 {
                     /* Fallback: method not in vtable (maybe added later) */
+                    int sel_slot = vm_->intern_selector(field_tok.start, field_tok.length);
                     state_->emitter.emit_abc(OP_INVOKE, base, arg_count, 0, previous_.line);
-                    state_->emitter.emit((uint32_t)name_ki, previous_.line);
+                    state_->emitter.emit((uint32_t)((sel_slot << 16) | (name_ki & 0xFFFF)), previous_.line);
                 }
             }
             else
             {
-                /* No type info — emit 2-word OP_INVOKE */
+                /* No type info — emit 2-word OP_INVOKE with selector slot */
+                int sel_slot = vm_->intern_selector(field_tok.start, field_tok.length);
                 state_->emitter.emit_abc(OP_INVOKE, base, arg_count, 0, previous_.line);
-                state_->emitter.emit((uint32_t)name_ki, previous_.line);
+                state_->emitter.emit((uint32_t)((sel_slot << 16) | (name_ki & 0xFFFF)), previous_.line);
             }
 
             /* Result is in R[base]. Without explicit return-type tracking,
@@ -1617,9 +1717,33 @@ namespace zen
             int result_reg = dest >= 0 ? dest : base;
             if (result_reg != base)
                 emit_move(result_reg, base);
-            last_call_class_def_ = nullptr;
+
+            /* Propagate return type hint from vtable method if available */
+            ObjClass *ret_class_hint = nullptr;
+            ObjStructDef *ret_struct_hint = nullptr;
+            if (known_class)
+            {
+                int slot = vm_->find_selector(field_tok.start, field_tok.length);
+                if (slot >= 0 && slot < known_class->vtable_size &&
+                    !is_nil(known_class->vtable[slot]))
+                {
+                    ObjFunc *mfn = nullptr;
+                    Value vt_val = known_class->vtable[slot];
+                    if (is_func(vt_val))
+                        mfn = as_func(vt_val);
+                    else if (is_closure(vt_val))
+                        mfn = as_closure(vt_val)->func;
+                    if (mfn)
+                    {
+                        ret_class_hint = mfn->return_class;
+                        ret_struct_hint = mfn->return_struct;
+                    }
+                }
+            }
+            last_call_class_def_ = ret_class_hint;
+            last_call_struct_def_ = ret_struct_hint;
             if (result_reg >= 0 && result_reg < 256)
-                state_->reg_class_hints[result_reg] = nullptr;
+                state_->reg_class_hints[result_reg] = ret_class_hint;
             return result_reg;
         }
 
@@ -1629,6 +1753,9 @@ namespace zen
             state_->emitter.emit_abc(OP_GETFIELD_IDX, reg, obj_reg, field_idx, previous_.line);
         else
             state_->emitter.emit_abc(OP_GETFIELD, reg, obj_reg, name_ki, previous_.line);
+
+
+
         if (obj_reg != reg)
             free_reg(obj_reg);
         return reg;
@@ -1773,6 +1900,71 @@ namespace zen
         return reg;
     }
 
+    /* =========================================================
+    ** super.method(args) → OP_SUPER_INVOKE
+    ** Dispatches to the parent class vtable.
+    ** Only valid inside a method body.
+    ** ========================================================= */
+    int Compiler::super_invoke(int dest)
+    {
+        if (!state_->is_method)
+        {
+            error("'super' can only be used inside a method.");
+            return dest >= 0 ? dest : alloc_reg();
+        }
+        if (!current_class_fields_ || !current_class_fields_->parent_class)
+        {
+            error("'super' used in a class with no parent.");
+            return dest >= 0 ? dest : alloc_reg();
+        }
+
+        ObjClass *parent = current_class_fields_->parent_class;
+
+        consume(TOK_DOT, "Expected '.' after 'super'.");
+        consume(TOK_IDENTIFIER, "Expected method name after 'super.'.");
+        Token method_name = previous_;
+
+        /* Allocate a fresh base — copy self there, args follow */
+        int base = alloc_reg();
+        state_->emitter.emit_abc(OP_MOVE, base, 0, 0, method_name.line); /* copy self */
+
+        /* Parse arguments */
+        consume(TOK_LPAREN, "Expected '(' after method name.");
+        int arg_count = 0;
+        int save_next = state_->next_reg;
+
+        if (!check(TOK_RPAREN))
+        {
+            do
+            {
+                int arg_reg = alloc_reg();
+                expression(arg_reg);
+                state_->next_reg = arg_reg + 1;
+                arg_count++;
+            } while (match(TOK_COMMA));
+        }
+        consume(TOK_RPAREN, "Expected ')' after arguments.");
+
+        /* Emit OP_SUPER_INVOKE (3-word):
+         * word1: [OP|base|arg_count|0]
+         * word2: (sel_slot << 16) | name_ki
+         * word3: parent_class_ki (constant index of static parent class) */
+        int sel_slot = vm_->intern_selector(method_name.start, method_name.length);
+        int name_ki = state_->emitter.add_constant(
+            val_obj((Obj *)intern_string(gc_, method_name.start, method_name.length,
+                                         hash_string(method_name.start, method_name.length))));
+        int parent_ki = state_->emitter.add_constant(val_obj((Obj *)parent));
+        state_->emitter.emit_abc(OP_SUPER_INVOKE, base, arg_count, 0, method_name.line);
+        state_->emitter.emit((uint32_t)((sel_slot << 16) | (name_ki & 0xFFFF)), method_name.line);
+        state_->emitter.emit((uint32_t)parent_ki, method_name.line);
+
+        state_->next_reg = save_next > base + 1 ? save_next : base + 1;
+        int result_reg = dest >= 0 ? dest : base;
+        if (result_reg != base)
+            emit_move(result_reg, base);
+        return result_reg;
+    }
+
     int Compiler::spawn_expression(int dest)
     {
         /* spawn expr
@@ -1880,6 +2072,7 @@ namespace zen
             {
                 consume(TOK_IDENTIFIER, "Expected parameter name.");
                 add_local(previous_);
+                try_parse_type_hint();
                 arity++;
             } while (match(TOK_COMMA));
         }

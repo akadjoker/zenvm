@@ -1,39 +1,39 @@
-# Tutorial 02 — Controlo de Fluxo
+# Tutorial 02 — Control Flow
 
-Este tutorial mostra como controlar a execução do programa com condições, ciclos e loops infinitos controlados por break.
+This tutorial shows how to control program flow with conditions, loops, and infinite loops managed with `break`.
 
-## Objetivo
+## Goal
 
-Aprender a sintaxe e os padrões principais deste tópico em BuLang/Zen.
+Learn the main syntax and patterns for this topic in BuLang/Zen.
 
-## Código completo
+## Full code
 
 ```zen
 // ============================================================
-// Tutorial 02 — Controlo de Fluxo
+// Tutorial 02 — Control Flow
 // ============================================================
 
 // --- if / else ---
 var x = 15;
 
 if (x > 10) {
-    print("maior que 10");
+    print("greater than 10");
 } else {
-    print("menor ou igual a 10");
+    print("less than or equal to 10");
 }
 
-// if encadeado
-var nota = 75;
-if (nota >= 90) {
-    print("Excelente");
+// chained if
+var grade = 75;
+if (grade >= 90) {
+    print("Excellent");
 } else {
-    if (nota >= 70) {
-        print("Bom");
+    if (grade >= 70) {
+        print("Good");
     } else {
-        if (nota >= 50) {
-            print("Suficiente");
+        if (grade >= 50) {
+            print("Enough");
         } else {
-            print("Insuficiente");
+            print("Failing");
         }
     }
 }
@@ -50,49 +50,49 @@ for (var j = 0; j < 5; j = j + 1) {
     print("j = {j}");
 }
 
-// --- loop infinito + break ---
-// loop corre para sempre até encontrar break
-var contador = 0;
+// --- infinite loop + break ---
+// loop runs forever until it finds a break
+var counter = 0;
 loop {
-    contador = contador + 1;
-    if (contador >= 3) {
+    counter = counter + 1;
+    if (counter >= 3) {
         break;
     }
-    print("loop: {contador}");
+    print("loop: {counter}");
 }
-print("saiu do loop em: {contador}");
+print("left loop at: {counter}");
 
-// --- Combinação de condições ---
-var idade = 20;
-var temBilhete = true;
+// --- Combining conditions ---
+var age = 20;
+var hasTicket = true;
 
-if (idade >= 18 && temBilhete) {
-    print("pode entrar");
+if (age >= 18 && hasTicket) {
+    print("can enter");
 }
 
-if (idade < 16 or not temBilhete) {
-    print("não pode entrar");
+if (age < 16 or not hasTicket) {
+    print("cannot enter");
 }
 ```
 
-## Como correr
+## How to run
 
 ```bash
 zen examples/tutorial_02_controlo.zen
 ```
 
-ou ajusta para o nome real do teu executável:
+or adjust the command to match your executable name:
 
 ```bash
 bulang examples/tutorial_02_controlo.zen
 ```
 
-## O que observar
+## What to look for
 
-- A sintaxe é direta e usa blocos com `{` e `}`.
-- Os exemplos usam `print()` para mostrar o resultado esperado.
-- Comentários no próprio código explicam cada secção.
+- The syntax is direct and uses `{` and `}` blocks.
+- The examples use `print()` to show the expected result.
+- Inline comments explain each section of the example.
 
-## Exercício sugerido
+## Suggested exercise
 
-Altera os valores do exemplo, corre outra vez e confirma se o output muda como esperas.
+Change the example values, run it again, and confirm that the output changes as expected.

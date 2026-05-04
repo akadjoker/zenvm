@@ -1,59 +1,59 @@
-# Tutorial 03 — Funções (def)
+# Tutorial 03 — Functions (`def`)
 
-Este tutorial explica funções declaradas com def, parâmetros, return, composição e recursão.
+This tutorial explains functions declared with `def`, parameters, `return`, composition, and recursion.
 
-## Objetivo
+## Goal
 
-Aprender a sintaxe e os padrões principais deste tópico em BuLang/Zen.
+Learn the main syntax and patterns for this topic in BuLang/Zen.
 
-## Código completo
+## Full code
 
 ```zen
 // ============================================================
-// Tutorial 03 — Funções (def)
+// Tutorial 03 — Functions (def)
 // ============================================================
 
-// --- Definição básica ---
-def saudar() {
-    print("Olá, Mundo!");
+// --- Basic definition ---
+def greet() {
+    print("Hello, World!");
 }
 
-saudar();
+greet();
 
-// --- Com parâmetros ---
-def somar(a, b) {
+// --- With parameters ---
+def add(a, b) {
     return a + b;
 }
 
-var resultado = somar(3, 7);
-print("3 + 7 = {resultado}");
+var result = add(3, 7);
+print("3 + 7 = {result}");
 
-// --- Com return múltiplos caminhos ---
-def maximo(a, b) {
+// --- With multiple return paths ---
+def max_value(a, b) {
     if (a > b) { return a; }
     return b;
 }
 
-print("max(10, 25) = {maximo(10, 25)}");
-print("max(99, 1)  = {maximo(99, 1)}");
+print("max(10, 25) = {max_value(10, 25)}");
+print("max(99, 1)  = {max_value(99, 1)}");
 
-// --- Funções auxiliares / composição ---
+// --- Helper functions / composition ---
 def clamp(v, lo, hi) {
     if (v < lo) { return lo; }
     if (v > hi) { return hi; }
     return v;
 }
 
-def normalizar(v, min_v, max_v) {
+def normalize(v, min_v, max_v) {
     var c = clamp(v, min_v, max_v);
     return (c - min_v) / (max_v - min_v);
 }
 
-print(normalizar(50, 0, 100));   // 0.5
-print(normalizar(-10, 0, 100));  // 0.0  (clampado)
-print(normalizar(120, 0, 100));  // 1.0  (clampado)
+print(normalize(50, 0, 100));   // 0.5
+print(normalize(-10, 0, 100));  // 0.0  (clamped)
+print(normalize(120, 0, 100));  // 1.0  (clamped)
 
-// --- Funções recursivas ---
+// --- Recursive functions ---
 def factorial(n) {
     if (n <= 1) { return 1; }
     return n * factorial(n - 1);
@@ -62,33 +62,33 @@ def factorial(n) {
 print("5! = {factorial(5)}");    // 120
 print("10! = {factorial(10)}");  // 3628800
 
-// --- Funções como valores de lógica de jogo ---
+// --- Functions used by gameplay logic ---
 def hit(mx, my, x, y, w, h) {
     return mx >= x && mx <= x + w && my >= y && my <= y + h;
 }
 
-var dentroRetangulo = hit(50, 50, 10, 10, 100, 100);
-print("ponto dentro? {dentroRetangulo}");  // true
+var insideRectangle = hit(50, 50, 10, 10, 100, 100);
+print("point inside? {insideRectangle}");  // true
 ```
 
-## Como correr
+## How to run
 
 ```bash
 zen examples/tutorial_03_funcoes.zen
 ```
 
-ou ajusta para o nome real do teu executável:
+or adjust the command to match your executable name:
 
 ```bash
 bulang examples/tutorial_03_funcoes.zen
 ```
 
-## O que observar
+## What to look for
 
-- A sintaxe é direta e usa blocos com `{` e `}`.
-- Os exemplos usam `print()` para mostrar o resultado esperado.
-- Comentários no próprio código explicam cada secção.
+- The syntax is direct and uses `{` and `}` blocks.
+- The examples use `print()` to show the expected result.
+- Inline comments explain each section of the example.
 
-## Exercício sugerido
+## Suggested exercise
 
-Altera os valores do exemplo, corre outra vez e confirma se o output muda como esperas.
+Change the example values, run it again, and confirm that the output changes as expected.

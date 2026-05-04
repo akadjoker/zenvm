@@ -1,48 +1,48 @@
 # Tutorial 04 — Arrays
 
-Este tutorial cobre criação de arrays, push, pop, acesso por índice, iteração e padrões práticos como remoção rápida.
+This tutorial covers array creation, `push`, `pop`, indexed access, iteration, and practical patterns such as fast removal.
 
-## Objetivo
+## Goal
 
-Aprender a sintaxe e os padrões principais deste tópico em BuLang/Zen.
+Learn the main syntax and patterns for this topic in BuLang/Zen.
 
-## Código completo
+## Full code
 
 ```zen
 // ============================================================
 // Tutorial 04 — Arrays
 // ============================================================
 
-// --- Criação ---
-var lista = [];
-var numeros = [1, 2, 3, 4, 5];
+// --- Creation ---
+var list = [];
+var numbers = [1, 2, 3, 4, 5];
 
 // --- push / pop / len ---
-lista.push(10);
-lista.push(20);
-lista.push(30);
-print("tamanho: {lista.len()}");   // 3
-print("ultimo: {lista.pop()}");    // 30
-print("tamanho: {lista.len()}");   // 2
+list.push(10);
+list.push(20);
+list.push(30);
+print("size: {list.len()}");   // 3
+print("last: {list.pop()}");    // 30
+print("size: {list.len()}");   // 2
 
-// --- Acesso por índice ---
-var cores = ["vermelho", "verde", "azul"];
-print(cores[0]);    // vermelho
-print(cores[2]);    // azul
+// --- Indexed access ---
+var colors = ["red", "green", "blue"];
+print(colors[0]);    // red
+print(colors[2]);    // blue
 
-// Modificar elemento
-cores[1] = "amarelo";
-print(cores[1]);    // amarelo
+// Modify an element
+colors[1] = "yellow";
+print(colors[1]);    // yellow
 
-// --- Iterar ---
+// --- Iterate ---
 var i = 0;
-while (i < numeros.len()) {
-    print("numeros[{i}] = {numeros[i]}");
+while (i < numbers.len()) {
+    print("numbers[{i}] = {numbers[i]}");
     i = i + 1;
 }
 
-// --- Swap (truque para remover elemento do meio) ---
-// Substitui o elemento i pelo último e faz pop — O(1)
+// --- Swap trick for removing from the middle ---
+// Replaces element i with the last one and pops - O(1)
 def array_remove(arr, i) {
     var ultimo = arr.len() - 1;
     if (i != ultimo) {
@@ -52,47 +52,47 @@ def array_remove(arr, i) {
 }
 
 var items = [10, 20, 30, 40, 50];
-array_remove(items, 1);   // remove o 20
-print("após remover índice 1:");
+array_remove(items, 1);   // removes 20
+print("after removing index 1:");
 var j = 0;
 while (j < items.len()) {
     print("  {items[j]}");
     j = j + 1;
 }
 
-// --- Array como fila simples (queue) ---
-var fila = [];
-fila.push("primeiro");
-fila.push("segundo");
-fila.push("terceiro");
+// --- Array as a simple queue ---
+var queue = [];
+queue.push("first");
+queue.push("second");
+queue.push("third");
 
-// Remover da frente (shift manual com swap-remove não preserva ordem,
-// mas para filas de eventos sem ordem importa só o len)
-print("na fila: {fila.len()} items");
+// Removing from the front (manual shift with swap-remove does not preserve order,
+// but for unordered event queues only the length may matter)
+print("in queue: {queue.len()} items");
 
-// --- Array de structs (ver tutorial 05) ---
+// --- Array of structs (see tutorial 05) ---
 // var entidades = [];
 // entidades.push(Ponto(10, 20));
 ```
 
-## Como correr
+## How to run
 
 ```bash
 zen examples/tutorial_04_arrays.zen
 ```
 
-ou ajusta para o nome real do teu executável:
+or adjust the command to match your executable name:
 
 ```bash
 bulang examples/tutorial_04_arrays.zen
 ```
 
-## O que observar
+## What to look for
 
-- A sintaxe é direta e usa blocos com `{` e `}`.
-- Os exemplos usam `print()` para mostrar o resultado esperado.
-- Comentários no próprio código explicam cada secção.
+- The syntax is direct and uses `{` and `}` blocks.
+- The examples use `print()` to show the expected result.
+- Inline comments explain each section of the example.
 
-## Exercício sugerido
+## Suggested exercise
 
-Altera os valores do exemplo, corre outra vez e confirma se o output muda como esperas.
+Change the example values, run it again, and confirm that the output changes as expected.

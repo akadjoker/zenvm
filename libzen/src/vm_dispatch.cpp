@@ -5,6 +5,11 @@
 #include <cmath>
 #include <ctime>
 
+/* MSVC compatibility: __builtin_expect is GCC/Clang only */
+#ifdef _MSC_VER
+#define __builtin_expect(expr, val) (expr)
+#endif
+
 namespace zen
 {
 
@@ -243,6 +248,7 @@ namespace zen
             &&lbl_OP_SETINDEX,
             &&lbl_OP_INVOKE,
             &&lbl_OP_INVOKE_VT,
+            &&lbl_OP_SUPER_INVOKE,
             &&lbl_OP_NEWCLASS,
             &&lbl_OP_NEWINSTANCE,
             &&lbl_OP_GETMETHOD,
@@ -273,6 +279,9 @@ namespace zen
             &&lbl_OP_LEJMPIFNOT,
             &&lbl_OP_FORPREP,
             &&lbl_OP_FORLOOP,
+            &&lbl_OP_GETFIELD_MUL,
+            &&lbl_OP_GETFIELD_SUB,
+            &&lbl_OP_ITER_ELEM,
             &&lbl_OP_HALT,
         };
 
@@ -369,13 +378,56 @@ namespace zen
         {
             uint32_t i = *ip;
             Value vb = R[ZEN_B(i)], vc = R[ZEN_C(i)];
-            if (is_string(vb) && is_string(vc))
+            if (__builtin_expect(!is_obj(vb) && !is_obj(vc), 1))
+            {
+                /* Fast path: numerics (int/float) — no objects involved */
+                NUM_BINOP(+);
+            }
+            else if (is_string(vb) && is_string(vc))
             {
                 R[ZEN_A(i)] = val_obj((Obj *)new_string_concat(&gc_, as_string(vb), as_string(vc)));
             }
+            else if (is_instance(vb) || is_instance(vc))
+            {
+                /* Object operator overload + __str__ fallback */
+                Value result;
+                SAVE_IP();
+                if (try_binary_operator(this, vb, vc, SLOT_ADD, SLOT_RADD, &result))
+                {
+                    if (had_error_) return;
+                    LOAD_STATE();
+                    R[ZEN_A(i)] = result;
+                }
+                else
+                {
+                    LOAD_STATE();
+                    /* Instance in string context: coerce via __str__ */
+                    Value sv = vb, sc = vc;
+                    if (!is_string(sv))
+                    {
+                        Value str_result;
+                        if (try_string_operator(this, sv, &str_result))
+                            sv = str_result;
+                        else
+                            sv = default_to_string(&gc_, sv);
+                        if (had_error_) return;
+                    }
+                    if (!is_string(sc))
+                    {
+                        Value str_result;
+                        if (try_string_operator(this, sc, &str_result))
+                            sc = str_result;
+                        else
+                            sc = default_to_string(&gc_, sc);
+                        if (had_error_) return;
+                    }
+                    LOAD_STATE();
+                    R[ZEN_A(i)] = val_obj((Obj *)new_string_concat(&gc_, as_string(sv), as_string(sc)));
+                }
+            }
             else if (is_string(vb) || is_string(vc))
             {
-                /* Mixed string + non-string: coerce to string and concat */
+                /* Mixed string + primitive: coerce to string and concat */
                 char buf[64], buf2[64];
                 const char *sa; int la;
                 const char *sb; int lb;
@@ -408,34 +460,135 @@ namespace zen
         CASE(OP_SUB)
         {
             uint32_t i = *ip;
-            NUM_BINOP(-);
+            Value vb = R[ZEN_B(i)], vc = R[ZEN_C(i)];
+            if (__builtin_expect(!is_obj(vb) && !is_obj(vc), 1))
+            {
+                NUM_BINOP(-);
+            }
+            else if (is_instance(vb) || is_instance(vc))
+            {
+                Value result;
+                SAVE_IP();
+                if (try_binary_operator(this, vb, vc, SLOT_SUB, SLOT_RSUB, &result))
+                {
+                    if (had_error_) return;
+                    LOAD_STATE();
+                    R[ZEN_A(i)] = result;
+                }
+                else
+                {
+                    LOAD_STATE();
+                    NUM_BINOP(-);
+                }
+            }
+            else
+            {
+                NUM_BINOP(-);
+            }
             NEXT();
         }
         CASE(OP_MUL)
         {
             uint32_t i = *ip;
-            NUM_BINOP(*);
+            Value vb = R[ZEN_B(i)], vc = R[ZEN_C(i)];
+            if (__builtin_expect(!is_obj(vb) && !is_obj(vc), 1))
+            {
+                NUM_BINOP(*);
+            }
+            else if (is_instance(vb) || is_instance(vc))
+            {
+                Value result;
+                SAVE_IP();
+                if (try_binary_operator(this, vb, vc, SLOT_MUL, SLOT_RMUL, &result))
+                {
+                    if (had_error_) return;
+                    LOAD_STATE();
+                    R[ZEN_A(i)] = result;
+                }
+                else
+                {
+                    LOAD_STATE();
+                    NUM_BINOP(*);
+                }
+            }
+            else
+            {
+                NUM_BINOP(*);
+            }
             NEXT();
         }
         CASE(OP_DIV)
         {
             uint32_t i = *ip;
             Value vb = R[ZEN_B(i)], vc = R[ZEN_C(i)];
-            /* Divisão sempre float (evitar div by zero int) */
-            R[ZEN_A(i)] = val_float(to_number(vb) / to_number(vc));
+            if (__builtin_expect(!is_obj(vb) && !is_obj(vc), 1))
+            {
+                R[ZEN_A(i)] = val_float(to_number(vb) / to_number(vc));
+            }
+            else if (is_instance(vb) || is_instance(vc))
+            {
+                Value result;
+                SAVE_IP();
+                if (try_binary_operator(this, vb, vc, SLOT_DIV, SLOT_RDIV, &result))
+                {
+                    if (had_error_) return;
+                    LOAD_STATE();
+                    R[ZEN_A(i)] = result;
+                }
+                else
+                {
+                    LOAD_STATE();
+                    R[ZEN_A(i)] = val_float(to_number(vb) / to_number(vc));
+                }
+            }
+            else
+            {
+                R[ZEN_A(i)] = val_float(to_number(vb) / to_number(vc));
+            }
             NEXT();
         }
         CASE(OP_MOD)
         {
             uint32_t i = *ip;
             Value vb = R[ZEN_B(i)], vc = R[ZEN_C(i)];
-            if (vb.type == VAL_INT && vc.type == VAL_INT)
+            if (__builtin_expect(!is_obj(vb) && !is_obj(vc), 1))
             {
-                int32_t divisor = vc.as.integer;
-                if (divisor == 0)
-                    R[ZEN_A(i)] = val_int(0);
+                if (vb.type == VAL_INT && vc.type == VAL_INT)
+                {
+                    int32_t divisor = vc.as.integer;
+                    if (divisor == 0)
+                        R[ZEN_A(i)] = val_int(0);
+                    else
+                        R[ZEN_A(i)] = val_int(vb.as.integer % divisor);
+                }
                 else
-                    R[ZEN_A(i)] = val_int(vb.as.integer % divisor);
+                {
+                    double a = to_number(vb), b = to_number(vc);
+                    if (b == 0.0)
+                        R[ZEN_A(i)] = val_float(__builtin_nan(""));
+                    else
+                        R[ZEN_A(i)] = val_float(a - (int64_t)(a / b) * b);
+                }
+            }
+            else if (is_instance(vb) || is_instance(vc))
+            {
+                Value result;
+                SAVE_IP();
+                if (try_binary_operator(this, vb, vc, SLOT_MOD, SLOT_RMOD, &result))
+                {
+                    if (had_error_) return;
+                    LOAD_STATE();
+                    R[ZEN_A(i)] = result;
+                }
+                else
+                {
+                    LOAD_STATE();
+                    double a = to_number(vb), b = to_number(vc);
+                    if (b == 0.0)
+                        R[ZEN_A(i)] = val_float(__builtin_nan(""));
+                    else
+                        R[ZEN_A(i)] = val_float(a - (int64_t)(a / b) * b);
+                }
             }
             else
             {
@@ -451,10 +604,33 @@ namespace zen
         {
             uint32_t i = *ip;
             Value v = R[ZEN_B(i)];
-            if (v.type == VAL_INT)
-                R[ZEN_A(i)] = val_int((int64_t)(-(uint64_t)v.as.integer));
+            if (__builtin_expect(!is_obj(v), 1))
+            {
+                if (v.type == VAL_INT)
+                    R[ZEN_A(i)] = val_int((int64_t)(-(uint64_t)v.as.integer));
+                else
+                    R[ZEN_A(i)] = val_float(-to_number(v));
+            }
+            else if (is_instance(v))
+            {
+                Value result;
+                SAVE_IP();
+                if (try_unary_operator(this, v, SLOT_NEG, &result))
+                {
+                    if (had_error_) return;
+                    LOAD_STATE();
+                    R[ZEN_A(i)] = result;
+                }
+                else
+                {
+                    LOAD_STATE();
+                    R[ZEN_A(i)] = val_float(-to_number(v));
+                }
+            }
             else
+            {
                 R[ZEN_A(i)] = val_float(-to_number(v));
+            }
             NEXT();
         }
 
@@ -462,17 +638,47 @@ namespace zen
         {
             uint32_t i = *ip;
             uint8_t dst = ZEN_A(i);
+            Value vb = R[ZEN_B(i)], vc = R[ZEN_C(i)];
             Value result;
             SAVE_IP();
-            if (!try_binary_operator(this, R[ZEN_B(i)], R[ZEN_C(i)], SLOT_ADD, SLOT_RADD, &result))
+            if (try_binary_operator(this, vb, vc, SLOT_ADD, SLOT_RADD, &result))
+            {
+                if (had_error_) return;
+                LOAD_STATE();
+                R[dst] = result;
+                NEXT();
+            }
+            /* Fallback: string concat with __str__ coercion for instances */
+            if (is_string(vb) || is_string(vc) || is_instance(vb) || is_instance(vc))
+            {
+                /* Coerce both sides to string, calling __str__ on instances */
+                Value sv = vb, sc = vc;
+                if (!is_string(sv))
+                {
+                    Value str_result;
+                    if (try_string_operator(this, sv, &str_result))
+                        sv = str_result;
+                    else
+                        sv = default_to_string(&gc_, sv);
+                    if (had_error_) return;
+                }
+                if (!is_string(sc))
+                {
+                    Value str_result;
+                    if (try_string_operator(this, sc, &str_result))
+                        sc = str_result;
+                    else
+                        sc = default_to_string(&gc_, sc);
+                    if (had_error_) return;
+                }
+                LOAD_STATE();
+                R[dst] = val_obj((Obj *)new_string_concat(&gc_, as_string(sv), as_string(sc)));
+            }
+            else
             {
                 LOAD_STATE();
-                runtime_error("object does not implement operator +");
-                return;
+                NUM_BINOP(+);
             }
-            if (had_error_) return;
-            LOAD_STATE();
-            R[dst] = result;
             NEXT();
         }
         CASE(OP_SUB_OBJ)
@@ -481,15 +687,15 @@ namespace zen
             uint8_t dst = ZEN_A(i);
             Value result;
             SAVE_IP();
-            if (!try_binary_operator(this, R[ZEN_B(i)], R[ZEN_C(i)], SLOT_SUB, SLOT_RSUB, &result))
+            if (try_binary_operator(this, R[ZEN_B(i)], R[ZEN_C(i)], SLOT_SUB, SLOT_RSUB, &result))
             {
+                if (had_error_) return;
                 LOAD_STATE();
-                runtime_error("object does not implement operator -");
-                return;
+                R[dst] = result;
+                NEXT();
             }
-            if (had_error_) return;
             LOAD_STATE();
-            R[dst] = result;
+            NUM_BINOP(-);
             NEXT();
         }
         CASE(OP_MUL_OBJ)
@@ -498,49 +704,66 @@ namespace zen
             uint8_t dst = ZEN_A(i);
             Value result;
             SAVE_IP();
-            if (!try_binary_operator(this, R[ZEN_B(i)], R[ZEN_C(i)], SLOT_MUL, SLOT_RMUL, &result))
+            if (try_binary_operator(this, R[ZEN_B(i)], R[ZEN_C(i)], SLOT_MUL, SLOT_RMUL, &result))
             {
+                if (had_error_) return;
                 LOAD_STATE();
-                runtime_error("object does not implement operator *");
-                return;
+                R[dst] = result;
+                NEXT();
             }
-            if (had_error_) return;
             LOAD_STATE();
-            R[dst] = result;
+            NUM_BINOP(*);
             NEXT();
         }
         CASE(OP_DIV_OBJ)
         {
             uint32_t i = *ip;
             uint8_t dst = ZEN_A(i);
+            Value vb = R[ZEN_B(i)], vc = R[ZEN_C(i)];
             Value result;
             SAVE_IP();
-            if (!try_binary_operator(this, R[ZEN_B(i)], R[ZEN_C(i)], SLOT_DIV, SLOT_RDIV, &result))
+            if (try_binary_operator(this, vb, vc, SLOT_DIV, SLOT_RDIV, &result))
             {
+                if (had_error_) return;
                 LOAD_STATE();
-                runtime_error("object does not implement operator /");
-                return;
+                R[dst] = result;
+                NEXT();
             }
-            if (had_error_) return;
             LOAD_STATE();
-            R[dst] = result;
+            R[dst] = val_float(to_number(vb) / to_number(vc));
             NEXT();
         }
         CASE(OP_MOD_OBJ)
         {
             uint32_t i = *ip;
             uint8_t dst = ZEN_A(i);
+            Value vb = R[ZEN_B(i)], vc = R[ZEN_C(i)];
             Value result;
             SAVE_IP();
-            if (!try_binary_operator(this, R[ZEN_B(i)], R[ZEN_C(i)], SLOT_MOD, SLOT_RMOD, &result))
+            if (try_binary_operator(this, vb, vc, SLOT_MOD, SLOT_RMOD, &result))
             {
+                if (had_error_) return;
                 LOAD_STATE();
-                runtime_error("object does not implement operator %%");
-                return;
+                R[dst] = result;
+                NEXT();
             }
-            if (had_error_) return;
             LOAD_STATE();
-            R[dst] = result;
+            if (vb.type == VAL_INT && vc.type == VAL_INT)
+            {
+                int32_t divisor = vc.as.integer;
+                if (divisor == 0)
+                    R[dst] = val_int(0);
+                else
+                    R[dst] = val_int(vb.as.integer % divisor);
+            }
+            else
+            {
+                double a = to_number(vb), b = to_number(vc);
+                if (b == 0.0)
+                    R[dst] = val_float(__builtin_nan(""));
+                else
+                    R[dst] = val_float(a - (int64_t)(a / b) * b);
+            }
             NEXT();
         }
         CASE(OP_NEG_OBJ)
@@ -685,14 +908,49 @@ namespace zen
         {
             uint32_t i = *ip;
             Value vb = R[ZEN_B(i)], vc = R[ZEN_C(i)];
-            R[ZEN_A(i)] = val_bool(values_equal(vb, vc));
+            if (__builtin_expect(is_instance(vb) || is_instance(vc), 0))
+            {
+                Value result;
+                SAVE_IP();
+                if (try_binary_operator(this, vb, vc, SLOT_EQ, SLOT_EQ, &result))
+                {
+                    if (had_error_) return;
+                    LOAD_STATE();
+                    R[ZEN_A(i)] = val_bool(is_truthy(result));
+                }
+                else
+                {
+                    LOAD_STATE();
+                    R[ZEN_A(i)] = val_bool(values_equal(vb, vc));
+                }
+            }
+            else
+            {
+                R[ZEN_A(i)] = val_bool(values_equal(vb, vc));
+            }
             NEXT();
         }
         CASE(OP_LT)
         {
             uint32_t i = *ip;
             Value vb = R[ZEN_B(i)], vc = R[ZEN_C(i)];
-            if (is_string(vb) && is_string(vc))
+            if (__builtin_expect(is_instance(vb) || is_instance(vc), 0))
+            {
+                Value result;
+                SAVE_IP();
+                if (try_binary_operator(this, vb, vc, SLOT_LT, SLOT_LT, &result))
+                {
+                    if (had_error_) return;
+                    LOAD_STATE();
+                    R[ZEN_A(i)] = val_bool(is_truthy(result));
+                }
+                else
+                {
+                    LOAD_STATE();
+                    R[ZEN_A(i)] = val_bool(to_number(vb) < to_number(vc));
+                }
+            }
+            else if (is_string(vb) && is_string(vc))
                 R[ZEN_A(i)] = val_bool(strcmp(as_cstring(vb), as_cstring(vc)) < 0);
             else if (vb.type == VAL_INT && vc.type == VAL_INT)
                 R[ZEN_A(i)] = val_bool(vb.as.integer < vc.as.integer);
@@ -704,7 +962,23 @@ namespace zen
         {
             uint32_t i = *ip;
             Value vb = R[ZEN_B(i)], vc = R[ZEN_C(i)];
-            if (is_string(vb) && is_string(vc))
+            if (__builtin_expect(is_instance(vb) || is_instance(vc), 0))
+            {
+                Value result;
+                SAVE_IP();
+                if (try_binary_operator(this, vb, vc, SLOT_LE, SLOT_LE, &result))
+                {
+                    if (had_error_) return;
+                    LOAD_STATE();
+                    R[ZEN_A(i)] = val_bool(is_truthy(result));
+                }
+                else
+                {
+                    LOAD_STATE();
+                    R[ZEN_A(i)] = val_bool(to_number(vb) <= to_number(vc));
+                }
+            }
+            else if (is_string(vb) && is_string(vc))
                 R[ZEN_A(i)] = val_bool(strcmp(as_cstring(vb), as_cstring(vc)) <= 0);
             else if (vb.type == VAL_INT && vc.type == VAL_INT)
                 R[ZEN_A(i)] = val_bool(vb.as.integer <= vc.as.integer);
@@ -794,6 +1068,7 @@ namespace zen
             if (is_struct_def(callee))
             {
                 ObjStructDef *def = as_struct_def(callee);
+                gc_pause(&gc_);
                 ObjStruct *s = (ObjStruct *)zen_alloc(&gc_, sizeof(ObjStruct));
                 s->obj.type = OBJ_STRUCT;
                 s->obj.color = GC_BLACK;
@@ -804,6 +1079,7 @@ namespace zen
                 gc_.objects = (Obj *)s;
                 s->def = def;
                 s->fields = (Value *)zen_alloc(&gc_, sizeof(Value) * def->num_fields);
+                gc_resume(&gc_);
                 for (int32_t fi = 0; fi < def->num_fields; fi++)
                     s->fields[fi] = (fi < nargs) ? R[a + 1 + fi] : val_nil();
                 R[a] = val_obj((Obj *)s);
@@ -812,6 +1088,7 @@ namespace zen
             if (is_native_struct_def(callee))
             {
                 NativeStructDef *def = as_native_struct_def(callee);
+                gc_pause(&gc_);
                 ObjNativeStruct *ns = (ObjNativeStruct *)zen_alloc(&gc_, sizeof(ObjNativeStruct));
                 ns->obj.type = OBJ_NATIVE_STRUCT;
                 ns->obj.color = GC_BLACK;
@@ -822,6 +1099,7 @@ namespace zen
                 gc_.objects = (Obj *)ns;
                 ns->def = def;
                 ns->data = zen_alloc(&gc_, def->struct_size);
+                gc_resume(&gc_);
                 memset(ns->data, 0, def->struct_size);
                 if (def->ctor)
                     def->ctor(this, ns->data, nargs, &R[a + 1]);
@@ -1578,8 +1856,62 @@ namespace zen
                     R[ZEN_A(i)] = val_float(v);
                 else
                     R[ZEN_A(i)] = val_int((int64_t)v);
+            } else if (is_string(container)) {
+                if (!is_int(key)) { runtime_error("string index must be integer"); return; }
+                ObjString *s = as_string(container);
+                int32_t idx = (int32_t)key.as.integer;
+                if ((uint32_t)idx >= (uint32_t)s->length) { runtime_error("string index out of bounds"); return; }
+                R[ZEN_A(i)] = val_obj((Obj *)new_string(&gc_, &s->chars[idx], 1));
             } else {
                 runtime_error("cannot index value");
+                return;
+            }
+            NEXT();
+        }
+        CASE(OP_ITER_ELEM)
+        {
+            uint32_t i = *ip;
+            Value container = R[ZEN_B(i)];
+            Value vidx = R[ZEN_C(i)];
+            int32_t idx = (int32_t)vidx.as.integer;
+            if (is_array(container)) {
+                R[ZEN_A(i)] = array_get(as_array(container), idx);
+            } else if (is_buffer(container)) {
+                ObjBuffer *buf = as_buffer(container);
+                if ((uint32_t)idx >= (uint32_t)buf->count) { runtime_error("buffer index out of bounds"); return; }
+                double v = buffer_get(buf, idx);
+                if (buf->btype >= BUF_FLOAT32)
+                    R[ZEN_A(i)] = val_float(v);
+                else
+                    R[ZEN_A(i)] = val_int((int64_t)v);
+            } else if (is_string(container)) {
+                ObjString *s = as_string(container);
+                if ((uint32_t)idx >= (uint32_t)s->length) { runtime_error("string index out of bounds"); return; }
+                R[ZEN_A(i)] = val_obj((Obj *)new_string(&gc_, &s->chars[idx], 1));
+            } else if (is_map(container)) {
+                ObjMap *map = as_map(container);
+                int32_t ord = 0;
+                bool found = false;
+                for (int32_t n = 0; n < map->capacity; n++) {
+                    if (map->nodes[n].hash != 0xFFFFFFFFu) {
+                        if (ord == idx) { R[ZEN_A(i)] = map->nodes[n].key; found = true; break; }
+                        ord++;
+                    }
+                }
+                if (!found) { runtime_error("map iteration index out of bounds"); return; }
+            } else if (is_set(container)) {
+                ObjSet *set = as_set(container);
+                int32_t ord = 0;
+                bool found = false;
+                for (int32_t n = 0; n < set->capacity; n++) {
+                    if (set->nodes[n].hash != 0xFFFFFFFFu) {
+                        if (ord == idx) { R[ZEN_A(i)] = set->nodes[n].key; found = true; break; }
+                        ord++;
+                    }
+                }
+                if (!found) { runtime_error("set iteration index out of bounds"); return; }
+            } else {
+                runtime_error("cannot iterate value");
                 return;
             }
             NEXT();
@@ -1627,7 +1959,9 @@ namespace zen
             uint32_t i = *ip;
             uint8_t base = ZEN_A(i);
             uint8_t arg_count = ZEN_B(i);
-            uint32_t name_ki = *(++ip); /* second word: method name constant index */
+            uint32_t word2 = *(++ip); /* packed: (selector_slot << 16) | name_ki */
+            uint16_t sel_slot = (uint16_t)(word2 >> 16);
+            uint16_t name_ki = (uint16_t)(word2 & 0xFFFF);
             Value receiver = R[base];
             ObjString *method = as_string(K[name_ki]);
             const char *mname = method->chars;
@@ -1655,22 +1989,16 @@ namespace zen
             }
             else if (is_instance(receiver))
             {
-                /* Method call on class instance */
+                /* Vtable dispatch using compile-time selector slot */
                 ObjInstance *inst = as_instance(receiver);
                 ObjClass *klass = inst->klass;
 
-                /* Look up method in class hierarchy */
-                bool mfound = false;
-                Value mval;
-                ObjClass *search = klass;
-                while (search)
-                {
-                    mval = map_get(search->methods, val_obj((Obj *)method), &mfound);
-                    if (mfound) break;
-                    search = search->parent;
-                }
+                /* Direct vtable lookup — O(1), no hash map walk */
+                Value mval = val_nil();
+                if (sel_slot < klass->vtable_size)
+                    mval = klass->vtable[sel_slot];
 
-                if (!mfound)
+                if (is_nil(mval))
                 {
                     runtime_error("'%s' has no method '%s'", klass->name->chars, mname);
                     return;
@@ -1680,8 +2008,6 @@ namespace zen
                 {
                     ObjClosure *cl = as_closure(mval);
                     ObjFunc *fn = cl->func;
-                    /* self goes at R[base], args at R[base+1..] */
-                    /* R[base] already has receiver (self) */
                     if (fn->arity >= 0 && arg_count != fn->arity)
                     {
                         runtime_error("%s.%s() expects %d args but got %d",
@@ -1777,6 +2103,81 @@ namespace zen
                 runtime_error("vtable slot %d is nil (method not found)", slot);
                 return;
             }
+            NEXT();
+        }
+
+        CASE(OP_SUPER_INVOKE)
+        {
+            /* 3-word: word1=[OP|base|argc|0], word2=(sel<<16|name_ki), word3=parent_ki */
+            uint32_t i = *ip;
+            uint8_t base = ZEN_A(i);
+            uint8_t arg_count = ZEN_B(i);
+            uint32_t word2 = ip[1];
+            int sel_slot = (int)(word2 >> 16);
+            int name_ki = (int)(word2 & 0xFFFF);
+            uint32_t parent_ki = ip[2];
+
+            /* Resolve static parent class from constant pool */
+            ObjClass *parent = as_class(frame->func->constants[parent_ki]);
+
+            /* Vtable lookup on static parent */
+            Value mval = val_nil();
+            if (sel_slot < parent->vtable_size)
+                mval = parent->vtable[sel_slot];
+
+            if (is_nil(mval))
+            {
+                const char *mname = as_string(frame->func->constants[name_ki])->chars;
+                runtime_error("parent class '%s' has no method '%s'",
+                              parent->name->chars, mname);
+                return;
+            }
+
+            if (is_closure(mval))
+            {
+                ObjClosure *cl = as_closure(mval);
+                ObjFunc *fn = cl->func;
+                if (fn->arity >= 0 && arg_count != fn->arity)
+                {
+                    const char *mname = as_string(frame->func->constants[name_ki])->chars;
+                    runtime_error("super.%s() expects %d args but got %d",
+                                  mname, fn->arity, arg_count);
+                    return;
+                }
+                if (fiber->frame_count >= kMaxFrames)
+                {
+                    runtime_error("stack overflow");
+                    return;
+                }
+                ip += 3; /* skip all 3 words */
+                SAVE_IP();
+                CallFrame *new_frame = &fiber->frames[fiber->frame_count++];
+                new_frame->closure = cl;
+                new_frame->func = fn;
+                new_frame->ip = fn->code;
+                new_frame->base = &R[base]; /* base[0]=self, base[1..]=args */
+                new_frame->ret_reg = base;
+                new_frame->ret_count = 1;
+                fiber->stack_top = new_frame->base + fn->num_regs;
+                LOAD_STATE();
+                DISPATCH();
+            }
+            else if (is_native(mval))
+            {
+                ObjNative *nat = as_native(mval);
+                int nret = nat->fn(this, &R[base], arg_count + 1);
+                if (nret > 0)
+                    R[base] = R[base];
+                else
+                    R[base] = val_nil();
+            }
+            else
+            {
+                const char *mname = as_string(frame->func->constants[name_ki])->chars;
+                runtime_error("super.%s is not callable", mname);
+                return;
+            }
+            ip += 2; /* skip word2+word3 */
             NEXT();
         }
 
@@ -2199,6 +2600,41 @@ namespace zen
             R[a].as.integer = counter;
             if (counter < limit)
                 ip += ZEN_SBX(i); /* loop back */
+            NEXT();
+        }
+
+        /* --- Fused field+arith superinstructions (2-word) --- */
+        CASE(OP_GETFIELD_MUL)
+        {
+            /* word1: GETFIELD_IDX  R[A] = R[B].fields[C]
+               word2: MUL           R[A] = R[B] * R[C]    */
+            uint32_t i1 = *ip;
+            ObjInstance *inst = as_instance(R[ZEN_B(i1)]);
+            R[ZEN_A(i1)] = inst->fields[ZEN_C(i1)];
+            ++ip;
+            uint32_t i2 = *ip;
+            Value vb = R[ZEN_B(i2)], vc = R[ZEN_C(i2)];
+            if (vb.type == VAL_INT && vc.type == VAL_INT)
+                R[ZEN_A(i2)] = val_int((int64_t)((uint64_t)vb.as.integer * (uint64_t)vc.as.integer));
+            else
+                R[ZEN_A(i2)] = val_float(to_number(vb) * to_number(vc));
+            NEXT();
+        }
+
+        CASE(OP_GETFIELD_SUB)
+        {
+            /* word1: GETFIELD_IDX  R[A] = R[B].fields[C]
+               word2: SUB           R[A] = R[B] - R[C]    */
+            uint32_t i1 = *ip;
+            ObjInstance *inst = as_instance(R[ZEN_B(i1)]);
+            R[ZEN_A(i1)] = inst->fields[ZEN_C(i1)];
+            ++ip;
+            uint32_t i2 = *ip;
+            Value vb = R[ZEN_B(i2)], vc = R[ZEN_C(i2)];
+            if (vb.type == VAL_INT && vc.type == VAL_INT)
+                R[ZEN_A(i2)] = val_int(vb.as.integer - vc.as.integer);
+            else
+                R[ZEN_A(i2)] = val_float(to_number(vb) - to_number(vc));
             NEXT();
         }
 

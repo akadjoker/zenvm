@@ -102,6 +102,9 @@ namespace zen
         "LEJMPIFNOT",
         "FORPREP",
         "FORLOOP",
+        "GETFIELD_MUL",
+        "GETFIELD_SUB",
+        "ITER_ELEM",
         "HALT",
     };
 
@@ -339,9 +342,26 @@ namespace zen
 
         printf("\n");
 
+        /* 3-word OP_SUPER_INVOKE */
+        if (op == OP_SUPER_INVOKE)
+        {
+            uint32_t word2 = func->code[offset + 1];
+            uint32_t word3 = func->code[offset + 2];
+            int sel = (int)(word2 >> 16);
+            int nki = (int)(word2 & 0xFFFF);
+            printf("      %04d  (sel=%d, name_ki=%d", offset + 1, sel, nki);
+            if (nki < func->const_count)
+            {
+                printf(" = ");
+                print_value(func->constants[nki]);
+            }
+            printf(", parent_ki=%d)\n", word3);
+            return offset + 3;
+        }
+
         /* 2-word superinstructions: skip the operand word */
         if (op == OP_LTJMPIFNOT || op == OP_LEJMPIFNOT || op == OP_CALLGLOBAL ||
-            op == OP_INVOKE)
+            op == OP_INVOKE || op == OP_GETFIELD_MUL || op == OP_GETFIELD_SUB)
         {
             uint32_t word2 = func->code[offset + 1];
             if (op == OP_INVOKE)
