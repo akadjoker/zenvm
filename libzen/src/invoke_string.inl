@@ -34,7 +34,7 @@ case STRING_SUB:
 case STRING_FIND:
 {
     /* str.find(needle) → index or -1 */
-    if (arg_count != 1 || !is_string(args[0])) { runtime_error("find() expects a string argument"); return; }
+    if (arg_count != 1 || !is_string(args[0])) { RT_ERROR("find() expects a string argument"); }
     ObjString *needle = as_string(args[0]);
     if (needle->length == 0) { R[base] = val_int(0); }
     else {
@@ -66,7 +66,7 @@ case STRING_LOWER:
 case STRING_SPLIT:
 {
     /* str.split(sep) → array of strings */
-    if (arg_count != 1 || !is_string(args[0])) { runtime_error("split() expects a string argument"); return; }
+    if (arg_count != 1 || !is_string(args[0])) { RT_ERROR("split() expects a string argument"); }
     ObjString *sep = as_string(args[0]);
     ObjArray *result = new_array(&gc_);
     if (sep->length == 0) {
@@ -106,7 +106,7 @@ case STRING_REPLACE:
 {
     /* str.replace(old, new) → new string with all occurrences replaced */
     if (arg_count != 2 || !is_string(args[0]) || !is_string(args[1])) {
-        runtime_error("replace() expects (string, string)"); return;
+        RT_ERROR("replace() expects (string, string)");
     }
     ObjString *old_s = as_string(args[0]);
     ObjString *new_s = as_string(args[1]);
@@ -143,7 +143,7 @@ case STRING_REPLACE:
 }
 case STRING_STARTS_WITH:
 {
-    if (arg_count != 1 || !is_string(args[0])) { runtime_error("starts_with() expects a string"); return; }
+    if (arg_count != 1 || !is_string(args[0])) { RT_ERROR("starts_with() expects a string"); }
     ObjString *prefix = as_string(args[0]);
     bool match = (prefix->length <= str->length) &&
                  (memcmp(str->chars, prefix->chars, prefix->length) == 0);
@@ -152,7 +152,7 @@ case STRING_STARTS_WITH:
 }
 case STRING_ENDS_WITH:
 {
-    if (arg_count != 1 || !is_string(args[0])) { runtime_error("ends_with() expects a string"); return; }
+    if (arg_count != 1 || !is_string(args[0])) { RT_ERROR("ends_with() expects a string"); }
     ObjString *suffix = as_string(args[0]);
     bool match = (suffix->length <= str->length) &&
                  (memcmp(str->chars + str->length - suffix->length, suffix->chars, suffix->length) == 0);
@@ -162,7 +162,7 @@ case STRING_ENDS_WITH:
 case STRING_CHAR_AT:
 {
     /* str.char_at(idx) → single-char string */
-    if (arg_count != 1 || !is_int(args[0])) { runtime_error("char_at() expects an integer"); return; }
+    if (arg_count != 1 || !is_int(args[0])) { RT_ERROR("char_at() expects an integer"); }
     int32_t idx = args[0].as.integer;
     if (idx < 0 || idx >= str->length) { R[base] = val_nil(); }
     else { R[base] = val_obj((Obj *)new_string(&gc_, &str->chars[idx], 1)); }
@@ -171,7 +171,7 @@ case STRING_CHAR_AT:
 case STRING_BYTE_AT:
 {
     /* str.byte_at(idx) → integer byte value */
-    if (arg_count != 1 || !is_int(args[0])) { runtime_error("byte_at() expects an integer"); return; }
+    if (arg_count != 1 || !is_int(args[0])) { RT_ERROR("byte_at() expects an integer"); }
     int32_t idx = args[0].as.integer;
     if (idx < 0 || idx >= str->length) { R[base] = val_int(0); }
     else { R[base] = val_int((uint8_t)str->chars[idx]); }
@@ -179,7 +179,6 @@ case STRING_BYTE_AT:
 }
 default:
 {
-    runtime_error("string has no method '%s'", mname);
-    return;
+    RT_ERROR("string has no method '%s'", mname);
 }
 }

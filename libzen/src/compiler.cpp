@@ -181,7 +181,7 @@ namespace zen
 
         /* Kick off parsing */
         advance();
-        while (!check(TOK_EOF))
+        while (!check(TOK_EOF) && !had_error_)
         {
             declaration();
         }

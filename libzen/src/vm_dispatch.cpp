@@ -784,8 +784,7 @@ namespace zen
             if (!try_unary_operator(this, R[ZEN_B(i)], SLOT_NEG, &result))
             {
                 LOAD_STATE();
-                runtime_error("object does not implement unary operator -");
-                return;
+                RT_ERROR("object does not implement unary operator -");
             }
             if (had_error_) return;
             LOAD_STATE();
@@ -818,8 +817,7 @@ namespace zen
             if (!try_binary_operator(this, R[ZEN_B(i)], R[ZEN_C(i)], SLOT_LT, -1, &result))
             {
                 LOAD_STATE();
-                runtime_error("object does not implement operator <");
-                return;
+                RT_ERROR("object does not implement operator <");
             }
             if (had_error_) return;
             LOAD_STATE();
@@ -835,8 +833,7 @@ namespace zen
             if (!try_binary_operator(this, R[ZEN_B(i)], R[ZEN_C(i)], SLOT_LE, -1, &result))
             {
                 LOAD_STATE();
-                runtime_error("object does not implement operator <=");
-                return;
+                RT_ERROR("object does not implement operator <=");
             }
             if (had_error_) return;
             LOAD_STATE();
@@ -1052,8 +1049,7 @@ namespace zen
 
                 if (fiber->frame_count >= kMaxFrames)
                 {
-                    runtime_error("stack overflow");
-                    return;
+                    RT_ERROR("stack overflow");
                 }
                 CallFrame *new_frame = &fiber->frames[fiber->frame_count++];
                 new_frame->closure = cl;
@@ -1123,9 +1119,7 @@ namespace zen
                 /* Check if script is allowed to instantiate this class */
                 if (!klass->constructable)
                 {
-                    runtime_error("class '%s' cannot be instantiated from script",
-                                  klass->name->chars);
-                    return;
+                    RT_ERROR("class '%s' cannot be instantiated from script", klass->name->chars);
                 }
 
                 ObjInstance *inst = new_instance(&gc_, klass);
@@ -1155,14 +1149,12 @@ namespace zen
                     /* Check arity (init's arity = user params, self is implicit) */
                     if (fn->arity >= 0 && nargs != fn->arity)
                     {
-                        runtime_error("init() expects %d args but got %d", fn->arity, nargs);
-                        return;
+                        RT_ERROR("init() expects %d args but got %d", fn->arity, nargs);
                     }
                     /* Set up frame: R[a] = instance (self), args at R[a+1..] */
                     if (fiber->frame_count >= kMaxFrames)
                     {
-                        runtime_error("stack overflow");
-                        return;
+                        RT_ERROR("stack overflow");
                     }
                     CallFrame *new_frame = &fiber->frames[fiber->frame_count++];
                     new_frame->closure = cl;
@@ -1178,15 +1170,12 @@ namespace zen
                 else if (nargs > 0 && !ctor_src)
                 {
                     /* Error only if no init AND no native_ctor handled the args */
-                    runtime_error("class '%s' has no init() but received %d args",
-                                  klass->name->chars, nargs);
-                    return;
+                    RT_ERROR("class '%s' has no init() but received %d args", klass->name->chars, nargs);
                 }
                 /* No init and no args (or native_ctor consumed them) — just return the instance */
                 DISPATCH();
             }
-            runtime_error("attempt to call non-function");
-            return;
+            RT_ERROR("attempt to call non-function");
         }
 
         CASE(OP_CALLGLOBAL)
@@ -1207,8 +1196,7 @@ namespace zen
                 ObjFunc *fn = cl->func;
                 if (fiber->frame_count >= kMaxFrames)
                 {
-                    runtime_error("stack overflow");
-                    return;
+                    RT_ERROR("stack overflow");
                 }
                 CallFrame *new_frame = &fiber->frames[fiber->frame_count++];
                 new_frame->closure = cl;
@@ -1229,8 +1217,7 @@ namespace zen
                 copy_native_results(&R[a], &R[a + 1], nret, nresults);
                 DISPATCH();
             }
-            runtime_error("attempt to call non-function");
-            return;
+            RT_ERROR("attempt to call non-function");
         }
 
         CASE(OP_RETURN)
@@ -1371,8 +1358,7 @@ namespace zen
             uint32_t i = *ip;
             if (!is_closure(R[ZEN_B(i)]))
             {
-                runtime_error("spawn expects a function");
-                return;
+                RT_ERROR("spawn expects a function");
             }
             ObjClosure *cl = as_closure(R[ZEN_B(i)]);
             ObjFiber *f = new_fiber(cl, 256);
@@ -1387,8 +1373,7 @@ namespace zen
             int nargs = ZEN_B(i);
             if (!is_closure(R[a]))
             {
-                runtime_error("spawn expects a process function");
-                return;
+                RT_ERROR("spawn expects a process function");
             }
             ObjClosure *cl = as_closure(R[a]);
             int pid = spawn_process(cl, &R[a + 1], nargs);
@@ -1463,8 +1448,7 @@ namespace zen
             uint32_t i = *ip;
             if (!is_fiber(R[ZEN_B(i)]))
             {
-                runtime_error("resume expects a fiber");
-                return;
+                RT_ERROR("resume expects a fiber");
             }
             ObjFiber *target = as_fiber(R[ZEN_B(i)]);
             Value send_val = R[ZEN_C(i)];
@@ -1478,8 +1462,7 @@ namespace zen
             }
             if (target->state == FIBER_RUNNING)
             {
-                runtime_error("cannot resume running fiber");
-                return;
+                RT_ERROR("cannot resume running fiber");
             }
 
             target->transfer_value = send_val;
@@ -1500,8 +1483,7 @@ namespace zen
 
             if (fiber_depth_ >= kMaxFiberDepth)
             {
-                runtime_error("fiber resume depth exceeded");
-                return;
+                RT_ERROR("fiber resume depth exceeded");
             }
             ++fiber_depth_;
             execute(target);
@@ -1523,8 +1505,7 @@ namespace zen
 
             if (!fiber->caller)
             {
-                runtime_error("yield outside of fiber");
-                return;
+                RT_ERROR("yield outside of fiber");
             }
 
             fiber->transfer_value = R[ZEN_B(i)];
@@ -1588,7 +1569,7 @@ namespace zen
             Value arg = R[b];
             if (is_int(arg)) {
                 int32_t count = arg.as.integer;
-                if (count < 0) { runtime_error("buffer size must be non-negative"); return; }
+                if (count < 0) { RT_ERROR("buffer size must be non-negative"); }
                 ObjBuffer *buf = new_buffer(&gc_, btype, count);
                 R[a] = val_obj((Obj *)buf);
             } else if (is_array(arg)) {
@@ -1603,8 +1584,7 @@ namespace zen
                 }
                 R[a] = val_obj((Obj *)buf);
             } else {
-                runtime_error("buffer constructor expects int or array");
-                return;
+                RT_ERROR("buffer constructor expects int or array");
             }
             NEXT();
         }
@@ -1644,8 +1624,7 @@ namespace zen
                         goto getfield_done;
                     }
                 }
-                runtime_error("struct '%s' has no field '%s'", def->name->chars, name->chars);
-                return;
+                RT_ERROR("struct '%s' has no field '%s'", def->name->chars, name->chars);
             }
             if (is_native_struct(receiver))
             {
@@ -1669,8 +1648,7 @@ namespace zen
                         goto getfield_done;
                     }
                 }
-                runtime_error("native struct '%s' has no field '%s'", def->name->chars, name->chars);
-                return;
+                RT_ERROR("native struct '%s' has no field '%s'", def->name->chars, name->chars);
             }
             if (is_instance(receiver))
             {
@@ -1684,11 +1662,9 @@ namespace zen
                         goto getfield_done;
                     }
                 }
-                runtime_error("instance of '%s' has no field '%s'", klass->name->chars, name->chars);
-                return;
+                RT_ERROR("instance of '%s' has no field '%s'", klass->name->chars, name->chars);
             }
-            runtime_error("cannot access field '%s' on this type", name->chars);
-            return;
+            RT_ERROR("cannot access field '%s' on this type", name->chars);
             getfield_done:
             NEXT();
         }
@@ -1711,8 +1687,7 @@ namespace zen
                         goto setfield_done;
                     }
                 }
-                runtime_error("struct '%s' has no field '%s'", def->name->chars, name->chars);
-                return;
+                RT_ERROR("struct '%s' has no field '%s'", def->name->chars, name->chars);
             }
             if (is_native_struct(receiver))
             {
@@ -1724,8 +1699,7 @@ namespace zen
                     {
                         if (def->fields[fi].read_only)
                         {
-                            runtime_error("field '%s' is read-only", name->chars);
-                            return;
+                            RT_ERROR("field '%s' is read-only", name->chars);
                         }
                         uint8_t *ptr = (uint8_t *)ns->data + def->fields[fi].offset;
                         switch (def->fields[fi].type)
@@ -1741,8 +1715,7 @@ namespace zen
                         goto setfield_done;
                     }
                 }
-                runtime_error("native struct '%s' has no field '%s'", def->name->chars, name->chars);
-                return;
+                RT_ERROR("native struct '%s' has no field '%s'", def->name->chars, name->chars);
             }
             if (is_instance(receiver))
             {
@@ -1756,11 +1729,9 @@ namespace zen
                         goto setfield_done;
                     }
                 }
-                runtime_error("instance of '%s' has no field '%s'", klass->name->chars, name->chars);
-                return;
+                RT_ERROR("instance of '%s' has no field '%s'", klass->name->chars, name->chars);
             }
-            runtime_error("cannot set field '%s' on this type", name->chars);
-            return;
+            RT_ERROR("cannot set field '%s' on this type", name->chars);
             setfield_done:
             NEXT();
         }
@@ -1775,10 +1746,7 @@ namespace zen
                 ObjInstance *inst = as_instance(obj);
                 if (field_idx < 0 || field_idx >= inst->klass->num_fields)
                 {
-                    SAVE_IP();
-                    runtime_error("GETFIELD_IDX out of bounds: receiver=R%d class=%s field_index=%d field_count=%d",
-                                  ZEN_B(i), inst->klass->name->chars, field_idx, inst->klass->num_fields);
-                    return;
+                    RT_ERROR("GETFIELD_IDX out of bounds: receiver=R%d class=%s field_index=%d field_count=%d", ZEN_B(i), inst->klass->name->chars, field_idx, inst->klass->num_fields);
                 }
                 R[ZEN_A(i)] = inst->fields[field_idx];
             }
@@ -1787,19 +1755,13 @@ namespace zen
                 ObjStruct *st = as_struct(obj);
                 if (field_idx < 0 || field_idx >= st->def->num_fields)
                 {
-                    SAVE_IP();
-                    runtime_error("GETFIELD_IDX out of bounds: receiver=R%d struct=%s field_index=%d field_count=%d",
-                                  ZEN_B(i), st->def->name->chars, field_idx, st->def->num_fields);
-                    return;
+                    RT_ERROR("GETFIELD_IDX out of bounds: receiver=R%d struct=%s field_index=%d field_count=%d", ZEN_B(i), st->def->name->chars, field_idx, st->def->num_fields);
                 }
                 R[ZEN_A(i)] = st->fields[field_idx];
             }
             else
             {
-                SAVE_IP();
-                runtime_error("GETFIELD_IDX expected instance/struct: dst=R%d receiver=R%d receiver_type=%s field_index=%d",
-                              ZEN_A(i), ZEN_B(i), value_debug_type(obj), field_idx);
-                return;
+                RT_ERROR("GETFIELD_IDX expected instance/struct: dst=R%d receiver=R%d receiver_type=%s field_index=%d", ZEN_A(i), ZEN_B(i), value_debug_type(obj), field_idx);
             }
             NEXT();
         }
@@ -1814,10 +1776,7 @@ namespace zen
                 ObjInstance *inst = as_instance(obj);
                 if (field_idx < 0 || field_idx >= inst->klass->num_fields)
                 {
-                    SAVE_IP();
-                    runtime_error("SETFIELD_IDX out of bounds: receiver=R%d class=%s field_index=%d field_count=%d value=R%d",
-                                  ZEN_A(i), inst->klass->name->chars, field_idx, inst->klass->num_fields, ZEN_C(i));
-                    return;
+                    RT_ERROR("SETFIELD_IDX out of bounds: receiver=R%d class=%s field_index=%d field_count=%d value=R%d", ZEN_A(i), inst->klass->name->chars, field_idx, inst->klass->num_fields, ZEN_C(i));
                 }
                 inst->fields[field_idx] = R[ZEN_C(i)];
             }
@@ -1826,19 +1785,13 @@ namespace zen
                 ObjStruct *st = as_struct(obj);
                 if (field_idx < 0 || field_idx >= st->def->num_fields)
                 {
-                    SAVE_IP();
-                    runtime_error("SETFIELD_IDX out of bounds: receiver=R%d struct=%s field_index=%d field_count=%d value=R%d",
-                                  ZEN_A(i), st->def->name->chars, field_idx, st->def->num_fields, ZEN_C(i));
-                    return;
+                    RT_ERROR("SETFIELD_IDX out of bounds: receiver=R%d struct=%s field_index=%d field_count=%d value=R%d", ZEN_A(i), st->def->name->chars, field_idx, st->def->num_fields, ZEN_C(i));
                 }
                 st->fields[field_idx] = R[ZEN_C(i)];
             }
             else
             {
-                SAVE_IP();
-                runtime_error("SETFIELD_IDX expected instance/struct: receiver=R%d receiver_type=%s field_index=%d value=R%d",
-                              ZEN_A(i), value_debug_type(obj), field_idx, ZEN_C(i));
-                return;
+                RT_ERROR("SETFIELD_IDX expected instance/struct: receiver=R%d receiver_type=%s field_index=%d value=R%d", ZEN_A(i), value_debug_type(obj), field_idx, ZEN_C(i));
             }
             NEXT();
         }
@@ -1848,17 +1801,17 @@ namespace zen
             Value container = R[ZEN_B(i)];
             Value key = R[ZEN_C(i)];
             if (is_array(container)) {
-                if (!is_int(key)) { runtime_error("array index must be integer"); return; }
+                if (!is_int(key)) { RT_ERROR("array index must be integer"); }
                 R[ZEN_A(i)] = array_get(as_array(container), key.as.integer);
             } else if (is_map(container)) {
                 bool found;
                 R[ZEN_A(i)] = map_get(as_map(container), key, &found);
                 if (!found) R[ZEN_A(i)] = val_nil();
             } else if (is_buffer(container)) {
-                if (!is_int(key)) { runtime_error("buffer index must be integer"); return; }
+                if (!is_int(key)) { RT_ERROR("buffer index must be integer"); }
                 ObjBuffer *buf = as_buffer(container);
                 int32_t idx = (int32_t)key.as.integer;
-                if ((uint32_t)idx >= (uint32_t)buf->count) { runtime_error("buffer index out of bounds"); return; }
+                if ((uint32_t)idx >= (uint32_t)buf->count) { RT_ERROR("buffer index out of bounds"); }
                 double v = buffer_get(buf, idx);
                 /* Float types return float, integer types return int64 */
                 if (buf->btype >= BUF_FLOAT32)
@@ -1866,14 +1819,13 @@ namespace zen
                 else
                     R[ZEN_A(i)] = val_int((int64_t)v);
             } else if (is_string(container)) {
-                if (!is_int(key)) { runtime_error("string index must be integer"); return; }
+                if (!is_int(key)) { RT_ERROR("string index must be integer"); }
                 ObjString *s = as_string(container);
                 int32_t idx = (int32_t)key.as.integer;
-                if ((uint32_t)idx >= (uint32_t)s->length) { runtime_error("string index out of bounds"); return; }
+                if ((uint32_t)idx >= (uint32_t)s->length) { RT_ERROR("string index out of bounds"); }
                 R[ZEN_A(i)] = val_obj((Obj *)new_string(&gc_, &s->chars[idx], 1));
             } else {
-                runtime_error("cannot index value");
-                return;
+                RT_ERROR("cannot index value");
             }
             NEXT();
         }
@@ -1887,7 +1839,7 @@ namespace zen
                 R[ZEN_A(i)] = array_get(as_array(container), idx);
             } else if (is_buffer(container)) {
                 ObjBuffer *buf = as_buffer(container);
-                if ((uint32_t)idx >= (uint32_t)buf->count) { runtime_error("buffer index out of bounds"); return; }
+                if ((uint32_t)idx >= (uint32_t)buf->count) { RT_ERROR("buffer index out of bounds"); }
                 double v = buffer_get(buf, idx);
                 if (buf->btype >= BUF_FLOAT32)
                     R[ZEN_A(i)] = val_float(v);
@@ -1895,7 +1847,7 @@ namespace zen
                     R[ZEN_A(i)] = val_int((int64_t)v);
             } else if (is_string(container)) {
                 ObjString *s = as_string(container);
-                if ((uint32_t)idx >= (uint32_t)s->length) { runtime_error("string index out of bounds"); return; }
+                if ((uint32_t)idx >= (uint32_t)s->length) { RT_ERROR("string index out of bounds"); }
                 R[ZEN_A(i)] = val_obj((Obj *)new_string(&gc_, &s->chars[idx], 1));
             } else if (is_map(container)) {
                 ObjMap *map = as_map(container);
@@ -1907,7 +1859,7 @@ namespace zen
                         ord++;
                     }
                 }
-                if (!found) { runtime_error("map iteration index out of bounds"); return; }
+                if (!found) { RT_ERROR("map iteration index out of bounds"); }
             } else if (is_set(container)) {
                 ObjSet *set = as_set(container);
                 int32_t ord = 0;
@@ -1918,10 +1870,9 @@ namespace zen
                         ord++;
                     }
                 }
-                if (!found) { runtime_error("set iteration index out of bounds"); return; }
+                if (!found) { RT_ERROR("set iteration index out of bounds"); }
             } else {
-                runtime_error("cannot iterate value");
-                return;
+                RT_ERROR("cannot iterate value");
             }
             NEXT();
         }
@@ -1932,30 +1883,28 @@ namespace zen
             Value key = R[ZEN_B(i)];
             Value val = R[ZEN_C(i)];
             if (is_array(container)) {
-                if (!is_int(key)) { runtime_error("array index must be integer"); return; }
+                if (!is_int(key)) { RT_ERROR("array index must be integer"); }
                 int32_t idx = key.as.integer;
                 ObjArray *arr = as_array(container);
                 if ((uint32_t)idx < (uint32_t)arr_count(arr)) {
                     arr->data[idx] = val;
                 } else {
-                    runtime_error("array index out of bounds");
-                    return;
+                    RT_ERROR("array index out of bounds");
                 }
             } else if (is_map(container)) {
                 map_set(&gc_, as_map(container), key, val);
             } else if (is_buffer(container)) {
-                if (!is_int(key)) { runtime_error("buffer index must be integer"); return; }
+                if (!is_int(key)) { RT_ERROR("buffer index must be integer"); }
                 ObjBuffer *buf = as_buffer(container);
                 int32_t idx = key.as.integer;
-                if ((uint32_t)idx >= (uint32_t)buf->count) { runtime_error("buffer index out of bounds"); return; }
+                if ((uint32_t)idx >= (uint32_t)buf->count) { RT_ERROR("buffer index out of bounds"); }
                 double v = 0;
                 if (is_int(val)) v = (double)val.as.integer;
                 else if (is_float(val)) v = val.as.number;
-                else { runtime_error("buffer only accepts numbers"); return; }
+                else { RT_ERROR("buffer only accepts numbers"); }
                 buffer_set(buf, idx, v);
             } else {
-                runtime_error("cannot index value");
-                return;
+                RT_ERROR("cannot index value");
             }
             NEXT();
         }
@@ -2009,8 +1958,7 @@ namespace zen
 
                 if (is_nil(mval))
                 {
-                    runtime_error("'%s' has no method '%s'", klass->name->chars, mname);
-                    return;
+                    RT_ERROR("'%s' has no method '%s'", klass->name->chars, mname);
                 }
 
                 if (is_closure(mval))
@@ -2019,14 +1967,11 @@ namespace zen
                     ObjFunc *fn = cl->func;
                     if (fn->arity >= 0 && arg_count != fn->arity)
                     {
-                        runtime_error("%s.%s() expects %d args but got %d",
-                                      klass->name->chars, mname, fn->arity, arg_count);
-                        return;
+                        RT_ERROR("%s.%s() expects %d args but got %d", klass->name->chars, mname, fn->arity, arg_count);
                     }
                     if (fiber->frame_count >= kMaxFrames)
                     {
-                        runtime_error("stack overflow");
-                        return;
+                        RT_ERROR("stack overflow");
                     }
                     ++ip;
                     SAVE_IP();
@@ -2052,14 +1997,12 @@ namespace zen
                 }
                 else
                 {
-                    runtime_error("'%s.%s' is not callable", klass->name->chars, mname);
-                    return;
+                    RT_ERROR("'%s.%s' is not callable", klass->name->chars, mname);
                 }
             }
             else
             {
-                runtime_error("cannot invoke method '%s' on this type", mname);
-                return;
+                RT_ERROR("cannot invoke method '%s' on this type", mname);
             }
             NEXT();
         }
@@ -2082,8 +2025,7 @@ namespace zen
                 ObjFunc *fn = cl->func;
                 if (fiber->frame_count >= kMaxFrames)
                 {
-                    runtime_error("stack overflow");
-                    return;
+                    RT_ERROR("stack overflow");
                 }
                 ++ip;
                 SAVE_IP();
@@ -2109,8 +2051,7 @@ namespace zen
             }
             else
             {
-                runtime_error("vtable slot %d is nil (method not found)", slot);
-                return;
+                RT_ERROR("vtable slot %d is nil (method not found)", slot);
             }
             NEXT();
         }
@@ -2137,9 +2078,7 @@ namespace zen
             if (is_nil(mval))
             {
                 const char *mname = as_string(frame->func->constants[name_ki])->chars;
-                runtime_error("parent class '%s' has no method '%s'",
-                              parent->name->chars, mname);
-                return;
+                RT_ERROR("parent class '%s' has no method '%s'", parent->name->chars, mname);
             }
 
             if (is_closure(mval))
@@ -2149,14 +2088,11 @@ namespace zen
                 if (fn->arity >= 0 && arg_count != fn->arity)
                 {
                     const char *mname = as_string(frame->func->constants[name_ki])->chars;
-                    runtime_error("super.%s() expects %d args but got %d",
-                                  mname, fn->arity, arg_count);
-                    return;
+                    RT_ERROR("super.%s() expects %d args but got %d", mname, fn->arity, arg_count);
                 }
                 if (fiber->frame_count >= kMaxFrames)
                 {
-                    runtime_error("stack overflow");
-                    return;
+                    RT_ERROR("stack overflow");
                 }
                 ip += 3; /* skip all 3 words */
                 SAVE_IP();
@@ -2183,8 +2119,7 @@ namespace zen
             else
             {
                 const char *mname = as_string(frame->func->constants[name_ki])->chars;
-                runtime_error("super.%s is not callable", mname);
-                return;
+                RT_ERROR("super.%s is not callable", mname);
             }
             ip += 2; /* skip word2+word3 */
             NEXT();
@@ -2193,18 +2128,15 @@ namespace zen
         /* --- Classes (stubs) --- */
         CASE(OP_NEWCLASS)
         {
-            runtime_error("classes not yet implemented");
-            return;
+            RT_ERROR("classes not yet implemented");
         }
         CASE(OP_NEWINSTANCE)
         {
-            runtime_error("classes not yet implemented");
-            return;
+            RT_ERROR("classes not yet implemented");
         }
         CASE(OP_GETMETHOD)
         {
-            runtime_error("method access not yet implemented");
-            return;
+            RT_ERROR("method access not yet implemented");
         }
 
         /* --- Misc --- */
@@ -2318,8 +2250,7 @@ namespace zen
                 LOAD_STATE();
                 if (!is_string(result))
                 {
-                    runtime_error("__str__ must return a string");
-                    return;
+                    RT_ERROR("__str__ must return a string");
                 }
                 R[dst] = result;
             }
@@ -2339,15 +2270,13 @@ namespace zen
             if (!try_string_operator(this, R[ZEN_B(i)], &result))
             {
                 LOAD_STATE();
-                runtime_error("object does not implement __str__");
-                return;
+                RT_ERROR("object does not implement __str__");
             }
             if (had_error_) return;
             LOAD_STATE();
             if (!is_string(result))
             {
-                runtime_error("__str__ must return a string");
-                return;
+                RT_ERROR("__str__ must return a string");
             }
             R[dst] = result;
             NEXT();
@@ -2419,8 +2348,7 @@ namespace zen
                         LOAD_STATE();
                         if (!is_string(result))
                         {
-                            runtime_error("__str__ must return a string");
-                            return;
+                            RT_ERROR("__str__ must return a string");
                         }
                         ObjString *s = as_string(result);
                         zen_write(s->chars, (size_t)s->length);

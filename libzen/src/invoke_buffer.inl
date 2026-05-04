@@ -16,8 +16,7 @@ case BUFFER_FILL:
 {
     if (arg_count != 1)
     {
-        runtime_error("fill() expects 1 argument");
-        return;
+        RT_ERROR("fill() expects 1 argument");
     }
     double v = 0;
     if (is_int(args[0]))
@@ -26,8 +25,7 @@ case BUFFER_FILL:
         v = args[0].as.number;
     else
     {
-        runtime_error("fill() expects a number");
-        return;
+        RT_ERROR("fill() expects a number");
     }
     buffer_fill(buf, v);
     R[base] = receiver;
@@ -40,7 +38,6 @@ case BUFFER_BYTE_LEN:
 }
 default:
 {
-    runtime_error("buffer has no method '%s'", mname);
-    return;
+    RT_ERROR("buffer has no method '%s'", mname);
 }
 }

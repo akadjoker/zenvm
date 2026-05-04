@@ -14,8 +14,7 @@ case MAP_SET:
     /* map.set(key, val) → sets key, returns val */
     if (arg_count != 2)
     {
-        runtime_error("set() expects (key, value)");
-        return;
+        RT_ERROR("set() expects (key, value)");
     }
     map_set(&gc_, map, args[0], args[1]);
     R[base] = args[1];
@@ -26,8 +25,7 @@ case MAP_GET:
     /* map.get(key) or map.get(key, default) → value or nil/default */
     if (arg_count < 1)
     {
-        runtime_error("get() expects a key");
-        return;
+        RT_ERROR("get() expects a key");
     }
     bool found;
     Value result = map_get(map, args[0], &found);
@@ -42,8 +40,7 @@ case MAP_HAS:
     /* map.has(key) → bool */
     if (arg_count != 1)
     {
-        runtime_error("has() expects a key");
-        return;
+        RT_ERROR("has() expects a key");
     }
     R[base] = val_bool(map_contains(map, args[0]));
     break;
@@ -53,8 +50,7 @@ case MAP_DELETE:
     /* map.delete(key) → removes key, returns true if existed */
     if (arg_count != 1)
     {
-        runtime_error("delete() expects a key");
-        return;
+        RT_ERROR("delete() expects a key");
     }
     R[base] = val_bool(map_delete(map, args[0]));
     break;
@@ -90,7 +86,6 @@ case MAP_CLEAR:
 }
 default:
 {
-    runtime_error("map has no method '%s'", mname);
-    return;
+    RT_ERROR("map has no method '%s'", mname);
 }
 }

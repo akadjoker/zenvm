@@ -22,8 +22,7 @@ case ARRAY_PUSH:
     /* arr.push(val) → append, returns new length */
     if (arg_count < 1)
     {
-        runtime_error("push() expects at least 1 argument");
-        return;
+        RT_ERROR("push() expects at least 1 argument");
     }
     for (int ai = 0; ai < arg_count; ai++)
         array_push(&gc_, arr, args[ai]);
@@ -35,8 +34,7 @@ case ARRAY_POP:
     /* arr.pop() → remove+return last element */
     if (arr_count(arr) == 0)
     {
-        runtime_error("pop() on empty array");
-        return;
+        RT_ERROR("pop() on empty array");
     }
     R[base] = *--arr->end;
     break;
@@ -52,15 +50,13 @@ case ARRAY_REMOVE:
     /* arr.remove(idx) → remove at index, return removed value */
     if (arg_count != 1 || !is_int(args[0]))
     {
-        runtime_error("remove() expects 1 integer argument");
-        return;
+        RT_ERROR("remove() expects 1 integer argument");
     }
     int32_t idx = args[0].as.integer;
     int32_t count = arr_count(arr);
     if (idx < 0 || idx >= count)
     {
-        runtime_error("remove() index out of bounds");
-        return;
+        RT_ERROR("remove() index out of bounds");
     }
     Value removed = arr->data[idx];
     memmove(&arr->data[idx], &arr->data[idx + 1], (size_t)(count - idx - 1) * sizeof(Value));
@@ -73,15 +69,13 @@ case ARRAY_INSERT:
     /* arr.insert(idx, val) → insert at position */
     if (arg_count != 2 || !is_int(args[0]))
     {
-        runtime_error("insert() expects (int, value)");
-        return;
+        RT_ERROR("insert() expects (int, value)");
     }
     int32_t idx = args[0].as.integer;
     int32_t count = arr_count(arr);
     if (idx < 0 || idx > count)
     {
-        runtime_error("insert() index out of bounds");
-        return;
+        RT_ERROR("insert() index out of bounds");
     }
     array_push(&gc_, arr, val_nil()); /* ensure capacity, end++ */
     /* shift right */
@@ -137,8 +131,7 @@ case ARRAY_CONTAINS:
     /* arr.contains(val) → bool */
     if (arg_count != 1)
     {
-        runtime_error("contains() expects 1 argument");
-        return;
+        RT_ERROR("contains() expects 1 argument");
     }
     R[base] = val_bool(array_contains(arr, args[0]));
     break;
@@ -230,16 +223,14 @@ case ARRAY_SORT:
     /* arr.sort() or arr.sort("desc") → in-place sort using qsort */
     if (arg_count > 1)
     {
-        runtime_error("sort() expects 0 or 1 argument");
-        return;
+        RT_ERROR("sort() expects 0 or 1 argument");
     }
     bool descending = false;
     if (arg_count == 1)
     {
         if (!is_string(args[0]))
         {
-            runtime_error("sort() argument must be a string (\"asc\" or \"desc\")");
-            return;
+            RT_ERROR("sort() argument must be a string (\"asc\" or \"desc\")");
         }
         ObjString *order = as_string(args[0]);
         if (order->length == 4 && memcmp(order->chars, "desc", 4) == 0)
@@ -280,15 +271,13 @@ case ARRAY_INDEX_OF:
     /* arr.index_of(val) → index or -1 */
     if (arg_count != 1)
     {
-        runtime_error("index_of() expects 1 argument");
-        return;
+        RT_ERROR("index_of() expects 1 argument");
     }
     R[base] = val_int(array_find(arr, args[0]));
     break;
 }
 default:
 {
-    runtime_error("array has no method '%s'", mname);
-    return;
+    RT_ERROR("array has no method '%s'", mname);
 }
 }

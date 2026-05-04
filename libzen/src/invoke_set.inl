@@ -12,21 +12,21 @@ switch (method->set_method_id)
 case SET_ADD:
 {
     /* set.add(val) → returns true if newly added */
-    if (arg_count != 1) { runtime_error("add() expects 1 argument"); return; }
+    if (arg_count != 1) { RT_ERROR("add() expects 1 argument"); }
     R[base] = val_bool(set_add(&gc_, set, args[0]));
     break;
 }
 case SET_HAS:
 {
     /* set.has(val) → bool */
-    if (arg_count != 1) { runtime_error("has() expects 1 argument"); return; }
+    if (arg_count != 1) { RT_ERROR("has() expects 1 argument"); }
     R[base] = val_bool(set_contains(set, args[0]));
     break;
 }
 case SET_DELETE:
 {
     /* set.delete(val) → returns true if was present */
-    if (arg_count != 1) { runtime_error("delete() expects 1 argument"); return; }
+    if (arg_count != 1) { RT_ERROR("delete() expects 1 argument"); }
     R[base] = val_bool(set_remove(set, args[0]));
     break;
 }
@@ -57,7 +57,6 @@ case SET_VALUES:
 }
 default:
 {
-    runtime_error("set has no method '%s'", mname);
-    return;
+    RT_ERROR("set has no method '%s'", mname);
 }
 }
