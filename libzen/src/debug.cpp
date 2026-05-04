@@ -102,6 +102,7 @@ namespace zen
         "LEJMPIFNOT",
         "FORPREP",
         "FORLOOP",
+        "GETFIELD_MUL",
         "HALT",
     };
 
@@ -341,7 +342,7 @@ namespace zen
 
         /* 2-word superinstructions: skip the operand word */
         if (op == OP_LTJMPIFNOT || op == OP_LEJMPIFNOT || op == OP_CALLGLOBAL ||
-            op == OP_INVOKE)
+            op == OP_INVOKE || op == OP_GETFIELD_MUL)
         {
             uint32_t word2 = func->code[offset + 1];
             if (op == OP_INVOKE)

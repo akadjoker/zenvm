@@ -152,6 +152,9 @@ namespace zen
         OP_FORPREP, /* R[A]-=R[A+2]; if R[A]>=R[A+1]: pc+=sBx (skip) */
         OP_FORLOOP, /* R[A]+=R[A+2]; if R[A]<R[A+1]: pc+=sBx (loop)  */
 
+        /* --- Fused field+arith (2-word superinstructions) --- */
+        OP_GETFIELD_MUL, /* word1: R[A]=R[B].fields[C]; word2: R[A]=R[B]*R[C] */
+
         OP_HALT,
     };
 

@@ -846,8 +846,19 @@ namespace zen
 
         if (local_reg != -1)
         {
+            /* If an infix operator follows (dot, index, call, binary), skip the
+               MOVE — the infix handler will read directly from local_reg.
+               This eliminates thousands of redundant MOVEs like:
+                 MOVE R3, R1; GETFIELD R3, R3, x  →  GETFIELD R3, R1, x */
             if (reg >= 0 && reg != local_reg)
             {
+                Precedence next_prec = get_precedence(current_.type);
+                bool next_is_generic = current_.type == TOK_LT && looks_like_generic_call();
+                if (next_prec > PREC_NONE || next_is_generic)
+                {
+                    /* Infix follows — don't MOVE, return the local's own register */
+                    return local_reg;
+                }
                 emit_move(reg, local_reg);
                 return reg;
             }
@@ -1083,6 +1094,9 @@ namespace zen
         int right = parse_precedence(prec, -1);
         ObjClass *left_class = class_hint_for_reg(left);
         ObjClass *right_class = class_hint_for_reg(right);
+        /* Use _OBJ opcodes when either operand has a class hint.
+         * The VM _OBJ opcodes try the operator first, then fall back to
+         * base behaviour (string concat / numeric), so this is always safe. */
         bool use_obj_op = left_class || right_class;
 
         OpCode opcode;
@@ -1150,6 +1164,24 @@ namespace zen
         else
         {
             state_->emitter.emit_abc(opcode, reg, left, right, op.line);
+        }
+
+        /* Peephole: fuse GETFIELD_IDX + MUL → OP_GETFIELD_MUL (2-word) */
+        if (opcode == OP_MUL)
+        {
+            int mul_off = state_->emitter.current_offset() - 1;
+            if (mul_off >= 1)
+            {
+                Instruction prev = state_->emitter.instruction_at(mul_off - 1);
+                if (ZEN_OP(prev) == OP_GETFIELD_IDX)
+                {
+                    uint8_t gf_dest = ZEN_A(prev);
+                    if (gf_dest == left || gf_dest == right)
+                    {
+                        state_->emitter.rewrite_opcode_at(mul_off - 1, OP_GETFIELD_MUL);
+                    }
+                }
+            }
         }
 
         /* != is EQ + NOT */
@@ -1469,6 +1501,23 @@ namespace zen
                 }
             }
         }
+        /* Try to resolve class field index via class hint on register */
+        if (field_idx < 0)
+        {
+            ObjClass *hint = class_hint_for_reg(obj_reg);
+            if (hint)
+            {
+                for (int i = 0; i < hint->num_fields; i++)
+                {
+                    if (hint->field_names[i]->length == field_tok.length &&
+                        memcmp(hint->field_names[i]->chars, field_tok.start, field_tok.length) == 0)
+                    {
+                        field_idx = i;
+                        break;
+                    }
+                }
+            }
+        }
 
         /* Check for assignment: a.b = expr or a.b += expr */
         if (canAssign && (check(TOK_EQ) || check(TOK_PLUS_EQ) ||
@@ -1483,6 +1532,7 @@ namespace zen
                 /* a.b = expr */
                 int val_reg = alloc_reg();
                 expression(val_reg);
+
                 if (field_idx >= 0)
                     state_->emitter.emit_abc(OP_SETFIELD_IDX, obj_reg, field_idx, val_reg, previous_.line);
                 else
@@ -1497,25 +1547,28 @@ namespace zen
                     state_->emitter.emit_abc(OP_GETFIELD_IDX, cur_reg, obj_reg, field_idx, previous_.line);
                 else
                     state_->emitter.emit_abc(OP_GETFIELD, cur_reg, obj_reg, name_ki, previous_.line);
+
                 int rhs_reg = alloc_reg();
                 expression(rhs_reg);
+
+                bool use_obj = class_hint_for_reg(cur_reg) || class_hint_for_reg(rhs_reg);
                 OpCode op;
                 switch (assign_op)
                 {
                 case TOK_PLUS_EQ:
-                    op = OP_ADD;
+                    op = use_obj ? OP_ADD_OBJ : OP_ADD;
                     break;
                 case TOK_MINUS_EQ:
-                    op = OP_SUB;
+                    op = use_obj ? OP_SUB_OBJ : OP_SUB;
                     break;
                 case TOK_STAR_EQ:
-                    op = OP_MUL;
+                    op = use_obj ? OP_MUL_OBJ : OP_MUL;
                     break;
                 case TOK_SLASH_EQ:
-                    op = OP_DIV;
+                    op = use_obj ? OP_DIV_OBJ : OP_DIV;
                     break;
                 default:
-                    op = OP_ADD;
+                    op = use_obj ? OP_ADD_OBJ : OP_ADD;
                     break;
                 }
                 state_->emitter.emit_abc(op, cur_reg, cur_reg, rhs_reg, previous_.line);
@@ -1629,6 +1682,9 @@ namespace zen
             state_->emitter.emit_abc(OP_GETFIELD_IDX, reg, obj_reg, field_idx, previous_.line);
         else
             state_->emitter.emit_abc(OP_GETFIELD, reg, obj_reg, name_ki, previous_.line);
+
+
+
         if (obj_reg != reg)
             free_reg(obj_reg);
         return reg;
