@@ -73,6 +73,7 @@ namespace zen
         case TOK_NIL:
         case TOK_IDENTIFIER:
         case TOK_SELF:
+        case TOK_SUPER:
         case TOK_MINUS:
         case TOK_BANG:
         case TOK_TILDE:
@@ -245,6 +246,8 @@ namespace zen
         case TOK_IDENTIFIER:
         case TOK_SELF:
             return variable(token, dest, canAssign);
+        case TOK_SUPER:
+            return super_invoke(dest);
         case TOK_MINUS:
         case TOK_BANG:
         case TOK_TILDE:
@@ -1895,6 +1898,71 @@ namespace zen
         /* Read: father.x */
         state_->emitter.emit_abc(OP_PROC_GET, reg, mode, field_idx, previous_.line);
         return reg;
+    }
+
+    /* =========================================================
+    ** super.method(args) → OP_SUPER_INVOKE
+    ** Dispatches to the parent class vtable.
+    ** Only valid inside a method body.
+    ** ========================================================= */
+    int Compiler::super_invoke(int dest)
+    {
+        if (!state_->is_method)
+        {
+            error("'super' can only be used inside a method.");
+            return dest >= 0 ? dest : alloc_reg();
+        }
+        if (!current_class_fields_ || !current_class_fields_->parent_class)
+        {
+            error("'super' used in a class with no parent.");
+            return dest >= 0 ? dest : alloc_reg();
+        }
+
+        ObjClass *parent = current_class_fields_->parent_class;
+
+        consume(TOK_DOT, "Expected '.' after 'super'.");
+        consume(TOK_IDENTIFIER, "Expected method name after 'super.'.");
+        Token method_name = previous_;
+
+        /* Allocate a fresh base — copy self there, args follow */
+        int base = alloc_reg();
+        state_->emitter.emit_abc(OP_MOVE, base, 0, 0, method_name.line); /* copy self */
+
+        /* Parse arguments */
+        consume(TOK_LPAREN, "Expected '(' after method name.");
+        int arg_count = 0;
+        int save_next = state_->next_reg;
+
+        if (!check(TOK_RPAREN))
+        {
+            do
+            {
+                int arg_reg = alloc_reg();
+                expression(arg_reg);
+                state_->next_reg = arg_reg + 1;
+                arg_count++;
+            } while (match(TOK_COMMA));
+        }
+        consume(TOK_RPAREN, "Expected ')' after arguments.");
+
+        /* Emit OP_SUPER_INVOKE (3-word):
+         * word1: [OP|base|arg_count|0]
+         * word2: (sel_slot << 16) | name_ki
+         * word3: parent_class_ki (constant index of static parent class) */
+        int sel_slot = vm_->intern_selector(method_name.start, method_name.length);
+        int name_ki = state_->emitter.add_constant(
+            val_obj((Obj *)intern_string(gc_, method_name.start, method_name.length,
+                                         hash_string(method_name.start, method_name.length))));
+        int parent_ki = state_->emitter.add_constant(val_obj((Obj *)parent));
+        state_->emitter.emit_abc(OP_SUPER_INVOKE, base, arg_count, 0, method_name.line);
+        state_->emitter.emit((uint32_t)((sel_slot << 16) | (name_ki & 0xFFFF)), method_name.line);
+        state_->emitter.emit((uint32_t)parent_ki, method_name.line);
+
+        state_->next_reg = save_next > base + 1 ? save_next : base + 1;
+        int result_reg = dest >= 0 ? dest : base;
+        if (result_reg != base)
+            emit_move(result_reg, base);
+        return result_reg;
     }
 
     int Compiler::spawn_expression(int dest)

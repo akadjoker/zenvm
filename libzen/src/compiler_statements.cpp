@@ -522,6 +522,7 @@ namespace zen
         ClassFieldInfo cfi;
         cfi.count = 0;
         cfi.parent_field_count = 0;
+        cfi.parent_class = nullptr;
 
         /* Resolve parent class early for field layout */
         ObjClass *parent_class = nullptr;
@@ -544,6 +545,7 @@ namespace zen
                 cfi.count++;
             }
             cfi.parent_field_count = cfi.count;
+            cfi.parent_class = parent_class;
         }
 
         /* We'll store compiled methods temporarily */

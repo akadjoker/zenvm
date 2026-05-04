@@ -458,6 +458,7 @@ TokenType Lexer::identifier_type() {
                     case 'i': return check_keyword(2, 1, "n", TOK_SIN);
                     case 'o': return check_keyword(2, 1, "n", TOK_SON);
                     case 'p': return check_keyword(2, 3, "awn", TOK_SPAWN);
+                    case 'u': return check_keyword(2, 3, "per", TOK_SUPER);
                     case 'q': return check_keyword(2, 2, "rt", TOK_SQRT);
                     case 't': return check_keyword(2, 4, "ruct", TOK_STRUCT);
                     case 'w': return check_keyword(2, 4, "itch", TOK_SWITCH);

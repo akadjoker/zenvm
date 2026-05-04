@@ -1,0 +1,94 @@
+// Benchmark: vtable dispatch with a class containing many methods
+// Tests performance with large vtable (50+ methods) and high slot indices
+
+class BigClass {
+    var x;
+
+    def init(x) { self.x = x; }
+
+    def m01() { return self.x + 1; }
+    def m02() { return self.x + 2; }
+    def m03() { return self.x + 3; }
+    def m04() { return self.x + 4; }
+    def m05() { return self.x + 5; }
+    def m06() { return self.x + 6; }
+    def m07() { return self.x + 7; }
+    def m08() { return self.x + 8; }
+    def m09() { return self.x + 9; }
+    def m10() { return self.x + 10; }
+    def m11() { return self.x + 11; }
+    def m12() { return self.x + 12; }
+    def m13() { return self.x + 13; }
+    def m14() { return self.x + 14; }
+    def m15() { return self.x + 15; }
+    def m16() { return self.x + 16; }
+    def m17() { return self.x + 17; }
+    def m18() { return self.x + 18; }
+    def m19() { return self.x + 19; }
+    def m20() { return self.x + 20; }
+    def m21() { return self.x + 21; }
+    def m22() { return self.x + 22; }
+    def m23() { return self.x + 23; }
+    def m24() { return self.x + 24; }
+    def m25() { return self.x + 25; }
+    def m26() { return self.x + 26; }
+    def m27() { return self.x + 27; }
+    def m28() { return self.x + 28; }
+    def m29() { return self.x + 29; }
+    def m30() { return self.x + 30; }
+    def m31() { return self.x + 31; }
+    def m32() { return self.x + 32; }
+    def m33() { return self.x + 33; }
+    def m34() { return self.x + 34; }
+    def m35() { return self.x + 35; }
+    def m36() { return self.x + 36; }
+    def m37() { return self.x + 37; }
+    def m38() { return self.x + 38; }
+    def m39() { return self.x + 39; }
+    def m40() { return self.x + 40; }
+    def m41() { return self.x + 41; }
+    def m42() { return self.x + 42; }
+    def m43() { return self.x + 43; }
+    def m44() { return self.x + 44; }
+    def m45() { return self.x + 45; }
+    def m46() { return self.x + 46; }
+    def m47() { return self.x + 47; }
+    def m48() { return self.x + 48; }
+    def m49() { return self.x + 49; }
+    def m50() { return self.x + 50; }
+}
+
+// Second class to verify different vtables with shared selectors
+class SmallClass {
+    var v;
+    def init(v) { self.v = v; }
+    def m25() { return self.v * 2; }
+    def m50() { return self.v * 3; }
+}
+
+var n = 500000;
+var obj = BigClass(100);
+var small = SmallClass(7);
+var sum = 0.0;
+
+var t0 = clock();
+var i = 0;
+while (i < n) {
+    // Call methods at various vtable offsets (low, mid, high)
+    sum = sum + obj.m01();
+    sum = sum + obj.m10();
+    sum = sum + obj.m25();
+    sum = sum + obj.m40();
+    sum = sum + obj.m50();
+    // Polymorphic: same selector, different class
+    sum = sum + small.m25();
+    sum = sum + small.m50();
+    i = i + 1;
+}
+var elapsed = clock() - t0;
+
+print("vtable_many_methods_bench");
+print("n=" + str(n));
+print("methods_per_class=50");
+print("seconds=" + str(elapsed));
+print("sum=" + str(sum));

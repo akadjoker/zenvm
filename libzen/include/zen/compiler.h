@@ -185,6 +185,7 @@ namespace zen
         int resume_expression(int dest);
         int yield_expression(int dest);
         int process_field_expr(Token token, int dest);
+        int super_invoke(int dest);
         int anonymous_function(int dest);
 
         /* --- Helpers --- */
@@ -273,6 +274,7 @@ namespace zen
             char fields[64][64];
             int count;
             int parent_field_count; /* fields from parent come first */
+            ObjClass *parent_class; /* static parent for super dispatch */
         };
         ClassFieldInfo *current_class_fields_; /* non-null while compiling a method */
     };

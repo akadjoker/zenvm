@@ -248,6 +248,7 @@ namespace zen
             &&lbl_OP_SETINDEX,
             &&lbl_OP_INVOKE,
             &&lbl_OP_INVOKE_VT,
+            &&lbl_OP_SUPER_INVOKE,
             &&lbl_OP_NEWCLASS,
             &&lbl_OP_NEWINSTANCE,
             &&lbl_OP_GETMETHOD,
@@ -2102,6 +2103,81 @@ namespace zen
                 runtime_error("vtable slot %d is nil (method not found)", slot);
                 return;
             }
+            NEXT();
+        }
+
+        CASE(OP_SUPER_INVOKE)
+        {
+            /* 3-word: word1=[OP|base|argc|0], word2=(sel<<16|name_ki), word3=parent_ki */
+            uint32_t i = *ip;
+            uint8_t base = ZEN_A(i);
+            uint8_t arg_count = ZEN_B(i);
+            uint32_t word2 = ip[1];
+            int sel_slot = (int)(word2 >> 16);
+            int name_ki = (int)(word2 & 0xFFFF);
+            uint32_t parent_ki = ip[2];
+
+            /* Resolve static parent class from constant pool */
+            ObjClass *parent = as_class(frame->func->constants[parent_ki]);
+
+            /* Vtable lookup on static parent */
+            Value mval = val_nil();
+            if (sel_slot < parent->vtable_size)
+                mval = parent->vtable[sel_slot];
+
+            if (is_nil(mval))
+            {
+                const char *mname = as_string(frame->func->constants[name_ki])->chars;
+                runtime_error("parent class '%s' has no method '%s'",
+                              parent->name->chars, mname);
+                return;
+            }
+
+            if (is_closure(mval))
+            {
+                ObjClosure *cl = as_closure(mval);
+                ObjFunc *fn = cl->func;
+                if (fn->arity >= 0 && arg_count != fn->arity)
+                {
+                    const char *mname = as_string(frame->func->constants[name_ki])->chars;
+                    runtime_error("super.%s() expects %d args but got %d",
+                                  mname, fn->arity, arg_count);
+                    return;
+                }
+                if (fiber->frame_count >= kMaxFrames)
+                {
+                    runtime_error("stack overflow");
+                    return;
+                }
+                ip += 3; /* skip all 3 words */
+                SAVE_IP();
+                CallFrame *new_frame = &fiber->frames[fiber->frame_count++];
+                new_frame->closure = cl;
+                new_frame->func = fn;
+                new_frame->ip = fn->code;
+                new_frame->base = &R[base]; /* base[0]=self, base[1..]=args */
+                new_frame->ret_reg = base;
+                new_frame->ret_count = 1;
+                fiber->stack_top = new_frame->base + fn->num_regs;
+                LOAD_STATE();
+                DISPATCH();
+            }
+            else if (is_native(mval))
+            {
+                ObjNative *nat = as_native(mval);
+                int nret = nat->fn(this, &R[base], arg_count + 1);
+                if (nret > 0)
+                    R[base] = R[base];
+                else
+                    R[base] = val_nil();
+            }
+            else
+            {
+                const char *mname = as_string(frame->func->constants[name_ki])->chars;
+                runtime_error("super.%s is not callable", mname);
+                return;
+            }
+            ip += 2; /* skip word2+word3 */
             NEXT();
         }
 

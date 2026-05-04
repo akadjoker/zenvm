@@ -1,0 +1,86 @@
+// Benchmark: vtable with inheritance — child overrides some, inherits others
+// Stress-tests vtable flattening and high slot indices with polymorphism
+
+class Animal {
+    var name;
+    var energy;
+
+    def init(name, energy) {
+        self.name = name;
+        self.energy = energy;
+    }
+
+    def speak() { return "..."; }
+    def move() { self.energy = self.energy - 1; return self.energy; }
+    def eat() { self.energy = self.energy + 5; return self.energy; }
+    def sleep() { self.energy = self.energy + 10; return self.energy; }
+    def run() { self.energy = self.energy - 3; return self.energy; }
+    def swim() { self.energy = self.energy - 2; return self.energy; }
+    def fly() { return 0; }
+    def dig() { self.energy = self.energy - 1; return self.energy; }
+    def hunt() { self.energy = self.energy - 4; return self.energy; }
+    def rest() { self.energy = self.energy + 3; return self.energy; }
+    def play() { self.energy = self.energy - 2; return self.energy; }
+    def drink() { self.energy = self.energy + 1; return self.energy; }
+    def jump() { self.energy = self.energy - 1; return self.energy; }
+    def climb() { self.energy = self.energy - 2; return self.energy; }
+    def hide() { return self.energy; }
+    def roar() { return 0; }
+}
+
+class Dog : Animal {
+    // Override some methods
+    def speak() { return "woof"; }
+    def fly() { return -1; }  // dogs can't fly
+    def roar() { return 1; }
+    def play() { self.energy = self.energy - 1; return self.energy; } // dogs love playing
+}
+
+class Bird : Animal {
+    def speak() { return "tweet"; }
+    def fly() { self.energy = self.energy - 2; return self.energy; }
+    def swim() { return -1; }  // most birds don't swim
+}
+
+var n = 200000;
+var dog = Dog("Rex", 1000000);
+var bird = Bird("Tweety", 1000000);
+var sum = 0;
+
+var t0 = clock();
+var i = 0;
+while (i < n) {
+    // Inherited methods (from Animal vtable)
+    sum = sum + dog.move();
+    sum = sum + dog.eat();
+    sum = sum + dog.sleep();
+    sum = sum + dog.run();
+    sum = sum + dog.hunt();
+    sum = sum + dog.rest();
+    sum = sum + dog.drink();
+    sum = sum + dog.jump();
+    sum = sum + dog.climb();
+    sum = sum + dog.hide();
+    // Overridden methods
+    sum = sum + dog.play();
+    sum = sum + dog.roar();
+
+    // Bird — different overrides, same selectors
+    sum = sum + bird.move();
+    sum = sum + bird.eat();
+    sum = sum + bird.fly();
+    sum = sum + bird.swim();
+    sum = sum + bird.rest();
+    sum = sum + bird.hide();
+    bird.speak();  // call but don't add string to sum
+
+    i = i + 1;
+}
+var elapsed = clock() - t0;
+
+print("vtable_inheritance_bench");
+print("n=" + str(n));
+print("seconds=" + str(elapsed));
+print("dog_energy=" + str(dog.energy));
+print("bird_energy=" + str(bird.energy));
+print("sum=" + str(sum));
