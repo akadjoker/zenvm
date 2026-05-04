@@ -1,0 +1,76 @@
+// FlxTimer — temporizador simples (ported from Flixel AS3)
+// Não é adicionado ao state — é actualizado manualmente ou via flxg_timers.
+// Uso:
+//   var t = FlxTimer();
+//   t.start(2.0, on_done, 1);   // 2 segundos, 1 loop
+//   // no update do state: t.update(dt);
+
+class FlxTimer {
+    var time;         // duração de cada loop em segundos
+    var loops;        // 0 = infinito
+    var paused;
+    var finished;
+
+    var _elapsed;     // tempo acumulado no loop actual
+    var _loops_done;
+    var _callback;    // def(timer) ou nil
+
+    def init() {
+        self.time        = 0.0;
+        self.loops       = 1;
+        self.paused      = false;
+        self.finished    = false;
+        self._elapsed    = 0.0;
+        self._loops_done = 0;
+        self._callback   = nil;
+    }
+
+    // Inicia o timer. loops=0 → infinito.
+    def start(t, callback, loops) {
+        self.time        = t;
+        self.loops       = loops;
+        self._callback   = callback;
+        self._elapsed    = 0.0;
+        self._loops_done = 0;
+        self.paused      = false;
+        self.finished    = false;
+        return self;
+    }
+
+    def stop() {
+        self.finished = true;
+        self.paused   = false;
+    }
+
+    def reset() {
+        self._elapsed    = 0.0;
+        self._loops_done = 0;
+        self.finished    = false;
+        self.paused      = false;
+    }
+
+    // Progresso no loop actual [0, 1]
+    def progress() {
+        if (self.time <= 0.0) { return 1.0; }
+        return self._elapsed / self.time;
+    }
+
+    def update(dt) {
+        if (self.paused or self.finished) { return; }
+
+        self._elapsed = self._elapsed + dt;
+
+        while (self._elapsed >= self.time and not self.finished) {
+            self._elapsed    = self._elapsed - self.time;
+            self._loops_done = self._loops_done + 1;
+
+            if (self.loops > 0 and self._loops_done >= self.loops) {
+                self.finished = true;
+            }
+
+            if (self._callback != nil) {
+                self._callback(self);
+            }
+        }
+    }
+}

@@ -162,6 +162,15 @@ namespace zen
 
 #define SAVE_IP() frame->ip = ip
 
+/* Save IP before runtime errors so stack traces report correct lines */
+#define RT_ERROR(...)        \
+    do                       \
+    {                        \
+        SAVE_IP();           \
+        runtime_error(__VA_ARGS__); \
+        return;              \
+    } while (0)
+
 /* Aritmética helpers — use int64_t wrapping via unsigned cast to avoid UB */
 #define NUM_BINOP(op)                                                         \
     do                                                                        \

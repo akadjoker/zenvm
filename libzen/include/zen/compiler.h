@@ -144,6 +144,7 @@ namespace zen
         void frame_statement();
         void print_statement();
         void block();
+        void scoped_body(); /* '{' block '}' OR single statement (braces optional) */
         void import_statement();
         void using_statement();
         void include_statement();

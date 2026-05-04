@@ -1,0 +1,205 @@
+// FlxEmitter — emissor de partículas (ported from Flixel AS3)
+// Herda de FlxGroup. Recicla FlxParticle via recycle().
+//
+// Uso básico:
+//   var e = FlxEmitter(x, y, 50);
+//   e.make_particles(tex, 50);
+//   e.start(false, 0.1, 0);    // contínuo, 0.1s entre partículas
+//   // no update: e.update() — já chamado pelo FlxGroup do state
+//   // explodir: e.start(true, 0, 20);
+
+class FlxEmitter : FlxGroup {
+
+    var x;
+    var y;
+    var emit_width;     // área de emissão
+    var emit_height;
+
+    // Velocidade min/max das partículas
+    var min_speed_x;
+    var max_speed_x;
+    var min_speed_y;
+    var max_speed_y;
+
+    // Rotação angular
+    var min_rotation;
+    var max_rotation;
+
+    // Física
+    var gravity;
+    var particle_drag_x;
+    var particle_drag_y;
+    var bounce;
+
+    // Vida de cada partícula (0 = eterna)
+    var lifespan;
+
+    // Estado
+    var on;
+    var frequency;     // segundos entre emissões (modo contínuo)
+
+    var _tex;          // textura partilhada (set_texture)
+    var _quantity;     // quantas emitir (explode)
+    var _explode;
+    var _timer;
+    var _counter;
+
+    def init(x, y, max_size) {
+        super.init(max_size);
+        self.x = x;
+        self.y = y;
+        self.emit_width   = 0.0;
+        self.emit_height  = 0.0;
+
+        self.min_speed_x = -100.0;
+        self.max_speed_x =  100.0;
+        self.min_speed_y = -100.0;
+        self.max_speed_y =  100.0;
+
+        self.min_rotation = -360.0;
+        self.max_rotation =  360.0;
+
+        self.gravity        = 0.0;
+        self.particle_drag_x = 0.0;
+        self.particle_drag_y = 0.0;
+        self.bounce         = 0.0;
+        self.lifespan       = 3.0;
+        self.frequency      = 0.1;
+        self.on             = false;
+
+        self._tex      = nil;
+        self._quantity = 0;
+        self._explode  = true;
+        self._timer    = 0.0;
+        self._counter  = 0;
+    }
+
+    // Define a textura usada por todas as partículas
+    def set_texture(tex) {
+        self._tex = tex;
+    }
+
+    // Pré-cria N partículas no pool
+    def make_particles(tex, quantity) {
+        self._tex = tex;
+        self._max_size = quantity;
+        var i = 0;
+        while (i < quantity) {
+            var p = FlxParticle(0.0, 0.0);
+            p.set_graphic(tex);
+            p.exists = false;
+            self.add(p);
+            i = i + 1;
+        }
+        return self;
+    }
+
+    // Inicia emissão.
+    //   explode=true  → emite quantity de uma vez; quantity=0 → emite todos
+    //   explode=false → emissão contínua, frequency= segundos entre emissões
+    //                   quantity=0 → sem limite
+    def start(explode, frequency, quantity) {
+        self.on        = true;
+        self._explode  = explode;
+        self.frequency = frequency;
+        self._quantity = quantity;
+        self._counter  = 0;
+        self._timer    = 0.0;
+
+        if (explode) {
+            var n = self._quantity;
+            if (n == 0) { n = self.length; }
+            var i = 0;
+            while (i < n) {
+                self._emit_one();
+                i = i + 1;
+            }
+            self.on = false;
+        }
+    }
+
+    def stop() {
+        self.on = false;
+    }
+
+    def _emit_one() {
+        // Encontrar slot morto ou criar novo
+        var p = nil;
+        var i = 0;
+        while (i < self.length) {
+            var m = self.members[i];
+            if (m != nil and not m.exists) {
+                p = m;
+                break;
+            }
+            i = i + 1;
+        }
+        if (p == nil) {
+            p = FlxParticle(0.0, 0.0);
+            self.add(p);
+        }
+        if (self._tex != nil) { p.set_graphic(self._tex); }
+
+        // Posição aleatória dentro da área do emitter
+        p.x = self.x + frand(0.0, self.emit_width);
+        p.y = self.y + frand(0.0, self.emit_height);
+
+        // Velocidade
+        p.velocity_x = frand(self.min_speed_x, self.max_speed_x);
+        p.velocity_y = frand(self.min_speed_y, self.max_speed_y);
+
+        // Angular
+        p.angular_velocity = frand(self.min_rotation, self.max_rotation);
+
+        // Física
+        p.acceleration_y = self.gravity;
+        p.drag_x = self.particle_drag_x;
+        p.drag_y = self.particle_drag_y;
+        p.elasticity = self.bounce;
+
+        // Vida
+        p.lifespan = self.lifespan;
+
+        p.exists  = true;
+        p.alive   = true;
+        p.visible = true;
+    }
+
+    def update() {
+        // Actualizar partículas vivas
+        var i = 0;
+        while (i < self.length) {
+            var m = self.members[i];
+            if (m != nil and m.exists and m.active) {
+                m.pre_update();
+                m.update();
+                m.post_update();
+            }
+            i = i + 1;
+        }
+
+        // Emissão contínua
+        if (self.on and not self._explode) {
+            self._timer = self._timer + elapsed;
+            while (self._timer > self.frequency) {
+                self._timer = self._timer - self.frequency;
+                self._emit_one();
+                self._counter = self._counter + 1;
+                if (self._quantity > 0 and self._counter >= self._quantity) {
+                    self.on = false;
+                }
+            }
+        }
+    }
+
+    def draw() {
+        var i = 0;
+        while (i < self.length) {
+            var m = self.members[i];
+            if (m != nil and m.exists and m.visible) {
+                m.draw();
+            }
+            i = i + 1;
+        }
+    }
+}

@@ -1,0 +1,171 @@
+// Bunnymark — benchmark clássico para medir DrawTexture throughput
+// Click esquerdo → +100 bunnies
+// Click direito  → -100 bunnies
+// ESC            → sai e imprime resultados
+//
+// Run: bin/zen_game examples/flixel/bench_bunnymark.zen
+//
+// Nota: a correr em Debug+ASAN — números serão ~3-5x mais lentos que Release.
+// O objectivo é ter uma baseline reproduzível e apanhar crashes.
+
+import math;
+
+InitWindow(800, 600, "Bunnymark — Zen raylib benchmark");
+SetTargetFPS(0);   // sem cap — mede FPS máximos
+SetExitKey(256);   // ESC
+
+// ── Gerar textura do bunny proceduralmente (16x16) ──────────────
+var bimg = GenImageColor(16, 16, 210, 180, 140, 255);  // pele
+// cabeça (oval)
+ImageDrawRectangle(bimg, 3, 0, 10, 12, 210, 180, 140, 255);
+// olhos
+ImageDrawPixel(bimg, 4, 3, 20, 20, 20, 255);
+ImageDrawPixel(bimg, 11, 3, 20, 20, 20, 255);
+// nariz
+ImageDrawPixel(bimg, 7, 6, 255, 100, 120, 255);
+ImageDrawPixel(bimg, 8, 6, 255, 100, 120, 255);
+// orelhas
+ImageDrawRectangle(bimg, 2, 0, 2, 5, 255, 200, 200, 255);
+ImageDrawRectangle(bimg, 12, 0, 2, 5, 255, 200, 200, 255);
+// corpo
+ImageDrawRectangle(bimg, 2, 10, 12, 6, 220, 195, 155, 255);
+// pés
+ImageDrawRectangle(bimg, 1, 14, 5, 2, 190, 160, 120, 255);
+ImageDrawRectangle(bimg, 10, 14, 5, 2, 190, 160, 120, 255);
+// contorno
+ImageDrawRectangle(bimg, 0, 0, 16, 1, 80, 60, 40, 200);
+ImageDrawRectangle(bimg, 0, 15, 16, 1, 80, 60, 40, 200);
+ImageDrawRectangle(bimg, 0, 0, 1, 16, 80, 60, 40, 200);
+ImageDrawRectangle(bimg, 15, 0, 1, 16, 80, 60, 40, 200);
+
+var btex = LoadTextureFromImage(bimg);
+UnloadImage(bimg);
+
+var SW = 800;
+var SH = 600;
+var BATCH = 100;        // bunnies por click
+var MAX_BUNNIES = 50000;
+var GRAVITY = 980.0;    // px/s²
+
+// Arrays paralelos para evitar overhead de objectos
+var bx  = [];
+var by  = [];
+var bvx = [];
+var bvy = [];
+var bcnt = 0;
+
+// Função para adicionar N bunnies
+def add_bunnies(n) {
+    var i = 0;
+    while (i < n and bcnt < MAX_BUNNIES) {
+        bx.push(400.0);
+        by.push(300.0);
+        bvx.push((math.random(400) - 200) * 1.0);
+        bvy.push((math.random(300) - 150) * 1.0);
+        bcnt = bcnt + 1;
+        i = i + 1;
+    }
+}
+
+// Começar com 100 bunnies
+add_bunnies(BATCH);
+
+// Stats para o relatório final
+var total_ticks = 0;
+var fps_sum     = 0.0;
+var fps_min     = 999999.0;
+var fps_max     = 0.0;
+
+while (WindowShouldClose() == false) {
+    var dt = GetFrameTime();
+    if (dt > 0.05) { dt = 0.05; }   // clamp — janela movida/etc
+
+    // Input
+    if (IsMouseButtonPressed(0)) { add_bunnies(BATCH); }
+    if (IsMouseButtonPressed(1)) {
+        var rem = bcnt - BATCH;
+        if (rem < 0) { rem = 0; }
+        // Truncar arrays
+        var new_bx = [];
+        var new_by = [];
+        var new_bvx = [];
+        var new_bvy = [];
+        var j = 0;
+        while (j < rem) {
+            new_bx.push(bx[j]);
+            new_by.push(by[j]);
+            new_bvx.push(bvx[j]);
+            new_bvy.push(bvy[j]);
+            j = j + 1;
+        }
+        bx = new_bx;
+        by = new_by;
+        bvx = new_bvx;
+        bvy = new_bvy;
+        bcnt = rem;
+    }
+
+    // Update bunnies
+    var i = 0;
+    while (i < bcnt) {
+        bvy[i] = bvy[i] + GRAVITY * dt;
+        bx[i]  = bx[i]  + bvx[i] * dt;
+        by[i]  = by[i]  + bvy[i] * dt;
+
+        // Bounce paredes
+        if (bx[i] < 0.0) {
+            bx[i]  = 0.0;
+            bvx[i] = 0.0 - bvx[i];
+        } elif (bx[i] > SW - 16.0) {
+            bx[i]  = SW - 16.0;
+            bvx[i] = 0.0 - bvx[i];
+        }
+        if (by[i] > SH - 16.0) {
+            by[i]  = SH - 16.0;
+            bvy[i] = bvy[i] * -0.75;
+        } elif (by[i] < 0.0) {
+            by[i]  = 0.0;
+            bvy[i] = 0.0 - bvy[i];
+        }
+        i = i + 1;
+    }
+
+    // Draw
+    BeginDrawing();
+    ClearBackground(30, 30, 40, 255);
+
+    var d = 0;
+    while (d < bcnt) {
+        DrawTexture(btex, int(bx[d]), int(by[d]), 255, 255, 255, 255);
+        d = d + 1;
+    }
+
+    var fps = GetFPS();
+    DrawText("Bunnies: " + str(bcnt), 8, 8, 20, 255, 220, 80, 255);
+    DrawText("FPS: " + str(fps), 8, 32, 20, 80, 220, 80, 255);
+    DrawText("LClick +100  RClick -100  ESC sai", 8, SH - 24, 16, 160, 160, 160, 255);
+    DrawFPS(SW - 80, 8);
+
+    EndDrawing();
+
+    // Stats
+    var fps_f = fps * 1.0;
+    fps_sum = fps_sum + fps_f;
+    if (fps_f < fps_min) { fps_min = fps_f; }
+    if (fps_f > fps_max) { fps_max = fps_f; }
+    total_ticks = total_ticks + 1;
+}
+
+UnloadTexture(btex);
+CloseWindow();
+
+var fps_avg = 0.0;
+if (total_ticks > 0) { fps_avg = fps_sum / total_ticks; }
+
+print("=== Bunnymark Results ===");
+print("Bunnies final : " + str(bcnt));
+print("Total ticks   : " + str(total_ticks));
+print("FPS avg       : " + str(int(fps_avg)));
+print("FPS min       : " + str(int(fps_min)));
+print("FPS max       : " + str(int(fps_max)));
+print("(Debug+ASAN build — Release seria ~3-5x mais rapido)");

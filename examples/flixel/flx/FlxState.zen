@@ -1,0 +1,41 @@
+// FlxState — base class for game states/screens (ported from Flixel AS3)
+// Extend this to create menus, gameplay levels, etc.
+
+class FlxState {
+    var _group;   // root FlxGroup for this state
+
+    def init() {
+        self._group = FlxGroup(0);
+    }
+
+    // Override to add objects to the state
+    def create() { }
+
+    def add(obj) {
+        return self._group.add(obj);
+    }
+
+    def remove(obj, splice) {
+        return self._group.remove(obj, splice);
+    }
+
+    def pre_update()  { }
+    def post_update() { }
+
+    def update() {
+        self._group.update();
+    }
+
+    def draw() {
+        self._group.draw();
+    }
+
+    def destroy() {
+        self._group.destroy();
+    }
+
+    def switch_to(new_state) {
+        state = new_state;
+        new_state.create();
+    }
+}

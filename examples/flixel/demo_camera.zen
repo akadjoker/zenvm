@@ -1,0 +1,303 @@
+// Demo: FlxCamera + FlxTileblock + FlxEmitter
+// Run: bin/zen_game examples/flixel/demo_camera.zen
+//
+// ESPAÇO  → salta
+// ESC     → sai
+// Câmara segue o player. Tiles sólidos no chão e plataformas.
+// Explosão de partículas quando o player cai.
+
+include "flx/FlxRenderer.zen";
+include "flx/FlxRendererRaylib.zen";
+include "flx/FlxPoint.zen";
+include "flx/FlxRect.zen";
+include "flx/FlxBasic.zen";
+include "flx/FlxObject.zen";
+include "flx/FlxGroup.zen";
+include "flx/FlxG.zen";
+include "flx/FlxState.zen";
+include "flx/FlxAnim.zen";
+include "flx/FlxSprite.zen";
+include "flx/FlxText.zen";
+include "flx/FlxTimer.zen";
+include "flx/FlxCamera.zen";
+include "flx/FlxParticle.zen";
+include "flx/FlxEmitter.zen";
+include "flx/FlxTileblock.zen";
+
+// ── Constantes de teclas raylib ──────────────────────────
+var KEY_SPACE = 32;
+var KEY_ESC   = 256;
+
+// ─────────────────────────────────────────────────────────
+// Player simples
+// ─────────────────────────────────────────────────────────
+class Player : FlxObject {
+    var _on_floor;
+    var _jump_held;
+
+    def init(x, y) {
+        super.init(x, y, 16.0, 24.0);
+        self.velocity_x     = 160.0;
+        self.acceleration_y = 600.0;
+        self.max_velocity_y = 400.0;
+        self._on_floor  = false;
+        self._jump_held = false;
+    }
+
+    def update() {
+        self._on_floor = (self.touching & DOWN) != 0;
+
+        var jump = IsKeyDown(KEY_SPACE);
+
+        if (self._on_floor and jump and not self._jump_held) {
+            self.velocity_y = -320.0;
+        }
+        self._jump_held = jump;
+    }
+
+    def draw() {
+        var sx = cam_screen_x(self.x, self.scroll_x);
+        var sy = cam_screen_y(self.y, self.scroll_y);
+        renderer.draw_rect(sx, sy, self.width, self.height, 80, 200, 255, 255);
+        renderer.draw_rect_lines(sx, sy, self.width, self.height, 200, 240, 255, 255);
+    }
+}
+
+// ─────────────────────────────────────────────────────────
+// Colisão simples AABB entre um objecto e um grupo de tiles
+// ─────────────────────────────────────────────────────────
+def collide_group(obj, group) {
+    var i = 0;
+    while (i < group.length) {
+        var tile = group.members[i];
+        if (tile != nil and tile.exists) {
+            // AABB overlap
+            if (obj.x < tile.x + tile.width  and
+                obj.x + obj.width  > tile.x  and
+                obj.y < tile.y + tile.height and
+                obj.y + obj.height > tile.y) {
+
+                // Calcular sobreposição em cada eixo
+                var over_x = 0.0;
+                var over_y = 0.0;
+
+                if (obj.velocity_x > 0.0) {
+                    over_x = (obj.x + obj.width) - tile.x;
+                } elif (obj.velocity_x < 0.0) {
+                    over_x = obj.x - (tile.x + tile.width);
+                }
+
+                if (obj.velocity_y > 0.0) {
+                    over_y = (obj.y + obj.height) - tile.y;
+                } elif (obj.velocity_y < 0.0) {
+                    over_y = obj.y - (tile.y + tile.height);
+                }
+
+                // Resolver no eixo com menor sobreposição
+                if (over_x == 0.0 and over_y == 0.0) {
+                    // nada
+                } elif (over_y != 0.0 and (over_x == 0.0 or abs(over_y) < abs(over_x))) {
+                    obj.y = obj.y - over_y;
+                    if (obj.velocity_y > 0.0) {
+                        obj.touching = obj.touching | DOWN;
+                    } else {
+                        obj.touching = obj.touching | UP;
+                    }
+                    obj.velocity_y = 0.0;
+                } elif (over_x != 0.0) {
+                    obj.x = obj.x - over_x;
+                    if (obj.velocity_x > 0.0) {
+                        obj.touching = obj.touching | RIGHT;
+                    } else {
+                        obj.touching = obj.touching | LEFT;
+                    }
+                    obj.velocity_x = 0.0;
+                }
+            }
+        }
+        i = i + 1;
+    }
+}
+
+// ─────────────────────────────────────────────────────────
+// Play State
+// ─────────────────────────────────────────────────────────
+class DemoState : FlxState {
+    var _player;
+    var _tiles;
+    var _emitter;
+    var _score_text;
+    var _tex_particle;
+    var _dist;
+    var _dead;
+    var _dead_timer;
+
+    def init() {
+        super.init();
+        self._player      = nil;
+        self._tiles       = nil;
+        self._emitter     = nil;
+        self._score_text  = nil;
+        self._tex_particle = nil;
+        self._dist  = 0.0;
+        self._dead  = false;
+        self._dead_timer = 0.0;
+    }
+
+    def create() {
+        // Câmara
+        camera = FlxCamera(width, height);
+        camera.lerp = 0.1;
+        camera.lead_x = 80.0;
+        camera.set_bounds(0.0, nil, 0.0, nil);
+
+        // Tiles — chão e plataformas
+        self._tiles = FlxGroup(0);
+
+        // Chão em dois segmentos — buraco entre x=800 e x=1000 para o player cair
+        var ground1 = FlxTileblock(0.0, height - 32.0, 800.0, 32.0);
+        ground1.set_fill(60, 80, 100, 255);
+        self._tiles.add(ground1);
+        var ground2 = FlxTileblock(1000.0, height - 32.0, 1200.0, 32.0);
+        ground2.set_fill(60, 80, 100, 255);
+        self._tiles.add(ground2);
+
+        // Plataformas
+        var plats_x = [200.0, 380.0, 520.0, 700.0, 900.0, 1100.0, 1300.0];
+        var plats_y = [340.0, 300.0, 360.0, 280.0, 320.0, 260.0,  340.0];
+        var plats_w = [120.0, 100.0, 140.0,  90.0, 110.0, 130.0,  100.0];
+        var i = 0;
+        while (i < 7) {
+            var p = FlxTileblock(plats_x[i], plats_y[i], plats_w[i], 16.0);
+            p.set_fill(80, 120, 60, 255);
+            self._tiles.add(p);
+            i = i + 1;
+        }
+
+        // Player
+        self._player = Player(40.0, 320.0);
+        camera.follow(self._player, 0.1);
+
+        // Emitter de partículas
+        self._tex_particle = LoadTexture("assets/wabbit_alpha.png");
+        self._emitter = FlxEmitter(300.0, height - 80.0, 60);
+        self._emitter.make_particles(self._tex_particle, 60);
+        self._emitter.min_speed_x = -120.0;
+        self._emitter.max_speed_x =  120.0;
+        self._emitter.min_speed_y = -280.0;
+        self._emitter.max_speed_y =  -60.0;
+        self._emitter.gravity     = 400.0;
+        self._emitter.lifespan    = 2.0;
+        self._emitter.emit_width  = 40.0;
+        // Burst imediato para confirmar que as partículas funcionam
+        self._emitter.start(true, 0.0, 20);
+
+        // HUD (scroll_x=0 → fixo no ecrã)
+        self._score_text = FlxText(8.0, 8.0, "0m", 20);
+        self._score_text.scroll_x = 0.0;
+        self._score_text.scroll_y = 0.0;
+
+        self._dist = 0.0;
+        self._dead = false;
+        self._dead_timer = 0.0;
+    }
+
+    def update() {
+        if (self._dead) {
+            self._dead_timer = self._dead_timer + elapsed;
+            self._emitter.update();
+            if (self._dead_timer > 2.0 and IsKeyPressed(KEY_SPACE)) {
+                // Restart
+                self._dead = false;
+                self._dead_timer = 0.0;
+                self._player.x = 40.0;
+                self._player.y = 320.0;
+                self._player.velocity_x = 160.0;
+                self._player.velocity_y = 0.0;
+                self._player.exists = true;
+                self._player.alive  = true;
+                self._dist = 0.0;
+                camera.follow(self._player, 0.1);
+            }
+            return;
+        }
+
+        // Update player
+        self._player.pre_update();
+        self._player.update();
+        self._player.post_update();
+
+        // Colisão tiles
+        collide_group(self._player, self._tiles);
+
+        // Emitter
+        self._emitter.update();
+
+        // Distância
+        self._dist = self._player.x / 16.0;
+        self._score_text.text = str(int(self._dist)) + "m";
+
+        // Caiu?
+        if (self._player.y > height + 50.0) {
+            self._dead = true;
+            self._player.exists = false;
+            // Emitter no ponto de queda (coordenadas mundo)
+            self._emitter.x = self._player.x - 20.0;
+            self._emitter.y = height - 100.0 + camera.scroll_y;
+            self._emitter.emit_width = 40.0;
+            self._emitter.start(true, 0.0, 0);
+            self._score_text.text = "morreu! " + str(int(self._dist)) + "m  (ESPAÇO para reiniciar)";
+        }
+    }
+
+    def draw() {
+        renderer.clear(20, 24, 35);
+
+        // Tiles
+        self._tiles.draw();
+
+        // Player
+        if (self._player.exists) {
+            self._player.draw();
+        }
+
+        // Partículas
+        self._emitter.draw();
+
+        // HUD fixo
+        self._score_text.draw();
+    }
+
+    def destroy() {
+        UnloadTexture(self._tex_particle);
+        self._tex_particle = nil;
+    }
+}
+
+// ─────────────────────────────────────────────────────────
+// Setup e loop
+// ─────────────────────────────────────────────────────────
+width  = 640;
+height = 480;
+
+renderer = FlxRendererRaylib(width, height, "FlxCamera + FlxTileblock + FlxEmitter");
+
+state = DemoState();
+state.create();
+
+while (renderer.window_should_close() == false) {
+    var dt = renderer.get_frame_time();
+    flxg_tick(dt);
+
+    renderer.begin_frame();
+    state.draw();
+    renderer.end_frame();
+
+    if (IsKeyPressed(KEY_ESC) and state._dead and state._dead_timer > 0.5) {
+        break;
+    }
+}
+
+state.destroy();
+renderer.close();
+print("done - " + str(frame_count) + " frames, " + str(int(state._dist)) + "m");

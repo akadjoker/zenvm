@@ -1,0 +1,233 @@
+// FlxTilemap — grid tilemap com colisão AABB (ported from Flixel AS3)
+//
+// Tiles são inteiros: 0 = vazio, >0 = sólido.
+// Render: cor sólida (padrão) ou spritesheet.
+// Frustum culling automático com camera.
+//
+// Uso básico:
+//   var tm = FlxTilemap(0.0, 300.0);
+//   tm.load_map([1,1,1, 1,0,1, 1,1,1], 3, 16, 16);
+//   tm.set_fill(80, 100, 60, 255);
+//   // colisão: tm.collide(player);
+
+class FlxTilemap : FlxObject {
+
+    var _data;           // array flat de tile IDs
+    var _cols;           // largura em tiles
+    var _rows;           // altura em tiles
+    var _tile_w;         // pixel width por tile
+    var _tile_h;         // pixel height por tile
+    var _tex;            // tileset texture (nil = cor sólida)
+    var _tiles_per_row;  // cols no tileset
+
+    var fill_r;
+    var fill_g;
+    var fill_b;
+    var fill_a;
+
+    def init(x, y) {
+        super.init(x, y, 0.0, 0.0);
+        self._data = [];
+        self._cols = 0;
+        self._rows = 0;
+        self._tile_w = 16;
+        self._tile_h = 16;
+        self._tex = nil;
+        self._tiles_per_row = 1;
+        self.fill_r = 120;
+        self.fill_g = 120;
+        self.fill_b = 140;
+        self.fill_a = 255;
+        self.immovable = true;
+        self.moves = false;
+    }
+
+    // Carrega mapa a partir de array flat de IDs.
+    // cols = largura do mapa em tiles.
+    def load_map(data, cols, tile_w, tile_h) {
+        self._data   = data;
+        self._cols   = cols;
+        self._rows   = data.len() / cols;
+        self._tile_w = tile_w;
+        self._tile_h = tile_h;
+        self.width   = cols * tile_w * 1.0;
+        self.height  = self._rows * tile_h * 1.0;
+        return self;
+    }
+
+    // Atalho: cria mapa de 1 tile de largura que enche um rectângulo
+    // Útil para buildings do Canabalt: cria um bloco de WxH tiles todos sólidos
+    def make_solid(w_px, h_px, tile_w, tile_h) {
+        var cols = w_px / tile_w;
+        var rows = h_px / tile_h;
+        if (cols < 1) { cols = 1; }
+        if (rows < 1) { rows = 1; }
+        var data = [];
+        var i = 0;
+        while (i < cols * rows) {
+            data.push(1);
+            i = i + 1;
+        }
+        self.load_map(data, cols, tile_w, tile_h);
+        return self;
+    }
+
+    def set_fill(r, g, b, a) {
+        self.fill_r = r;
+        self.fill_g = g;
+        self.fill_b = b;
+        self.fill_a = a;
+    }
+
+    // Define tileset spritesheet — tiles indexados esquerda→direita, cima→baixo
+    def set_tileset(tex, tile_w, tile_h) {
+        self._tex = tex;
+        self._tile_w = tile_w;
+        self._tile_h = tile_h;
+        self._tiles_per_row = int(tex.width / tile_w);
+        if (self._tiles_per_row < 1) { self._tiles_per_row = 1; }
+    }
+
+    def get_tile(col, row) {
+        if (col < 0 or col >= self._cols or row < 0 or row >= self._rows) { return 0; }
+        return self._data[row * self._cols + col];
+    }
+
+    def set_tile(col, row, tile_id) {
+        if (col < 0 or col >= self._cols or row < 0 or row >= self._rows) { return; }
+        self._data[row * self._cols + col] = tile_id;
+    }
+
+    // Coordenadas mundo → tile (retorna -1 se fora do mapa)
+    def world_to_col(wx) { return int((wx - self.x) / self._tile_w); }
+    def world_to_row(wy) { return int((wy - self.y) / self._tile_h); }
+
+    def draw() {
+        if (not self.visible or not self.exists) { return; }
+        if (self._cols == 0 or self._rows == 0) { return; }
+
+        var sx = cam_screen_x(self.x, self.scroll_x);
+        var sy = cam_screen_y(self.y, self.scroll_y);
+
+        var tw = self._tile_w * 1.0;
+        var th = self._tile_h * 1.0;
+
+        // Frustum culling — só desenha tiles visíveis no ecrã
+        var start_col = 0;
+        var start_row = 0;
+        var end_col   = self._cols;
+        var end_row   = self._rows;
+
+        if (camera != nil) {
+            var vis_x = camera.scroll_x - self.x;
+            var vis_y = camera.scroll_y - self.y;
+            start_col = int(vis_x / tw) - 1;
+            start_row = int(vis_y / th) - 1;
+            end_col   = start_col + int(camera.width  / tw) + 3;
+            end_row   = start_row + int(camera.height / th) + 3;
+        }
+
+        if (start_col < 0)          { start_col = 0; }
+        if (start_row < 0)          { start_row = 0; }
+        if (end_col > self._cols)   { end_col   = self._cols; }
+        if (end_row > self._rows)   { end_row   = self._rows; }
+
+        var row = start_row;
+        while (row < end_row) {
+            var col = start_col;
+            while (col < end_col) {
+                var tid = self.get_tile(col, row);
+                if (tid > 0) {
+                    var px = sx + col * tw;
+                    var py = sy + row * th;
+
+                    if (self._tex == nil) {
+                        renderer.draw_rect(px, py, tw, th,
+                            self.fill_r, self.fill_g, self.fill_b, self.fill_a);
+                    } else {
+                        var fc = (tid - 1) % self._tiles_per_row;
+                        var fr = (tid - 1) / self._tiles_per_row;
+                        renderer.draw_image(self._tex,
+                            px, py, 0.0, 0.0, 0.0,
+                            fc * tw, fr * th, tw, th,
+                            1.0, 1.0, 255, 255, 255, 255);
+                    }
+                }
+                col = col + 1;
+            }
+            row = row + 1;
+        }
+    }
+
+    // Colisão AABB entre obj e este tilemap.
+    // Resolve penetração e define obj.touching flags.
+    def collide(obj) {
+        if (not self.exists) { return; }
+        if (self._cols == 0 or self._rows == 0) { return; }
+
+        var tw = self._tile_w * 1.0;
+        var th = self._tile_h * 1.0;
+
+        // Intervalo de tiles que o obj pode tocar
+        var c_left  = int((obj.x               - self.x) / tw);
+        var r_top   = int((obj.y               - self.y) / th);
+        var c_right = int((obj.x + obj.width  - self.x - 0.1) / tw);
+        var r_bot   = int((obj.y + obj.height - self.y - 0.1) / th);
+
+        if (c_left  < 0)           { c_left  = 0; }
+        if (r_top   < 0)           { r_top   = 0; }
+        if (c_right >= self._cols) { c_right = self._cols - 1; }
+        if (r_bot   >= self._rows) { r_bot   = self._rows - 1; }
+
+        var row = r_top;
+        while (row <= r_bot) {
+            var col = c_left;
+            while (col <= c_right) {
+                if (self.get_tile(col, row) > 0) {
+                    var tx = self.x + col * tw;
+                    var ty = self.y + row * th;
+
+                    // AABB overlap check
+                    if (obj.x < tx + tw and obj.x + obj.width  > tx and
+                        obj.y < ty + th and obj.y + obj.height > ty) {
+
+                        var over_x = 0.0;
+                        var over_y = 0.0;
+
+                        if (obj.velocity_x >= 0.0) {
+                            over_x = (obj.x + obj.width) - tx;
+                        } else {
+                            over_x = obj.x - (tx + tw);
+                        }
+                        if (obj.velocity_y >= 0.0) {
+                            over_y = (obj.y + obj.height) - ty;
+                        } else {
+                            over_y = obj.y - (ty + th);
+                        }
+
+                        // Resolve no eixo com menor penetração
+                        if (over_y != 0.0 and (over_x == 0.0 or abs(over_y) < abs(over_x))) {
+                            obj.y = obj.y - over_y;
+                            if (obj.velocity_y >= 0.0) {
+                                obj.touching = obj.touching | DOWN;
+                            } else {
+                                obj.touching = obj.touching | UP;
+                            }
+                            obj.velocity_y = 0.0;
+                        } elif (over_x != 0.0) {
+                            obj.x = obj.x - over_x;
+                            if (obj.velocity_x >= 0.0) {
+                                obj.touching = obj.touching | RIGHT;
+                            } else {
+                                obj.touching = obj.touching | LEFT;
+                            }
+                            obj.velocity_x = 0.0;
+                        }
+                    }
+                }
+                col = col + 1;
+            }
+            row = row + 1;
+        }
+    }
+}

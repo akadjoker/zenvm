@@ -1,0 +1,97 @@
+// FlxRendererRaylib — real render backend using the raylib native functions.
+// Requires zen_game runner (bin/zen_game) which loads zen_lib_raylib.
+// Usage:  renderer = FlxRendererRaylib(640, 480, "My Game");
+
+class FlxRendererRaylib : FlxRenderer {
+
+    var _w;
+    var _h;
+
+    def init(width, height, title) {
+        self._w = width;
+        self._h = height;
+        InitWindow(width, height, title);
+        SetTargetFPS(60);
+    }
+
+    def window_should_close() {
+        return WindowShouldClose();
+    }
+
+    def begin_frame() {
+        BeginDrawing();
+    }
+
+    def end_frame() {
+        EndDrawing();
+    }
+
+    def get_frame_time() {
+        return GetFrameTime();
+    }
+
+    def close() {
+        CloseWindow();
+    }
+
+    // ── FlxRenderer API ──────────────────────────────────
+
+    def clear(r, g, b) {
+        ClearBackground(r, g, b, 255);
+    }
+
+    def draw_rect(x, y, w, h, r, g, b, a) {
+        DrawRectangleF(x, y, w, h, r, g, b, a);
+    }
+
+    def draw_rect_lines(x, y, w, h, r, g, b, a) {
+        DrawRectangleLines(x, y, w, h, r, g, b, a);
+    }
+
+    def draw_circle(cx, cy, radius, r, g, b, a) {
+        DrawCircle(cx, cy, radius, r, g, b, a);
+    }
+
+    def draw_line(x0, y0, x1, y1, r, g, b, a) {
+        DrawLine(x0, y0, x1, y1, r, g, b, a);
+    }
+
+    def draw_image(tex,
+                   x, y,
+                   origin_x, origin_y,
+                   angle,
+                   clip_x, clip_y, clip_w, clip_h,
+                   scale_x, scale_y,
+                   r, g, b, a) {
+        // Full-texture draw if clip is zero
+        if (clip_w == 0 or clip_h == 0) {
+            DrawTexture(tex, x, y, r, g, b, a);
+        } else {
+            DrawTexturePro(tex,
+                clip_x, clip_y, clip_w, clip_h,
+                x, y, clip_w * scale_x, clip_h * scale_y,
+                origin_x, origin_y, angle,
+                r, g, b, a);
+        }
+    }
+
+    def draw_text(text, x, y, size, r, g, b, a) {
+        DrawText(text, x, y, size, r, g, b, a);
+    }
+
+    def load_image(path) {
+        return LoadTexture(path);
+    }
+
+    def unload_image(tex) {
+        UnloadTexture(tex);
+    }
+
+    // ── Input helpers (convenience wrappers) ─────────────
+
+    def key_down(key)     { return IsKeyDown(key); }
+    def key_pressed(key)  { return IsKeyPressed(key); }
+    def mouse_x()         { return GetMouseX(); }
+    def mouse_y()         { return GetMouseY(); }
+    def mouse_down(btn)   { return IsMouseButtonDown(btn); }
+}

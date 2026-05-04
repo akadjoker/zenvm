@@ -1,0 +1,52 @@
+// FlxText — texto como objecto na scene (ported from Flixel AS3)
+// Herda de FlxObject. Renderiza texto via renderer.draw_text().
+// Suporta: posição, tamanho, cor, scroll_factor (0 = HUD fixo).
+
+class FlxText : FlxObject {
+
+    var text;     // string a mostrar
+    var size;     // tamanho em pixels
+    var color_r;
+    var color_g;
+    var color_b;
+    var color_a;
+
+    def init(x, y, text, size) {
+        super.init(x, y, 0.0, 0.0);
+        self.text    = text;
+        self.size    = size;
+        self.color_r = 255;
+        self.color_g = 255;
+        self.color_b = 255;
+        self.color_a = 255;
+        // sem física
+        self.moves = false;
+        self.allow_collisions = NONE;
+    }
+
+    // Muda a cor de uma vez
+    def set_color(r, g, b, a) {
+        self.color_r = r;
+        self.color_g = g;
+        self.color_b = b;
+        self.color_a = a;
+        return self;
+    }
+
+    // Centra o texto horizontalmente no ecrã
+    def center_x(screen_w) {
+        // Estimativa: ~6px por caracter ao tamanho 8
+        var approx_w = self.text.len() * self.size * 0.6;
+        self.x = (screen_w - approx_w) * 0.5;
+        return self;
+    }
+
+    def draw() {
+        if (self.visible == false)
+            return;
+        var sx = cam_screen_x(self.x, self.scroll_x);
+        var sy = cam_screen_y(self.y, self.scroll_y);
+        renderer.draw_text(self.text, sx, sy, self.size,
+                           self.color_r, self.color_g, self.color_b, self.color_a);
+    }
+}

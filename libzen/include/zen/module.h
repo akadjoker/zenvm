@@ -22,6 +22,11 @@ namespace zen
         Value value;
     };
 
+    /* Called once when a lib is opened — use to register native structs/classes.
+    ** Called before functions/constants are put in globals, so types are available
+    ** when init_fn returns. VM is fully alive at this point. */
+    typedef void (*NativeLibInitFn)(VM *vm);
+
     struct NativeLib
     {
         const char *name;            /* "math", "os" */
@@ -29,6 +34,7 @@ namespace zen
         int num_functions;
         const NativeConst *constants; /* null-terminated array (can be nullptr) */
         int num_constants;
+        NativeLibInitFn init_fn;     /* optional — register structs/classes here */
     };
 
     /* Builtin library openers */

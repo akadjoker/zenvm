@@ -1,0 +1,49 @@
+// FlxParticle — partícula usada pelo FlxEmitter (ported from Flixel AS3)
+// Herda de FlxSprite. Tem lifespan e comportamento de bounce.
+
+class FlxParticle : FlxSprite {
+
+    var lifespan;      // segundos restantes (0 = vive para sempre)
+    var friction;      // desaceleração quando toca no chão com gravidade
+
+    def init(x, y) {
+        super.init(x, y);
+        self.lifespan = 0.0;
+        self.friction = 500.0;
+    }
+
+    def update() {
+        if (self.lifespan > 0.0) {
+            self.lifespan = self.lifespan - elapsed;
+            if (self.lifespan <= 0.0) {
+                self.kill();
+                return;
+            }
+        }
+
+        // Bounce angular quando toca em algo
+        if (self.touching != NONE) {
+            if (self.angular_velocity != 0.0) {
+                self.angular_velocity = 0.0 - self.angular_velocity;
+            }
+        }
+
+        // Fricção no chão com gravidade
+        if (self.acceleration_y > 0.0 and self.touching != NONE) {
+            var fric = self.friction * elapsed;
+            if (self.velocity_x > 0.0) {
+                if (self.velocity_x > fric) {
+                    self.velocity_x = self.velocity_x - fric;
+                } else {
+                    self.velocity_x = 0.0;
+                }
+            } elif (self.velocity_x < 0.0) {
+                if (self.velocity_x < 0.0 - fric) {
+                    self.velocity_x = self.velocity_x + fric;
+                } else {
+                    self.velocity_x = 0.0;
+                }
+            }
+        }
+    }
+}

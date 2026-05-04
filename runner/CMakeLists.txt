@@ -1,0 +1,16 @@
+cmake_minimum_required(VERSION 3.10)
+project(zen_game LANGUAGES CXX)
+
+set(ZEN_BIN_DIR ${CMAKE_SOURCE_DIR}/bin)
+
+add_executable(zen_game main.cpp)
+set_target_properties(zen_game PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${ZEN_BIN_DIR})
+target_compile_options(zen_game PRIVATE $<$<CONFIG:Release>:-O3>)
+target_compile_definitions(zen_game PRIVATE $<$<CONFIG:Release>:NDEBUG>)
+target_link_libraries(zen_game zen_static)
+if(TARGET zen_module_raylib)
+    target_link_libraries(zen_game zen_module_raylib)
+endif()
+if(NOT WIN32)
+    target_link_options(zen_game PRIVATE -rdynamic)
+endif()

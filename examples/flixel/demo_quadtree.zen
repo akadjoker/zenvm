@@ -1,0 +1,259 @@
+// demo_quadtree.zen — demo top-down: player move-se contra objectos no mundo
+// QuadTree faz broad-phase; colisão AABB exacta só nos candidatos.
+// 'D' toggle debug visual das células do QuadTree.
+//
+// Corre com:  bin/zen_game examples/flixel/demo_quadtree.zen
+
+import math;
+
+include "examples/flixel/flx/FlxRenderer.zen";
+include "examples/flixel/flx/FlxRendererRaylib.zen";
+include "examples/flixel/flx/FlxPoint.zen";
+include "examples/flixel/flx/FlxRect.zen";
+include "examples/flixel/flx/FlxBasic.zen";
+include "examples/flixel/flx/FlxObject.zen";
+include "examples/flixel/flx/FlxGroup.zen";
+include "examples/flixel/flx/FlxG.zen";
+include "examples/flixel/flx/FlxState.zen";
+include "examples/flixel/flx/FlxAnim.zen";
+include "examples/flixel/flx/FlxSprite.zen";
+include "examples/flixel/flx/FlxCamera.zen";
+include "examples/flixel/flx/FlxQuadTree.zen";
+
+var SCREEN_W = 640;
+var SCREEN_H = 480;
+var WORLD_W  = 1200.0;
+var WORLD_H  = 900.0;
+var NUM_BOXES = 60;
+var PLAYER_SPEED = 160.0;
+
+width  = SCREEN_W;
+height = SCREEN_H;
+renderer = FlxRendererRaylib(SCREEN_W, SCREEN_H, "demo_quadtree — Top-Down + QuadTree debug");
+
+// ── Helpers de colisão AABB ─────────────────────────────
+def aabb_overlap(a, b) {
+    return (a.x < b.x + b.width  and a.x + a.width  > b.x and
+            a.y < b.y + b.height and a.y + a.height > b.y);
+}
+
+def resolve_aabb(obj, other) {
+    // Encontrar menor penetração e resolver
+    var ox = 0.0;
+    var oy = 0.0;
+    if (obj.velocity_x >= 0.0) {
+        ox = (obj.x + obj.width) - other.x;
+    } else {
+        ox = obj.x - (other.x + other.width);
+    }
+    if (obj.velocity_y >= 0.0) {
+        oy = (obj.y + obj.height) - other.y;
+    } else {
+        oy = obj.y - (other.y + other.height);
+    }
+    if (abs(oy) < abs(ox)) {
+        obj.y = obj.y - oy;
+        obj.velocity_y = 0.0;
+    } else {
+        obj.x = obj.x - ox;
+        obj.velocity_x = 0.0;
+    }
+}
+
+// ── Player (rectângulo azul 20x20) ──────────────────────
+var player = FlxObject(WORLD_W * 0.5, WORLD_H * 0.5, 20.0, 20.0);
+player.moves = true;
+
+// ── Caixas (rectângulos imóveis de vários tamanhos) ──────
+var boxes = [];
+var bi = 0;
+while (bi < NUM_BOXES) {
+    var bw = 20.0 + math.random(0, 60) * 1.0;
+    var bh = 20.0 + math.random(0, 60) * 1.0;
+    var bx = 40.0 + math.random(0, int(WORLD_W - bw - 80.0)) * 1.0;
+    var by = 40.0 + math.random(0, int(WORLD_H - bh - 80.0)) * 1.0;
+    var box = FlxObject(bx, by, bw, bh);
+    box.immovable = true;
+    boxes.push(box);
+    bi = bi + 1;
+}
+
+// ── QuadTree ─────────────────────────────────────────────
+var qt = make_quadtree(0.0, 0.0, WORLD_W, WORLD_H);
+
+// ── Camera top-down ──────────────────────────────────────
+camera = FlxCamera(SCREEN_W, SCREEN_H);
+camera.lerp = 0.15;
+camera.set_bounds(0.0, WORLD_W, 0.0, WORLD_H);
+camera.follow(player, 0.15);
+
+// ── Debug QuadTree: desenhar células recursivamente ──────
+// Guarda rectângulos das células visitadas num array para desenhar depois
+var debug_cells = [];
+
+def qt_collect_cells(node, depth) {
+    if (node == nil) { return; }
+    var sx = cam_screen_x(node._x, 1.0);
+    var sy = cam_screen_y(node._y, 1.0);
+    // Cada nivel tem cor diferente
+    debug_cells.push([sx, sy, node._w, node._h, depth]);
+    if (node._divided == true) {
+        var ci = 0;
+        while (ci < 4) {
+            if (node._nodes[ci] != nil) {
+                qt_collect_cells(node._nodes[ci], depth + 1);
+            }
+            ci = ci + 1;
+        }
+    }
+}
+
+var debug_qt = false;
+var qt_hits  = 0;
+var collisions = 0;
+
+while (renderer.window_should_close() == false) {
+    var dt = renderer.get_frame_time();
+    elapsed = dt;
+
+    // ── Input ─────────────────────────────────────────────
+    var vx = 0.0;
+    var vy = 0.0;
+    if (IsKeyDown(KEY_RIGHT) or IsKeyDown(KEY_D)) { vx = PLAYER_SPEED; }
+    if (IsKeyDown(KEY_LEFT)  or IsKeyDown(KEY_A)) { vx = 0.0 - PLAYER_SPEED; }
+    if (IsKeyDown(KEY_DOWN)  or IsKeyDown(KEY_S)) { vy = PLAYER_SPEED; }
+    if (IsKeyDown(KEY_UP)    or IsKeyDown(KEY_W)) { vy = 0.0 - PLAYER_SPEED; }
+
+    // Diagonal normalizado
+    if (vx != 0.0 and vy != 0.0) {
+        vx = vx * 0.707;
+        vy = vy * 0.707;
+    }
+
+    if (IsKeyPressed(KEY_D) and IsKeyDown(KEY_LEFT_SHIFT)) {
+        if (debug_qt) { debug_qt = false; } else { debug_qt = true; }
+    }
+
+    player.velocity_x = vx;
+    player.velocity_y = vy;
+
+    // ── Physics ───────────────────────────────────────────
+    player.pre_update();
+    player.post_update();
+
+    // Limites do mundo
+    if (player.x < 0.0) { player.x = 0.0; player.velocity_x = 0.0; }
+    if (player.y < 0.0) { player.y = 0.0; player.velocity_y = 0.0; }
+    if (player.x + player.width > WORLD_W) { player.x = WORLD_W - player.width; player.velocity_x = 0.0; }
+    if (player.y + player.height > WORLD_H) { player.y = WORLD_H - player.height; player.velocity_y = 0.0; }
+
+    // ── QuadTree ─────────────────────────────────────────
+    qt.clear();
+    var bi2 = 0;
+    while (bi2 < boxes.len()) {
+        qt.insert(boxes[bi2]);
+        bi2 = bi2 + 1;
+    }
+
+    var candidates = [];
+    qt.retrieve(candidates, player);
+    qt_hits = candidates.len();
+
+    // ── Colisão exacta só nos candidatos ─────────────────
+    collisions = 0;
+    var ci2 = 0;
+    while (ci2 < candidates.len()) {
+        var box = candidates[ci2];
+        if (aabb_overlap(player, box)) {
+            resolve_aabb(player, box);
+            collisions = collisions + 1;
+        }
+        ci2 = ci2 + 1;
+    }
+
+    // ── Camera ───────────────────────────────────────────
+    camera.update(dt);
+
+    // Colectar células do QT para debug
+    debug_cells = [];
+    if (debug_qt) {
+        qt_collect_cells(qt, 0);
+    }
+
+    // ── Draw ─────────────────────────────────────────────
+    renderer.begin_frame();
+    renderer.clear(20, 24, 32);
+
+    // Grid de fundo (mundo)
+    var gx = 0;
+    while (gx <= int(WORLD_W / 64.0)) {
+        var lx = cam_screen_x(gx * 64.0, 1.0);
+        renderer.draw_line(lx, cam_screen_y(0.0, 1.0), lx, cam_screen_y(WORLD_H, 1.0), 35, 40, 50, 255);
+        gx = gx + 1;
+    }
+    var gy = 0;
+    while (gy <= int(WORLD_H / 64.0)) {
+        var ly = cam_screen_y(gy * 64.0, 1.0);
+        renderer.draw_line(cam_screen_x(0.0, 1.0), ly, cam_screen_x(WORLD_W, 1.0), ly, 35, 40, 50, 255);
+        gy = gy + 1;
+    }
+
+    // Borda do mundo
+    renderer.draw_rect_lines(
+        cam_screen_x(0.0, 1.0), cam_screen_y(0.0, 1.0),
+        WORLD_W, WORLD_H, 60, 70, 90, 255);
+
+    // Debug QuadTree: células
+    if (debug_qt) {
+        var di = 0;
+        while (di < debug_cells.len()) {
+            var cell = debug_cells[di];
+            var depth = cell[4];
+            var alpha = 80 - depth * 15;
+            if (alpha < 20) { alpha = 20; }
+            renderer.draw_rect_lines(cell[0], cell[1], cell[2], cell[3], 80, 160, 80, alpha);
+            di = di + 1;
+        }
+    }
+
+    // Caixas
+    var bi3 = 0;
+    while (bi3 < boxes.len()) {
+        var box = boxes[bi3];
+        var bsx = cam_screen_x(box.x, 1.0);
+        var bsy = cam_screen_y(box.y, 1.0);
+        renderer.draw_rect(bsx, bsy, box.width, box.height, 80, 100, 140, 255);
+        renderer.draw_rect_lines(bsx, bsy, box.width, box.height, 120, 150, 200, 255);
+        bi3 = bi3 + 1;
+    }
+
+    // Candidatos do QT (highlight)
+    var hi = 0;
+    while (hi < candidates.len()) {
+        var box = candidates[hi];
+        var bsx = cam_screen_x(box.x, 1.0);
+        var bsy = cam_screen_y(box.y, 1.0);
+        renderer.draw_rect_lines(bsx, bsy, box.width, box.height, 255, 220, 60, 200);
+        hi = hi + 1;
+    }
+
+    // Player
+    var psx = cam_screen_x(player.x, 1.0);
+    var psy = cam_screen_y(player.y, 1.0);
+    renderer.draw_rect(psx, psy, player.width, player.height, 80, 200, 120, 255);
+    renderer.draw_rect_lines(psx, psy, player.width, player.height, 150, 255, 180, 255);
+
+    // HUD
+    DrawText("WASD/Setas: mover   Shift+D: toggle QuadTree debug", 8, 8, 13, 200, 200, 200, 255);
+    DrawText("Boxes: " + str(NUM_BOXES) + "   QT candidatos: " + str(qt_hits) + "   Colisoes: " + str(collisions), 8, 26, 13, 150, 220, 150, 255);
+    if (debug_qt) {
+        DrawText("QuadTree DEBUG ON — celulas a verde", 8, 44, 13, 80, 220, 80, 255);
+    } else {
+        DrawText("QuadTree DEBUG OFF", 8, 44, 13, 100, 100, 100, 255);
+    }
+    DrawText("Amarelo = candidatos retrieved pelo QT", 8, 62, 13, 255, 220, 60, 255);
+
+    renderer.end_frame();
+}
+
+renderer.close();

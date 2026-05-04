@@ -44,8 +44,17 @@ if(ZEN_ENABLE_SDL2)
     add_subdirectory(modules/sdl2)
 endif()
 
+# Raylib module (used by zen_game runner)
+option(ZEN_ENABLE_RAYLIB_MODULE "Enable Raylib native module" ON)
+if(ZEN_ENABLE_RAYLIB_MODULE)
+    add_subdirectory(modules/raylib)
+endif()
+
 # --- CLI (zen executable) ---
 add_subdirectory(cli)
+
+# --- Game runner (zen_game — zen + raylib module) ---
+add_subdirectory(runner)
 
 # --- Test functions (ScriptComponent O(1) pattern) ---
 #add_subdirectory(test_functions)

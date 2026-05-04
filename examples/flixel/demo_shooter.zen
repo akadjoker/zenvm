@@ -1,0 +1,391 @@
+// demo_shooter.zen — Space Shooter usando o engine Flixel port
+//
+// FlxSprite, FlxGroup, FlxEmitter, overlaps(), hurt(), kill(), flicker()
+// Replay: F2=gravar  F3=playback  F4=parar  ESC=sair
+
+import math;
+
+include "examples/flixel/flx/FlxRenderer.zen";
+include "examples/flixel/flx/FlxRendererRaylib.zen";
+include "examples/flixel/flx/FlxPoint.zen";
+include "examples/flixel/flx/FlxRect.zen";
+include "examples/flixel/flx/FlxBasic.zen";
+include "examples/flixel/flx/FlxObject.zen";
+include "examples/flixel/flx/FlxGroup.zen";
+include "examples/flixel/flx/FlxG.zen";
+include "examples/flixel/flx/FlxAnim.zen";
+include "examples/flixel/flx/FlxSprite.zen";
+include "examples/flixel/flx/FlxParticle.zen";
+include "examples/flixel/flx/FlxEmitter.zen";
+include "examples/flixel/flx/FlxQuadTree.zen";
+include "examples/flixel/flx/FlxReplay.zen";
+
+var SW = 480;
+var SH = 640;
+width  = SW;
+height = SH;
+renderer = FlxRendererRaylib(SW, SH, "SHOOTER — engine Flixel  F2:Rec F3:Play");
+SetExitKey(KEY_ESCAPE);
+
+var PLAYER_SPEED  = 200.0;
+var BULLET_SPEED  = 380.0;
+var FIRE_COOLDOWN = 0.14;
+var ENEMY_SPEED   = 70.0;
+var E_SHOOT_INT   = 0.9;
+
+// ── Texturas procedurais ─────────────────────────────────────
+var pimg = GenImageColor(32, 28, 0, 0, 0, 0);
+ImageDrawRectangle(pimg, 13, 0,  6,  10, 80, 200, 255, 255);
+ImageDrawRectangle(pimg,  8, 8,  16, 10, 60, 170, 240, 255);
+ImageDrawRectangle(pimg,  0, 14, 32, 8,  40, 140, 220, 255);
+ImageDrawRectangle(pimg,  4, 20, 8,  8,  255, 160, 60, 255);
+ImageDrawRectangle(pimg, 20, 20, 8,  8,  255, 160, 60, 255);
+var player_tex = LoadTextureFromImage(pimg);
+UnloadImage(pimg);
+
+var eimg_a = GenImageColor(28, 20, 0, 0, 0, 0);
+ImageDrawRectangle(eimg_a,  4, 0,  20, 12, 60, 200, 80, 255);
+ImageDrawRectangle(eimg_a,  0, 6,  28, 8,  60, 200, 80, 220);
+ImageDrawRectangle(eimg_a, 12, 12, 4,  6,  60, 200, 80, 200);
+var enemy_tex_a = LoadTextureFromImage(eimg_a);
+UnloadImage(eimg_a);
+
+var eimg_b = GenImageColor(28, 20, 0, 0, 0, 0);
+ImageDrawRectangle(eimg_b,  4, 0,  20, 12, 180, 60, 220, 255);
+ImageDrawRectangle(eimg_b,  0, 6,  28, 8,  180, 60, 220, 220);
+ImageDrawRectangle(eimg_b, 12, 12, 4,  6,  180, 60, 220, 200);
+var enemy_tex_b = LoadTextureFromImage(eimg_b);
+UnloadImage(eimg_b);
+
+// Textura de partícula 3x3 laranja
+var ptex_img = GenImageColor(3, 3, 255, 180, 60, 255);
+var ptex = LoadTextureFromImage(ptex_img);
+UnloadImage(ptex_img);
+
+// Textura de partícula 2x2 vermelha (hit player)
+var ptex2_img = GenImageColor(2, 2, 255, 80, 80, 255);
+var ptex2 = LoadTextureFromImage(ptex2_img);
+UnloadImage(ptex2_img);
+
+// ── Stars ────────────────────────────────────────────────────
+struct Star { x, y, s, b }
+var stars = [];
+var si = 0;
+while (si < 80) {
+    stars.push(Star(math.random() * SW * 1.0,
+                    math.random() * SH * 1.0,
+                    1.0 + math.random() * 2.0,
+                    int(100.0 + math.random() * 155.0)));
+    si = si + 1;
+}
+
+// ── Jogador ──────────────────────────────────────────────────
+var player = FlxSprite(SW * 0.5 - 16.0, SH - 80.0);
+player.set_graphic(player_tex);
+player.health = 3.0;
+
+// ── Grupos ───────────────────────────────────────────────────
+var bullets  = FlxGroup(0);
+var enemies  = FlxGroup(0);
+var ebullets = FlxGroup(0);
+
+// ── FlxEmitters ──────────────────────────────────────────────
+// Explosão de inimigo (laranja)
+var expl_enemy = FlxEmitter(0.0, 0.0, 80);
+expl_enemy.make_particles(ptex, 80);
+expl_enemy.min_speed_x = -150.0;  expl_enemy.max_speed_x = 150.0;
+expl_enemy.min_speed_y = -150.0;  expl_enemy.max_speed_y = 150.0;
+expl_enemy.gravity   = 120.0;
+expl_enemy.lifespan  = 0.6;
+
+// Hit do jogador (vermelho)
+var expl_player = FlxEmitter(0.0, 0.0, 40);
+expl_player.make_particles(ptex2, 40);
+expl_player.min_speed_x = -200.0; expl_player.max_speed_x = 200.0;
+expl_player.min_speed_y = -200.0; expl_player.max_speed_y = 200.0;
+expl_player.gravity  = 80.0;
+expl_player.lifespan = 0.8;
+
+// ── Replay ───────────────────────────────────────────────────
+var replay = FlxReplay();
+var _qt = make_quadtree(0.0, 0.0, SW * 1.0, SH * 1.0);
+
+var p_score    = 0;
+var game_over  = false;
+var wave_clear = false;
+var wave_timer = 0.0;
+var fire_t     = 0.0;
+var e_shoot_t  = 0.0;
+
+// ── Helpers ──────────────────────────────────────────────────
+def spawn_wave() {
+    var gi = 0;
+    while (gi < enemies.length) {
+        if (enemies.members[gi] != nil) { enemies.members[gi].kill(); }
+        gi = gi + 1;
+    }
+    var ROWS = 4; var COLS = 8;
+    var row = 0;
+    while (row < ROWS) {
+        var col = 0;
+        while (col < COLS) {
+            var hp  = 1 + int(math.random() * 2.0);
+            var tex = enemy_tex_a;
+            if (hp >= 2) { tex = enemy_tex_b; }
+            var e = FlxSprite(36.0 + col * 50.0, 38.0 + row * 44.0);
+            e.set_graphic(tex);
+            e.health     = hp * 1.0;
+            e.velocity_x = ENEMY_SPEED;
+            enemies.add(e);
+            col = col + 1;
+        }
+        row = row + 1;
+    }
+    e_shoot_t = E_SHOOT_INT;
+}
+
+spawn_wave();
+
+// Texturas de bullet (criadas uma vez)
+var btex_img = GenImageColor(4, 12, 60, 220, 255, 255);
+ImageDrawRectangle(btex_img, 1, 0, 2, 3, 255, 255, 255, 255);
+var bullet_tex = LoadTextureFromImage(btex_img);
+UnloadImage(btex_img);
+
+var ebtex_img = GenImageColor(4, 10, 255, 80, 80, 255);
+ImageDrawRectangle(ebtex_img, 1, 7, 2, 3, 255, 200, 200, 255);
+var ebullet_tex = LoadTextureFromImage(ebtex_img);
+UnloadImage(ebtex_img);
+
+def spawn_bullet(bx, by) {
+    var b = FlxSprite(bx, by);
+    b.set_graphic(bullet_tex);
+    b.velocity_y = 0.0 - BULLET_SPEED;
+    bullets.add(b);
+}
+
+def spawn_ebullet(bx, by) {
+    var b = FlxSprite(bx, by);
+    b.set_graphic(ebullet_tex);
+    b.velocity_y = BULLET_SPEED * 0.6;
+    ebullets.add(b);
+}
+
+
+
+// ── GAME LOOP ─────────────────────────────────────────────────
+while (renderer.window_should_close() == false) {
+    elapsed = renderer.get_frame_time();
+    if (elapsed > 0.05) { elapsed = 0.05; }
+
+    if (IsKeyPressed(KEY_F2)) { replay.start_record(); }
+    if (IsKeyPressed(KEY_F3)) { replay.stop_record(); replay.start_playback(); }
+    if (IsKeyPressed(KEY_F4)) { replay.playing = false; replay.recording = false; }
+
+    var cur_mask = 0;
+    if (replay.playing) {
+        cur_mask = replay.playback_frame();
+    } else {
+        if (IsKeyDown(KEY_LEFT)  or IsKeyDown(KEY_A)) { cur_mask = cur_mask | RBIT_LEFT;  }
+        if (IsKeyDown(KEY_RIGHT) or IsKeyDown(KEY_D)) { cur_mask = cur_mask | RBIT_RIGHT; }
+        if (IsKeyDown(KEY_UP)    or IsKeyDown(KEY_W)) { cur_mask = cur_mask | RBIT_UP;    }
+        if (IsKeyDown(KEY_DOWN)  or IsKeyDown(KEY_S)) { cur_mask = cur_mask | RBIT_DOWN;  }
+        if (IsKeyDown(KEY_SPACE))                     { cur_mask = cur_mask | RBIT_FIRE;  }
+        replay.record_frame(cur_mask);
+    }
+
+    // Stars
+    si = 0;
+    while (si < 80) {
+        stars[si].y = stars[si].y + stars[si].s * 60.0 * elapsed;
+        if (stars[si].y > SH * 1.0) { stars[si].y = 0.0; }
+        si = si + 1;
+    }
+
+    if (not game_over) {
+
+        // Player movement
+        if (player.alive) {
+            player.velocity_x = 0.0; player.velocity_y = 0.0;
+            if (mask_down(cur_mask, RBIT_LEFT))  { player.velocity_x = 0.0 - PLAYER_SPEED; }
+            if (mask_down(cur_mask, RBIT_RIGHT)) { player.velocity_x = PLAYER_SPEED; }
+            if (mask_down(cur_mask, RBIT_UP))    { player.velocity_y = 0.0 - PLAYER_SPEED; }
+            if (mask_down(cur_mask, RBIT_DOWN))  { player.velocity_y = PLAYER_SPEED; }
+
+            fire_t = fire_t - elapsed;
+            if (mask_down(cur_mask, RBIT_FIRE) and fire_t <= 0.0) {
+                spawn_bullet(player.x + player.width * 0.5 - 2.0, player.y - 12.0);
+                fire_t = FIRE_COOLDOWN;
+            }
+
+            player.pre_update(); player.update(); player.post_update();
+
+            if (player.x < 0.0)                      { player.x = 0.0; }
+            if (player.x > SW - player.width)         { player.x = SW - player.width; }
+            if (player.y < SH * 0.5)                  { player.y = SH * 0.5; }
+            if (player.y > SH - player.height - 4.0)  { player.y = SH - player.height - 4.0; }
+        }
+
+        // Bullets
+        bullets.update();
+        ebullets.update();
+        var bi = 0;
+        while (bi < bullets.length) {
+            var bm = bullets.members[bi];
+            if (bm != nil and bm.exists and bm.alive and bm.y < -20.0) { bm.kill(); }
+            bi = bi + 1;
+        }
+        bi = 0;
+        while (bi < ebullets.length) {
+            var bm = ebullets.members[bi];
+            if (bm != nil and bm.exists and bm.alive and bm.y > SH + 20.0) { bm.kill(); }
+            bi = bi + 1;
+        }
+
+        // Enemies
+        var hit_wall = false;
+        var enmi = 0;
+        while (enmi < enemies.length) {
+            var e = enemies.members[enmi];
+            if (e != nil and e.exists and e.alive) {
+                if (e.x < 4.0 or e.x + e.width > SW - 4.0) { hit_wall = true; }
+            }
+            enmi = enmi + 1;
+        }
+        if (hit_wall) {
+            enmi = 0;
+            while (enmi < enemies.length) {
+                var e = enemies.members[enmi];
+                if (e != nil and e.exists and e.alive) {
+                    e.velocity_x = 0.0 - e.velocity_x;
+                    e.y = e.y + 10.0;
+                }
+                enmi = enmi + 1;
+            }
+        }
+        enemies.update();
+
+        // Enemy shoot
+        e_shoot_t = e_shoot_t - elapsed;
+        if (e_shoot_t <= 0.0) {
+            e_shoot_t = E_SHOOT_INT;
+            var alive_list = [];
+            enmi = 0;
+            while (enmi < enemies.length) {
+                var e = enemies.members[enmi];
+                if (e != nil and e.exists and e.alive) { alive_list.push(e); }
+                enmi = enmi + 1;
+            }
+            if (alive_list.len() > 0) {
+                var pick = int(math.random() * alive_list.len() * 1.0);
+                if (pick >= alive_list.len()) { pick = alive_list.len() - 1; }
+                var shooter = alive_list[pick];
+                spawn_ebullet(shooter.x + shooter.width * 0.5 - 2.0,
+                              shooter.y + shooter.height);
+            }
+        }
+
+        // Emitters update (FlxEmitter é FlxGroup, chama update das partículas)
+        expl_enemy.update();
+        expl_player.update();
+
+        // COLISÕES — broad-phase QuadTree
+        flx_overlap_groups(bullets, enemies, def(blt, enm) {
+            blt.kill();
+            enm.hurt(1.0);
+            if (not enm.alive) {
+                p_score = p_score + 10;
+                expl_enemy.x = enm.x + enm.width * 0.5;
+                expl_enemy.y = enm.y + enm.height * 0.5;
+                expl_enemy.start(true, 0.0, 10);
+            }
+        }, _qt);
+
+        flx_overlap_obj_group(player, ebullets, def(plr, blt) {
+            if (not plr.is_flickering()) {
+                blt.kill();
+                plr.hurt(1.0);
+                plr.flicker(1.0);
+                expl_player.x = plr.x + plr.width * 0.5;
+                expl_player.y = plr.y + plr.height * 0.5;
+                expl_player.start(true, 0.0, 12);
+                if (not plr.alive) { game_over = true; }
+            }
+        }, _qt);
+
+        flx_overlap_obj_group(player, enemies, def(plr, enm) {
+            if (not plr.is_flickering()) {
+                enm.hurt(1.0);
+                plr.hurt(1.0);
+                plr.flicker(1.0);
+                expl_player.x = plr.x + plr.width * 0.5;
+                expl_player.y = plr.y + plr.height * 0.5;
+                expl_player.start(true, 0.0, 16);
+                if (not plr.alive) { game_over = true; }
+            }
+        }, _qt);
+
+        // Wave clear
+        if (enemies.count_living() == 0 and not wave_clear) {
+            wave_clear = true; wave_timer = 2.0;
+        }
+        if (wave_clear) {
+            wave_timer = wave_timer - elapsed;
+            if (wave_timer <= 0.0) { wave_clear = false; spawn_wave(); }
+        }
+    }
+
+    // DRAW
+    renderer.begin_frame();
+    renderer.clear(5, 8, 18);
+
+    si = 0;
+    while (si < 80) {
+        var sb = stars[si].b;
+        DrawPixel(int(stars[si].x), int(stars[si].y), sb, sb, sb + 30, 255);
+        si = si + 1;
+    }
+
+    // Emitters, bullets e enemy bullets — tudo FlxSprite.draw via group
+    expl_enemy.draw();
+    expl_player.draw();
+    ebullets.draw();
+    bullets.draw();
+
+    enemies.draw();
+
+    if (player.exists and player.alive) { player.draw(); }
+
+    DrawText("SCORE " + str(p_score), 8, 8, 14, 255, 220, 60, 255);
+    DrawText("enemies: " + str(enemies.count_living()), 8, 26, 12, 100, 180, 100, 255);
+    var livi = 0;
+    var p_hp = int(player.health);
+    while (livi < p_hp) {
+        DrawRectangle(SW - 16 - livi * 18, 8, 12, 10, 60, 200, 255, 255);
+        livi = livi + 1;
+    }
+
+    replay_hud(replay, 8.0, SH * 1.0 - 22.0);
+
+    if (wave_clear) {
+        DrawText("WAVE CLEAR!", int(SW * 0.5 - 58.0), int(SH * 0.5 - 10.0), 20, 255, 220, 60, 255);
+    }
+    if (game_over) {
+        DrawRectangle(0, int(SH * 0.5 - 50.0), SW, 100, 0, 0, 0, 180);
+        DrawText("GAME OVER", int(SW * 0.5 - 56.0), int(SH * 0.5 - 16.0), 24, 255, 60, 60, 255);
+        DrawText("SCORE: " + str(p_score), int(SW * 0.5 - 44.0), int(SH * 0.5 + 12.0), 16, 220, 220, 80, 255);
+        DrawText("F3: ver replay   ESC: sair", int(SW * 0.5 - 80.0), int(SH * 0.5 + 34.0), 13, 160, 160, 160, 255);
+        if (IsKeyPressed(KEY_F3)) { replay.stop_record(); replay.start_playback(); }
+    }
+
+    renderer.end_frame();
+}
+
+UnloadTexture(player_tex);
+UnloadTexture(enemy_tex_a);
+UnloadTexture(enemy_tex_b);
+UnloadTexture(bullet_tex);
+UnloadTexture(ebullet_tex);
+UnloadTexture(ptex);
+UnloadTexture(ptex2);
+renderer.close();

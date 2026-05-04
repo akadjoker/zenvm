@@ -1,0 +1,53 @@
+// FlxRect — rectangle (ported from Flixel AS3)
+
+class FlxRect {
+    var x;
+    var y;
+    var width;
+    var height;
+
+    def init(x, y, width, height) {
+        self.x = x;
+        self.y = y;
+        self.width = width;
+        self.height = height;
+    }
+
+    def left()   { return self.x; }
+    def right()  { return self.x + self.width; }
+    def top()    { return self.y; }
+    def bottom() { return self.y + self.height; }
+
+    def make(x, y, width, height) {
+        self.x = x;
+        self.y = y;
+        self.width = width;
+        self.height = height;
+        return self;
+    }
+
+    def copy_from(r) {
+        self.x = r.x;
+        self.y = r.y;
+        self.width = r.width;
+        self.height = r.height;
+        return self;
+    }
+
+    // Is point (px, py) inside this rect?
+    def contains_point(px, py) {
+        return px >= self.x and px < self.right()
+           and py >= self.y and py < self.bottom();
+    }
+
+    // Does this rect overlap with r?
+    def overlaps(r) {
+        return self.x < r.right()  and self.right()  > r.x
+           and self.y < r.bottom() and self.bottom() > r.y;
+    }
+
+    def to_str() {
+        return "[" + str(self.x) + "," + str(self.y)
+               + " " + str(self.width) + "x" + str(self.height) + "]";
+    }
+}

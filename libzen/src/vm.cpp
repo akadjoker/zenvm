@@ -162,8 +162,12 @@ namespace zen
 
     void VM::run(ObjFunc *func)
     {
-        /* Wrap func num closure trivial (0 upvalues) */
+        /* Wrap func num closure trivial (0 upvalues).
+           Pause GC: zen_alloc below can trigger a collection which would reset
+           func to WHITE (it is not yet a GC root) and sweep it. */
+        gc_.pause_depth++;
         ObjClosure *cl = (ObjClosure *)zen_alloc(&gc_, sizeof(ObjClosure));
+        gc_.pause_depth--;
         cl->obj.type = OBJ_CLOSURE;
         cl->obj.color = GC_BLACK;
         cl->obj.hash = 0;
@@ -408,6 +412,8 @@ namespace zen
     int VM::open_lib_globals(const NativeLib *lib)
     {
         int base = num_globals_;
+        if (lib->init_fn)
+            lib->init_fn(this);
         for (int i = 0; i < lib->num_functions; i++)
             def_native(lib->functions[i].name, lib->functions[i].fn, lib->functions[i].arity);
         for (int i = 0; i < lib->num_constants; i++)
@@ -419,6 +425,59 @@ namespace zen
     {
         register_lib(lib);
         open_lib_globals(lib);
+    }
+
+    void VM::resolve_native_globals()
+    {
+        /* For each global that is nil, try to find a matching native function
+           or constant in the registered libraries and install it.
+           This is needed after loading bytecode: imports are resolved at compile
+           time (open_lib_globals), but bytecode doesn't serialize native values. */
+        for (int i = 0; i < num_globals_; i++)
+        {
+            if (!is_nil(globals_[i]))
+                continue;
+            if (!global_names_[i])
+                continue;
+            const char *name = global_names_[i]->chars;
+            int name_len = global_names_[i]->length;
+
+            /* Search all registered libs for a function or constant with this name */
+            for (int li = 0; li < num_libs_; li++)
+            {
+                const NativeLib *lib = libs_[li];
+                bool found = false;
+
+                for (int fi = 0; fi < lib->num_functions; fi++)
+                {
+                    if (strcmp(lib->functions[fi].name, name) == 0)
+                    {
+                        ObjString *s = intern_string(&gc_, name, name_len,
+                                                     hash_string(name, name_len));
+                        ObjNative *nat = new_native(&gc_, lib->functions[fi].fn,
+                                                    lib->functions[fi].arity, s);
+                        globals_[i] = val_obj((Obj *)nat);
+                        found = true;
+                        break;
+                    }
+                }
+                if (found) break;
+
+                if (lib->constants)
+                {
+                    for (int ci = 0; ci < lib->num_constants; ci++)
+                    {
+                        if (strcmp(lib->constants[ci].name, name) == 0)
+                        {
+                            globals_[i] = lib->constants[ci].value;
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+                if (found) break;
+            }
+        }
     }
 
     /* =========================================================
@@ -763,10 +822,10 @@ namespace zen
                 ObjFunc *func = frame->func;
                 int offset = (int)(frame->ip - func->code - 1);
                 int line = (offset >= 0 && offset < func->code_count) ? func->lines[offset] : 0;
-                fprintf(stderr, "  at %s() [%s:%d]\n",
-                        func->name ? func->name->chars : "<script>",
-                        func->source ? func->source->chars : "?",
-                        line);
+                const char *fname = func->name ? func->name->chars : "<script>";
+                const char *src = func->source ? func->source->chars : "?";
+                fprintf(stderr, "  File \"%s\", line %d, in %s\n",
+                        src, line, fname);
             }
         }
 
@@ -911,6 +970,26 @@ namespace zen
     }
 
     /* --- Instance API (C++ embedding) --- */
+
+    Value VM::make_native_struct(NativeStructDef *def, Value *args, int nargs)
+    {
+        gc_pause(&gc_);
+        ObjNativeStruct *ns = (ObjNativeStruct *)zen_alloc(&gc_, sizeof(ObjNativeStruct));
+        ns->obj.type = OBJ_NATIVE_STRUCT;
+        ns->obj.color = GC_BLACK;
+        ns->obj.hash = 0;
+        ns->obj.interned = 0;
+        ns->obj._pad = 0;
+        ns->obj.gc_next = gc_.objects;
+        gc_.objects = (Obj *)ns;
+        ns->def = def;
+        ns->data = zen_alloc(&gc_, def->struct_size);
+        gc_resume(&gc_);
+        memset(ns->data, 0, def->struct_size);
+        if (def->ctor)
+            def->ctor(this, ns->data, nargs, args);
+        return val_obj((Obj *)ns);
+    }
 
     Value VM::make_instance(ObjClass *klass)
     {

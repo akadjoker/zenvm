@@ -1,0 +1,27 @@
+// test_raylib_texture.zen — ciclo completo de textura
+// LoadTexture → campo .width/.height → DrawTexture → UnloadTexture → CloseWindow
+// GC depois: sem dtor, sem crash
+
+InitWindow(400, 300, "texture test");
+
+// Usar imagem que existe no projecto
+var img = LoadImage("assets/wabbit_alpha.png");
+print(img.width);
+print(img.height);
+
+var tex = LoadTextureFromImage(img);
+UnloadImage(img);
+
+print(tex.width);
+print(tex.height);
+print(tex.id);
+
+BeginDrawing();
+ClearBackground(30, 30, 40, 255);
+DrawTexture(tex, 100, 75, 255, 255, 255, 255);
+DrawText("texture ok", 140, 200, 20, 255, 255, 255, 255);
+EndDrawing();
+
+UnloadTexture(tex);
+CloseWindow();
+print("texture lifecycle ok");

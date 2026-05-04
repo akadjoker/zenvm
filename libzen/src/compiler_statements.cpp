@@ -262,7 +262,7 @@ namespace zen
         memcpy(name_buf, name.start, len);
         name_buf[len] = '\0';
 
-        fn_state.emitter.begin(name_buf, 0, name_buf);
+        fn_state.emitter.begin(name_buf, 0, current_file_);
 
         CompilerState *enclosing = state_;
         state_ = &fn_state;
@@ -402,7 +402,7 @@ namespace zen
         memcpy(name_buf, name.start, len);
         name_buf[len] = '\0';
 
-        fn_state.emitter.begin(name_buf, 0, name_buf);
+        fn_state.emitter.begin(name_buf, 0, current_file_);
 
         CompilerState *enclosing = state_;
         state_ = &fn_state;
@@ -621,7 +621,7 @@ namespace zen
 
                 char fn_name[192];
                 snprintf(fn_name, sizeof(fn_name), "%s.%s", name_buf, methods[method_count].name);
-                fn_state.emitter.begin(fn_name, 0, fn_name);
+                fn_state.emitter.begin(fn_name, 0, current_file_);
 
                 CompilerState *enclosing = state_;
                 state_ = &fn_state;
@@ -1194,6 +1194,24 @@ namespace zen
         consume(TOK_RBRACE, "Expected '}' after block.");
     }
 
+    /* Braces-optional body: '{' block '}' OR a single statement.
+    ** Always wrapped in a scope. */
+    void Compiler::scoped_body()
+    {
+        if (match(TOK_LBRACE))
+        {
+            begin_scope();
+            block();
+            end_scope();
+        }
+        else
+        {
+            begin_scope();
+            declaration();
+            end_scope();
+        }
+    }
+
     /* =========================================================
     ** if / elif / else
     ** ========================================================= */
@@ -1209,13 +1227,12 @@ namespace zen
         free_reg(cond_reg);
 
         /* Then body */
-        consume(TOK_LBRACE, "Expected '{' after if condition.");
-        begin_scope();
-        block();
-        end_scope();
+        scoped_body();
 
-        /* Jump over elif/else chain */
-        int end_jump = state_->emitter.emit_jump(OP_JMP, 0, previous_.line);
+        /* Collect all "skip to end" jumps — one per if/elif branch */
+        int end_jumps[64];
+        int end_jump_count = 0;
+        end_jumps[end_jump_count++] = state_->emitter.emit_jump(OP_JMP, 0, previous_.line);
         state_->emitter.patch_jump(then_jump);
 
         /* elif chain */
@@ -1228,31 +1245,21 @@ namespace zen
             int elif_jump = state_->emitter.emit_jump(OP_JMPIFNOT, cond_reg, previous_.line);
             free_reg(cond_reg);
 
-            consume(TOK_LBRACE, "Expected '{' after elif condition.");
-            begin_scope();
-            block();
-            end_scope();
+            scoped_body();
 
-            /* Chain: jump to end */
-            int next_end = state_->emitter.emit_jump(OP_JMP, 0, previous_.line);
+            end_jumps[end_jump_count++] = state_->emitter.emit_jump(OP_JMP, 0, previous_.line);
             state_->emitter.patch_jump(elif_jump);
-
-            /* Patch previous end_jump to here? No — we need a list */
-            /* Simple approach: patch the previous end_jump, get new one */
-            state_->emitter.patch_jump(end_jump);
-            end_jump = next_end;
         }
 
         /* else */
         if (match(TOK_ELSE))
         {
-            consume(TOK_LBRACE, "Expected '{' after 'else'.");
-            begin_scope();
-            block();
-            end_scope();
+            scoped_body();
         }
 
-        state_->emitter.patch_jump(end_jump);
+        /* Patch all end jumps to here (past else body) */
+        for (int i = 0; i < end_jump_count; i++)
+            state_->emitter.patch_jump(end_jumps[i]);
     }
 
     /* =========================================================
@@ -1278,10 +1285,7 @@ namespace zen
         int exit_jump = state_->emitter.emit_jump(OP_JMPIFNOT, cond_reg, previous_.line);
         free_reg(cond_reg);
 
-        consume(TOK_LBRACE, "Expected '{' after while condition.");
-        begin_scope();
-        block();
-        end_scope();
+        scoped_body();
 
         /* Loop back */
         state_->emitter.emit_loop(loop_start, 0, previous_.line);
@@ -1567,10 +1571,7 @@ namespace zen
         loop.start = body_start;
 
         /* Body */
-        consume(TOK_LBRACE, "Expected '{' after for clauses.");
-        begin_scope();
-        block();
-        end_scope();
+        scoped_body();
 
         /* FORLOOP: R[A] += step; if R[A] < R[A+1]: jump to body_start */
         int forloop_offset = state_->emitter.current_offset();
@@ -1671,10 +1672,7 @@ namespace zen
             state_->emitter.patch_jump(body_jump);
 
         /* Body */
-        consume(TOK_LBRACE, "Expected '{' after for clauses.");
-        begin_scope();
-        block();
-        end_scope();
+        scoped_body();
 
         /* Loop back (to step if exists, else to condition) */
         if (step_start >= 0)
@@ -1764,10 +1762,7 @@ namespace zen
         state_->emitter.emit_abc(OP_ITER_ELEM, var_reg, iterable_reg, idx_reg, previous_.line);
 
         /* Body */
-        consume(TOK_LBRACE, "Expected '{' after foreach.");
-        begin_scope();
-        block();
-        end_scope();
+        scoped_body();
 
         /* idx = idx + 1 */
         state_->emitter.emit_abc(OP_ADDI, idx_reg, idx_reg, 1, previous_.line);

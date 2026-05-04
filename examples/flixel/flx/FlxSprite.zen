@@ -1,0 +1,198 @@
+// FlxSprite — sprite com textura, câmara e animação spritesheet (ported from Flixel AS3)
+// Animações geridas por FlxAnim (include FlxAnim.zen antes deste ficheiro).
+
+class FlxSprite : FlxObject {
+
+    var _tex;
+    var _tex_w;
+    var _tex_h;
+
+    // Frame actual (clip na textura)
+    var frame_x;
+    var frame_y;
+    var frame_w;
+    var frame_h;
+
+    // Escala visual (não afecta hitbox)
+    var scale_x;
+    var scale_y;
+
+    // Pivot
+    var origin_x;
+    var origin_y;
+
+    // Tint
+    var tint_r;
+    var tint_g;
+    var tint_b;
+    var tint_a;
+
+    // ── Animação ──────────────────────────────────────────
+    var _anims;        // array de FlxAnim
+    var _cur_anim;     // FlxAnim actual (nil = nenhuma)
+    var _anim_timer;   // acumulador de tempo em segundos
+    var _anim_idx;     // índice dentro de _cur_anim.frames
+    var _sprite_cols;  // tiles por linha no spritesheet
+    var finished;      // true quando one-shot termina
+
+    def init(x, y) {
+        super.init(x, y, 0.0, 0.0);
+        self._tex   = nil;
+        self._tex_w = 0.0;
+        self._tex_h = 0.0;
+
+        self.frame_x = 0.0;
+        self.frame_y = 0.0;
+        self.frame_w = 0.0;
+        self.frame_h = 0.0;
+
+        self.scale_x = 1.0;
+        self.scale_y = 1.0;
+        self.origin_x = 0.0;
+        self.origin_y = 0.0;
+
+        self.tint_r = 255;
+        self.tint_g = 255;
+        self.tint_b = 255;
+        self.tint_a = 255;
+
+        self._anims      = [];
+        self._cur_anim   = nil;
+        self._anim_timer = 0.0;
+        self._anim_idx   = 0;
+        self._sprite_cols = 1;
+        self.finished    = false;
+    }
+
+    // Textura simples (sem animação) — owner faz UnloadTexture
+    def set_graphic(tex) {
+        self._tex   = tex;
+        self._tex_w = tex.width;
+        self._tex_h = tex.height;
+        self.width  = self._tex_w;
+        self.height = self._tex_h;
+        self.origin_x = self.width  * 0.5;
+        self.origin_y = self.height * 0.5;
+        return self;
+    }
+
+    // Setup para spritesheet animado.
+    //   tex: textura inteira
+    //   fw/fh: tamanho de cada frame em px
+    def load_graphic_anim(tex, fw, fh) {
+        self._tex   = tex;
+        self._tex_w = tex.width;
+        self._tex_h = tex.height;
+        self.frame_w = fw * 1.0;
+        self.frame_h = fh * 1.0;
+        self.width   = fw * 1.0;
+        self.height  = fh * 1.0;
+        self.origin_x = fw * 0.5;
+        self.origin_y = fh * 0.5;
+        self._sprite_cols = int(self._tex_w / fw);
+        if (self._sprite_cols < 1) { self._sprite_cols = 1; }
+        return self;
+    }
+
+    // Regista uma animação (mesma assinatura que Flixel: name, frames, fps, looped)
+    def add_anim(name, frames, fps, looped) {
+        var a = FlxAnim(name, frames, fps * 1.0, looped);
+        self._anims.push(a);
+    }
+
+    // Inicia animação. force=true reinicia mesmo que já esteja a tocar.
+    def play_anim(name, force) {
+        var i = 0;
+        while (i < self._anims.len()) {
+            var a = self._anims[i];
+            if (a.name == name) {
+                if (self._cur_anim == a and not force) { return; }
+                self._cur_anim   = a;
+                self._anim_timer = 0.0;
+                self._anim_idx   = 0;
+                self.finished    = false;
+                self._apply_frame();
+                return;
+            }
+            i = i + 1;
+        }
+    }
+
+    def stop_anim() { self._cur_anim = nil; }
+
+    def cur_anim_name() {
+        if (self._cur_anim == nil) { return ""; }
+        return self._cur_anim.name;
+    }
+
+    // Aplica frame_x/y a partir do índice actual
+    def _apply_frame() {
+        if (self._cur_anim == nil) { return; }
+        var fidx = self._cur_anim.frames[self._anim_idx];
+        var fc = fidx % self._sprite_cols;
+        var fr = fidx / self._sprite_cols;
+        self.frame_x = fc * self.frame_w;
+        self.frame_y = fr * self.frame_h;
+    }
+
+    // Avança animação — chamado por update()
+    def update() {
+        if (self._cur_anim == nil) { return; }
+
+        var a = self._cur_anim;
+        if (a.delay <= 0.0) { return; }
+
+        var n = a.frames.len();
+        if (n <= 1) { return; }
+
+        self._anim_timer = self._anim_timer + elapsed;
+
+        while (self._anim_timer >= a.delay) {
+            self._anim_timer = self._anim_timer - a.delay;
+            self._anim_idx = self._anim_idx + 1;
+
+            if (self._anim_idx >= n) {
+                if (a.looped == true) {
+                    self._anim_idx = 0;
+                } else {
+                    self._anim_idx = n - 1;
+                    self.finished = true;
+                    self._anim_timer = 0.0;
+                    self._apply_frame();
+                    return;
+                }
+            }
+        }
+        self._apply_frame();
+    }
+
+    // Clip manual (desactiva animação)
+    def set_frame(fx, fy, fw, fh) {
+        self._cur_anim = -1;
+        self.frame_x = fx;
+        self.frame_y = fy;
+        self.frame_w = fw;
+        self.frame_h = fh;
+        self.width   = fw;
+        self.height  = fh;
+        self.origin_x = fw * 0.5;
+        self.origin_y = fh * 0.5;
+    }
+
+    def draw() {
+        if (self._tex == nil) { return; }
+        if (self.visible == false) { return; }
+
+        var sx = cam_screen_x(self.x, self.scroll_x);
+        var sy = cam_screen_y(self.y, self.scroll_y);
+
+        renderer.draw_image(
+            self._tex,
+            sx, sy,
+            self.origin_x, self.origin_y,
+            self.angle,
+            self.frame_x, self.frame_y, self.frame_w, self.frame_h,
+            self.scale_x, self.scale_y,
+            self.tint_r, self.tint_g, self.tint_b, self.tint_a);
+    }
+}

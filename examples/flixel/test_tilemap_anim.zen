@@ -1,0 +1,150 @@
+// Teste: FlxTilemap + FlxSprite animação + FlxQuadTree
+import math;
+
+include "examples/flixel/flx/FlxRenderer.zen";
+include "examples/flixel/flx/FlxRendererRaylib.zen";
+include "examples/flixel/flx/FlxPoint.zen";
+include "examples/flixel/flx/FlxRect.zen";
+include "examples/flixel/flx/FlxBasic.zen";
+include "examples/flixel/flx/FlxObject.zen";
+include "examples/flixel/flx/FlxGroup.zen";
+include "examples/flixel/flx/FlxG.zen";
+include "examples/flixel/flx/FlxState.zen";
+include "examples/flixel/flx/FlxAnim.zen";
+include "examples/flixel/flx/FlxSprite.zen";
+include "examples/flixel/flx/FlxCamera.zen";
+include "examples/flixel/flx/FlxTilemap.zen";
+include "examples/flixel/flx/FlxQuadTree.zen";
+
+width  = 640;
+height = 480;
+renderer = FlxRendererRaylib(width, height, "FlxTilemap + Anim + QuadTree test");
+
+// ── Tilemap procedural ───────────────────────────────────
+// Gerar tile de pedra 16x16
+var timg = GenImageColor(16, 16, 80, 90, 100, 255);
+ImageDrawRectangle(timg, 0, 0, 16, 1, 110, 120, 130, 255);
+ImageDrawRectangle(timg, 0, 0, 1, 16, 110, 120, 130, 255);
+ImageDrawRectangle(timg, 0, 15, 16, 1, 50, 55, 60, 255);
+ImageDrawRectangle(timg, 15, 0, 1, 16, 50, 55, 60, 255);
+ImageDrawPixel(timg, 4, 4, 100, 110, 120, 180);
+ImageDrawPixel(timg, 11, 4, 100, 110, 120, 180);
+ImageDrawPixel(timg, 7, 10, 70, 80, 90, 180);
+var tile_tex = LoadTextureFromImage(timg);
+UnloadImage(timg);
+
+// Mapa 40x5 tiles — chão + paredes
+var map_data = [];
+var mc = 40;
+var mr = 5;
+var r = 0;
+while (r < mr) {
+    var c = 0;
+    while (c < mc) {
+        if (r == 0 or r == mr - 1 or c == 0 or c == mc - 1) {
+            map_data.push(1);
+        } else {
+            map_data.push(0);
+        }
+        c = c + 1;
+    }
+    r = r + 1;
+}
+var tm = FlxTilemap(0.0, 400.0);
+tm.load_map(map_data, mc, 16, 16);
+tm.set_tileset(tile_tex, 16, 16);
+
+// ── Sprite animado (wabbit como spritesheet de 1 frame) ──
+// Gerar spritesheet 4 frames: wabbit 16x16 em 4 poses
+var simg = GenImageColor(64, 16, 0, 0, 0, 0);
+// Frame 0: pé esquerdo
+ImageDrawRectangle(simg, 2, 2, 12, 14, 210, 180, 140, 255);
+ImageDrawRectangle(simg, 4, 12, 3, 3, 180, 140, 100, 255);
+// Frame 1: neutro
+ImageDrawRectangle(simg, 18, 2, 12, 14, 210, 180, 140, 255);
+ImageDrawRectangle(simg, 20, 14, 8, 2, 180, 140, 100, 255);
+// Frame 2: pé direito
+ImageDrawRectangle(simg, 34, 2, 12, 14, 210, 180, 140, 255);
+ImageDrawRectangle(simg, 43, 12, 3, 3, 180, 140, 100, 255);
+// Frame 3: salto
+ImageDrawRectangle(simg, 50, 0, 12, 12, 210, 180, 140, 255);
+var spr_tex = LoadTextureFromImage(simg);
+UnloadImage(simg);
+
+var spr = FlxSprite(50.0, 360.0);
+spr.load_graphic_anim(spr_tex, 16, 16);
+spr.add_anim("run",  [0, 1, 2, 1], 8.0, true);
+spr.add_anim("jump", [3], 8.0, false);
+spr.play_anim("run", true);
+spr.velocity_x = 80.0;
+spr.acceleration_y = 400.0;
+spr.max_velocity_y = 300.0;
+
+// ── QuadTree ─────────────────────────────────────────────
+var qt = make_quadtree(0.0, 0.0, 700.0, 500.0);
+
+// Camera segue o sprite
+camera = FlxCamera(width, height);
+camera.lerp = 0.15;
+camera.lead_x = 60.0;
+camera.set_bounds(0.0, mc * 16.0 - width * 1.0, 0.0, nil);
+camera.follow(spr, 0.1);
+
+var tick = 0;
+var qt_hits = 0;
+
+while (renderer.window_should_close() == false) {
+    var dt = renderer.get_frame_time();
+    elapsed = dt;
+
+    // QuadTree: inserir tilemap como 1 objecto, recuperar candidatos para spr
+    qt.clear();
+    qt.insert(tm);
+    var candidates = [];
+    qt.retrieve(candidates, spr);
+    qt_hits = candidates.len();
+
+    // Update sprite
+    spr.pre_update();
+    spr.update();
+    spr.post_update();
+
+    // Colisão tilemap
+    tm.collide(spr);
+
+    // Bounce nas paredes laterais do mapa
+    if (spr.x < 16.0) { spr.x = 16.0; spr.velocity_x = abs(spr.velocity_x); }
+    if (spr.x + spr.width > (mc - 1) * 16.0) {
+        spr.x = (mc - 1) * 16.0 - spr.width;
+        spr.velocity_x = 0.0 - abs(spr.velocity_x);
+    }
+
+    // Anim: run vs jump
+    var on_ground = (spr.touching & DOWN) != 0;
+    if (on_ground) {
+        spr.play_anim("run", false);
+    } else {
+        spr.play_anim("jump", false);
+    }
+
+    // Camera update
+    camera.update(dt);
+
+    // Draw
+    renderer.begin_frame();
+    renderer.clear(30, 35, 45);
+    tm.draw();
+    spr.draw();
+    DrawText("FlxTilemap OK", 8, 8, 20, 100, 220, 100, 255);
+    DrawText("Anim: " + spr.cur_anim_name(), 8, 32, 16, 200, 200, 80, 255);
+    DrawText("QuadTree hits: " + str(qt_hits), 8, 52, 16, 150, 150, 220, 255);
+    DrawText("Tile cols: " + str(mc) + "  rows: " + str(mr), 8, 72, 16, 150, 150, 150, 255);
+    renderer.end_frame();
+
+    tick = tick + 1;
+}
+
+UnloadTexture(tile_tex);
+UnloadTexture(spr_tex);
+renderer.close();
+print("OK - " + str(tick) + " ticks");

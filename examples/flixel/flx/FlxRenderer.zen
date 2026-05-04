@@ -1,0 +1,114 @@
+// FlxRenderer — abstract render backend
+// Swap implementations without touching game code:
+//   FlxG.renderer = FlxRendererMock()    ← headless / tests
+//   FlxG.renderer = FlxRendererRaylib()  ← real render (future)
+
+// ─────────────────────────────────────────────
+// Base (all methods are no-ops — override in subclass)
+// ─────────────────────────────────────────────
+class FlxRenderer {
+
+    // Clear the screen with a solid colour (r,g,b 0-255)
+    def clear(r, g, b) { }
+
+    // Draw a filled rectangle
+    def draw_rect(x, y, w, h, r, g, b, a) { }
+
+    // Draw a rectangle outline
+    def draw_rect_lines(x, y, w, h, r, g, b, a) { }
+
+    // Draw a filled circle
+    def draw_circle(cx, cy, radius, r, g, b, a) { }
+
+    // Draw a line
+    def draw_line(x0, y0, x1, y1, r, g, b, a) { }
+
+    // Draw an image/texture
+    //   image_id    — opaque handle returned by load_image()
+    //   x, y        — screen position (top-left after applying pivot)
+    //   origin_x,   — pivot point in LOCAL image space (pixels from top-left)
+    //   origin_y
+    //   angle       — rotation in degrees (clockwise)
+    //   clip_x,     — source rectangle in the texture (0,0,0,0 = full image)
+    //   clip_y,
+    //   clip_w,
+    //   clip_h
+    //   scale_x,    — scale factor (1.0 = original size)
+    //   scale_y
+    //   r,g,b,a     — colour tint + alpha (255,255,255,255 = no tint)
+    def draw_image(image_id,
+                   x, y,
+                   origin_x, origin_y,
+                   angle,
+                   clip_x, clip_y, clip_w, clip_h,
+                   scale_x, scale_y,
+                   r, g, b, a) { }
+
+    // Draw text
+    def draw_text(text, x, y, size, r, g, b, a) { }
+
+    // Resource management (returns an opaque integer handle)
+    def load_image(path) { return -1; }
+    def unload_image(image_id) { }
+}
+
+// ─────────────────────────────────────────────
+// Mock — prints to stdout, useful for tests
+// ─────────────────────────────────────────────
+class FlxRendererMock : FlxRenderer {
+
+    def clear(r, g, b) {
+        print("CLEAR rgb(" + str(r) + "," + str(g) + "," + str(b) + ")");
+    }
+
+    def draw_rect(x, y, w, h, r, g, b, a) {
+        print("RECT  [" + str(x) + "," + str(y) + " " + str(w) + "x" + str(h) + "]"
+              + " rgba(" + str(r) + "," + str(g) + "," + str(b) + "," + str(a) + ")");
+    }
+
+    def draw_rect_lines(x, y, w, h, r, g, b, a) {
+        print("RECTL [" + str(x) + "," + str(y) + " " + str(w) + "x" + str(h) + "]"
+              + " rgba(" + str(r) + "," + str(g) + "," + str(b) + "," + str(a) + ")");
+    }
+
+    def draw_circle(cx, cy, radius, r, g, b, a) {
+        print("CIRC  [" + str(cx) + "," + str(cy) + " r=" + str(radius) + "]"
+              + " rgba(" + str(r) + "," + str(g) + "," + str(b) + "," + str(a) + ")");
+    }
+
+    def draw_line(x0, y0, x1, y1, r, g, b, a) {
+        print("LINE  (" + str(x0) + "," + str(y0) + ")-(" + str(x1) + "," + str(y1) + ")"
+              + " rgba(" + str(r) + "," + str(g) + "," + str(b) + "," + str(a) + ")");
+    }
+
+    def draw_image(image_id,
+                   x, y,
+                   origin_x, origin_y,
+                   angle,
+                   clip_x, clip_y, clip_w, clip_h,
+                   scale_x, scale_y,
+                   r, g, b, a) {
+        print("IMAGE id=" + str(image_id)
+              + " pos=(" + str(x) + "," + str(y) + ")"
+              + " origin=(" + str(origin_x) + "," + str(origin_y) + ")"
+              + " angle=" + str(angle)
+              + " clip=[" + str(clip_x) + "," + str(clip_y) + " " + str(clip_w) + "x" + str(clip_h) + "]"
+              + " scale=(" + str(scale_x) + "," + str(scale_y) + ")"
+              + " rgba(" + str(r) + "," + str(g) + "," + str(b) + "," + str(a) + ")");
+    }
+
+    def draw_text(text, x, y, size, r, g, b, a) {
+        print("TEXT  \"" + text + "\" pos=(" + str(x) + "," + str(y) + ")"
+              + " size=" + str(size)
+              + " rgba(" + str(r) + "," + str(g) + "," + str(b) + "," + str(a) + ")");
+    }
+
+    def load_image(path) {
+        print("LOAD  \"" + path + "\" -> id=0");
+        return 0;
+    }
+
+    def unload_image(image_id) {
+        print("UNLOAD id=" + str(image_id));
+    }
+}

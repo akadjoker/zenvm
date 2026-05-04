@@ -1,0 +1,140 @@
+// FlxAnimDebugger — overlay HUD para debug de animações FlxSprite
+//
+// Include depois de FlxSprite.zen. No game loop:
+//   dbg_anim_update();     // verifica F1 toggle
+//   dbg_anim_draw(spr);    // desenha overlay se activo
+//
+// Mostra:
+//   - Hitbox (vermelho) e frame visual bounds (azul) sobre o sprite
+//   - Painel: nome da anim, índice de frame, fps, clip coords
+//   - Mini-preview do frame actual ampliado 4x
+//   - Indicador FINISHED para anims one-shot
+
+var _dbg_anim_on = false;
+
+def dbg_anim_update() {
+    if (IsKeyPressed(KEY_F1)) {
+        if (_dbg_anim_on) {
+            _dbg_anim_on = false;
+        } else {
+            _dbg_anim_on = true;
+        }
+    }
+}
+
+def dbg_anim_draw(spr) {
+    if (_dbg_anim_on == false) { return; }
+
+    // ── Overlays sobre o sprite ─────────────────────────────────
+    var sx = cam_screen_x(spr.x, spr.scroll_x);
+    var sy = cam_screen_y(spr.y, spr.scroll_y);
+
+    // Hitbox (vermelho) — bounding box de colisão
+    renderer.draw_rect_lines(sx, sy, spr.width, spr.height, 255, 60, 60, 230);
+
+    // Frame visual bounds (azul) — área desenhada (DrawTexturePro subtrai origin ao dest)
+    if (spr.frame_w > 0.0) {
+        var vis_x = sx - spr.origin_x;
+        var vis_y = sy - spr.origin_y;
+        var vis_w = spr.frame_w;
+        var vis_h = spr.frame_h;
+        renderer.draw_rect_lines(vis_x, vis_y, vis_w, vis_h, 60, 160, 255, 180);
+    }
+
+    // Ponto de origem (pivot) — cruz amarela; pivot = dest position = (sx, sy)
+    var ox = sx;
+    var oy = sy;
+    renderer.draw_line(ox - 4.0, oy, ox + 4.0, oy, 255, 220, 60, 255);
+    renderer.draw_line(ox, oy - 4.0, ox, oy + 4.0, 255, 220, 60, 255);
+
+    // ── Painel HUD (canto inferior esquerdo) ────────────────────
+    var px = 8.0;
+    var py = height - 152.0;
+    var pw = 230.0;
+    var ph = 144.0;
+
+    renderer.draw_rect(px, py, pw, ph, 0, 0, 0, 210);
+    renderer.draw_rect_lines(px, py, pw, ph, 80, 80, 100, 255);
+
+    DrawText("ANIM DEBUG  [F1]", int(px + 4.0), int(py + 4.0),  12, 100, 220, 100, 255);
+
+    // Linha separadora
+    renderer.draw_line(px + 2.0, py + 18.0, px + pw - 2.0, py + 18.0, 60, 60, 80, 255);
+
+    // Nome da animação
+    var anim_name = spr.cur_anim_name();
+    if (anim_name == "") { anim_name = "(none)"; }
+    DrawText("anim:  " + anim_name, int(px + 4.0), int(py + 22.0), 11, 220, 220, 80, 255);
+
+    // Índice de frame
+    var fidx   = spr._anim_idx;
+    var ftotal = 0;
+    var fps_val = 0.0;
+    if (spr._cur_anim != nil) {
+        ftotal = spr._cur_anim.frames.len();
+        if (spr._cur_anim.delay > 0.0) {
+            fps_val = 1.0 / spr._cur_anim.delay;
+        }
+    }
+    DrawText("frame: " + str(fidx + 1) + " / " + str(ftotal),
+        int(px + 4.0), int(py + 36.0), 11, 200, 200, 200, 255);
+    DrawText("fps:   " + str(int(fps_val + 0.5)),
+        int(px + 4.0), int(py + 50.0), 11, 200, 200, 200, 255);
+
+    // Coordenadas do clip na textura
+    DrawText("clip:  x=" + str(int(spr.frame_x)) + " y=" + str(int(spr.frame_y)),
+        int(px + 4.0), int(py + 64.0), 11, 180, 180, 180, 255);
+    DrawText("       " + str(int(spr.frame_w)) + " x " + str(int(spr.frame_h)) + " px",
+        int(px + 4.0), int(py + 78.0), 11, 180, 180, 180, 255);
+
+    // Scale / flip
+    var scale_str = "";
+    if (spr.scale_x < 0.0 and spr.scale_y < 0.0) {
+        scale_str = "FLIP H+V";
+    } elif (spr.scale_x < 0.0) {
+        scale_str = "FLIP H  (" + str(spr.scale_y) + "x)";
+    } elif (spr.scale_y < 0.0) {
+        scale_str = "FLIP V  (" + str(spr.scale_x) + "x)";
+    } else {
+        scale_str = str(spr.scale_x) + " / " + str(spr.scale_y);
+    }
+    DrawText("scale: " + scale_str,
+        int(px + 4.0), int(py + 92.0), 11, 180, 180, 180, 255);
+
+    // Legenda de cores
+    renderer.draw_rect(int(px + 4.0), int(py + 108.0), 8.0, 8.0, 255, 60, 60, 230);
+    DrawText("hitbox", int(px + 16.0), int(py + 107.0), 10, 255, 60, 60, 255);
+    renderer.draw_rect(int(px + 60.0), int(py + 108.0), 8.0, 8.0, 60, 160, 255, 180);
+    DrawText("visual", int(px + 72.0), int(py + 107.0), 10, 60, 160, 255, 255);
+    renderer.draw_rect(int(px + 116.0), int(py + 108.0), 8.0, 8.0, 255, 220, 60, 255);
+    DrawText("origin", int(px + 128.0), int(py + 107.0), 10, 255, 220, 60, 255);
+
+    // FINISHED badge
+    if (spr.finished) {
+        DrawText("FINISHED", int(px + 4.0), int(py + 124.0), 12, 255, 100, 100, 255);
+    }
+
+    // ── Mini-preview do frame actual (4x) ──────────────────────
+    if (spr._tex != nil and spr.frame_w > 0.0 and spr.frame_h > 0.0) {
+        var prev_scale = 4.0;
+        var prev_w = spr.frame_w * prev_scale;
+        var prev_h = spr.frame_h * prev_scale;
+        var prev_x = px + pw + 4.0;
+        var prev_y = py + ph - prev_h;
+
+        // Fundo
+        renderer.draw_rect(prev_x - 2.0, prev_y - 2.0,
+            prev_w + 4.0, prev_h + 4.0, 20, 20, 30, 230);
+        // Frame ampliado
+        renderer.draw_image(spr._tex,
+            prev_x, prev_y,
+            0.0, 0.0, 0.0,
+            spr.frame_x, spr.frame_y, spr.frame_w, spr.frame_h,
+            prev_scale, prev_scale,
+            255, 255, 255, 255);
+        // Borda
+        renderer.draw_rect_lines(prev_x - 2.0, prev_y - 2.0,
+            prev_w + 4.0, prev_h + 4.0, 80, 160, 80, 255);
+        DrawText("4x", int(prev_x), int(prev_y - 14.0), 10, 120, 120, 120, 255);
+    }
+}

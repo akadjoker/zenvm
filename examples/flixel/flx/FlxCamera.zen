@@ -1,0 +1,125 @@
+// FlxCamera — câmara Flixel fiel ao modelo Flash/AS3
+// Posição no ecrã de um objecto:
+//   screen_x = obj.x - camera.scroll_x * obj.scroll_x
+//   screen_y = obj.y - camera.scroll_y * obj.scroll_y
+//
+// obj.scroll_x = 0  → HUD fixo (ex: texto de score)
+// obj.scroll_x = 1  → segue câmara normalmente
+// obj.scroll_x = 0.5 → parallax a metade da velocidade
+
+class FlxCamera : FlxBasic {
+
+    var scroll_x;
+    var scroll_y;
+    var width;
+    var height;
+
+    // Follow
+    var target;      // FlxObject a seguir (nil = livre)
+    var lerp;        // 0-1: velocidade de follow (1 = instantâneo)
+    var lead_x;      // antecipação extra em x (pixels à frente do target)
+    var lead_y;
+
+    // Limites do scroll (nil = sem limite)
+    var bounds_min_x;
+    var bounds_max_x;
+    var bounds_min_y;
+    var bounds_max_y;
+
+    // Shake
+    var _shake_intensity;
+    var _shake_time;
+    var _shake_offset_x;
+    var _shake_offset_y;
+
+    def init(w, h) {
+        super.init();
+        self.scroll_x = 0.0;
+        self.scroll_y = 0.0;
+        self.width    = w;
+        self.height   = h;
+
+        self.target = nil;
+        self.lerp   = 1.0;
+        self.lead_x = 0.0;
+        self.lead_y = 0.0;
+
+        self.bounds_min_x = nil;
+        self.bounds_max_x = nil;
+        self.bounds_min_y = nil;
+        self.bounds_max_y = nil;
+
+        self._shake_intensity = 0.0;
+        self._shake_time      = 0.0;
+        self._shake_offset_x  = 0.0;
+        self._shake_offset_y  = 0.0;
+    }
+
+    // Define o objecto a seguir e a velocidade de lerp (0=lento, 1=instantâneo)
+    def follow(target, lerp) {
+        self.target = target;
+        self.lerp   = lerp;
+    }
+
+    // Limita o scroll a uma região do mundo
+    def set_bounds(min_x, max_x, min_y, max_y) {
+        self.bounds_min_x = min_x;
+        self.bounds_max_x = max_x;
+        self.bounds_min_y = min_y;
+        self.bounds_max_y = max_y;
+    }
+
+    // Efeito de shake (intensity = fracção do tamanho do ecrã, duration = segundos)
+    def shake(intensity, duration) {
+        self._shake_intensity = intensity;
+        self._shake_time      = duration;
+    }
+
+    def update(dt) {
+        if (self.target != nil) {
+            // Posição desejada: target centrado no ecrã + lead
+            var tx = self.target.x + self.target.width  * 0.5 - self.width  * 0.5 + self.lead_x;
+            var ty = self.target.y + self.target.height * 0.5 - self.height * 0.5 + self.lead_y;
+
+            // Lerp suave
+            self.scroll_x = self.scroll_x + (tx - self.scroll_x) * self.lerp;
+            self.scroll_y = self.scroll_y + (ty - self.scroll_y) * self.lerp;
+        }
+
+        // Clamp aos limites
+        if (self.bounds_min_x != nil and self.scroll_x < self.bounds_min_x) {
+            self.scroll_x = self.bounds_min_x;
+        }
+        if (self.bounds_max_x != nil and self.scroll_x + self.width > self.bounds_max_x) {
+            self.scroll_x = self.bounds_max_x - self.width;
+        }
+        if (self.bounds_min_y != nil and self.scroll_y < self.bounds_min_y) {
+            self.scroll_y = self.bounds_min_y;
+        }
+        if (self.bounds_max_y != nil and self.scroll_y + self.height > self.bounds_max_y) {
+            self.scroll_y = self.bounds_max_y - self.height;
+        }
+
+        // Shake
+        if (self._shake_time > 0.0) {
+            self._shake_time = self._shake_time - dt;
+            var mag = self._shake_intensity * self.width;
+            self._shake_offset_x = frand(-mag, mag);
+            self._shake_offset_y = frand(-mag, mag);
+            if (self._shake_time <= 0.0) {
+                self._shake_time     = 0.0;
+                self._shake_offset_x = 0.0;
+                self._shake_offset_y = 0.0;
+            }
+        }
+    }
+
+    // Coordenada de ecrã para um objecto com scroll_factor dado
+    def to_screen_x(world_x, scroll_factor) {
+        return world_x - (self.scroll_x + self._shake_offset_x) * scroll_factor;
+    }
+
+    def to_screen_y(world_y, scroll_factor) {
+        return world_y - (self.scroll_y + self._shake_offset_y) * scroll_factor;
+    }
+}

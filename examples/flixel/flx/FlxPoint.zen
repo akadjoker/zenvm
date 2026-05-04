@@ -1,0 +1,37 @@
+// FlxPoint — 2D coordinate (ported from Flixel AS3)
+
+class FlxPoint {
+    var x;
+    var y;
+
+    def init(x, y) {
+        self.x = x;
+        self.y = y;
+    }
+
+    def make(x, y) {
+        self.x = x;
+        self.y = y;
+        return self;
+    }
+
+    def copy_from(p) {
+        self.x = p.x;
+        self.y = p.y;
+        return self;
+    }
+
+    def copy_to(p) {
+        p.x = self.x;
+        p.y = self.y;
+        return p;
+    }
+
+    def equals(p) {
+        return self.x == p.x and self.y == p.y;
+    }
+
+    def to_str() {
+        return "(" + str(self.x) + ", " + str(self.y) + ")";
+    }
+}

@@ -1,0 +1,89 @@
+// FlxG — global state singleton (ported from Flixel AS3)
+// All fields are module-level vars — just "include" this file.
+
+import math;
+
+// ── Core timing ──────────────────────────────────────────
+var elapsed    = 0.016;   // seconds since last frame (default 60fps)
+var total_time = 0.0;     // total seconds since start
+var frame_count = 0;
+
+// ── World size ────────────────────────────────────────────
+var width  = 640;
+var height = 480;
+
+// ── Renderer ─────────────────────────────────────────────
+// Set before calling any draw() methods.
+// Default: mock renderer that prints to stdout.
+var renderer = FlxRendererMock();
+
+// ── Active state (scene) ──────────────────────────────────
+var state = nil;   // current FlxState
+
+// ── Camera ───────────────────────────────────────────────
+// Inicializada depois de conhecer o tamanho do ecrã.
+// cam_scroll() retorna 0 se a câmara não está definida.
+var camera = nil;
+
+// ── Gravity (optional, applied by FlxObject.post_update) ─
+var gravity_x = 0.0;
+var gravity_y = 0.0;
+
+// ── Paused ────────────────────────────────────────────────
+var paused = false;
+
+// ── Input (placeholder — filled in by platform layer) ────
+var keys_down = {};   // map: key_name -> bool
+var mouse_x   = 0;
+var mouse_y   = 0;
+var mouse_down = false;
+
+// ── Functions ─────────────────────────────────────────────
+
+def flxg_tick(dt) {
+    elapsed     = dt;
+    total_time  = total_time + dt;
+    frame_count = frame_count + 1;
+
+    if (paused)
+        return;
+
+    // Actualiza câmara antes do estado (follow suave)
+    if (camera != nil)
+        camera.update(dt);
+
+    if (state != nil) {
+        state.pre_update();
+        state.update();
+        state.post_update();
+    }
+}
+
+// Helpers para converter coordenadas mundo→ecrã
+// Número aleatório float em [lo, hi)
+def frand(lo, hi) {
+    if (lo == hi) { return lo; }
+    return lo + (math.random(100000) / 100000.0) * (hi - lo);
+}
+
+def cam_screen_x(world_x, scroll_factor) {
+    if (camera == nil) { return world_x; }
+    return camera.to_screen_x(world_x, scroll_factor);
+}
+
+def cam_screen_y(world_y, scroll_factor) {
+    if (camera == nil) { return world_y; }
+    return camera.to_screen_y(world_y, scroll_factor);
+}
+
+def flxg_draw() {
+    if (state != nil)
+        state.draw();
+}
+
+// Convenience: is a key currently held?
+def key_pressed(name) {
+    if (keys_down[name] == nil)
+        return false;
+    return keys_down[name];
+}

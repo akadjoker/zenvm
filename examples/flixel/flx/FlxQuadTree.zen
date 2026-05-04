@@ -1,0 +1,196 @@
+// FlxQuadTree — broad-phase spatial partitioning (ported from Flixel AS3)
+//
+// Uso:
+//   var qt = FlxQuadTree(0.0, 0.0, world_w, world_h, 10, 5);
+//   qt.insert(obj);
+//   var candidates = [];
+//   qt.retrieve(candidates, player);
+//   // candidates contém objectos próximos do player
+//   qt.clear();   // entre frames
+//
+// Para Canabalt: inserir buildings, retrieve com player.
+// Muito mais rápido que O(n²) quando há muitos objectos.
+
+class FlxQuadTree {
+    var _x; var _y; var _w; var _h;
+    var _max_obj;
+    var _max_depth;
+    var _depth;
+    var _objects;   // objectos neste nó
+    var _nodes;     // 4 filhos: [NE, NW, SE, SW]
+    var _divided;
+
+    def init(x, y, w, h, max_obj, max_depth, depth) {
+        self._x         = x;
+        self._y         = y;
+        self._w         = w;
+        self._h         = h;
+        self._max_obj   = max_obj;
+        self._max_depth = max_depth;
+        self._depth     = depth;
+        self._objects   = [];
+        self._nodes     = [nil, nil, nil, nil];
+        self._divided   = false;
+    }
+
+    def clear() {
+        self._objects = [];
+        self._divided = false;
+        self._nodes   = [nil, nil, nil, nil];
+    }
+
+    def _subdivide() {
+        var hw = self._w * 0.5;
+        var hh = self._h * 0.5;
+        var mx = self._x + hw;
+        var my = self._y + hh;
+        var nd = self._depth + 1;
+        self._nodes[0] = FlxQuadTree(mx,      self._y, hw, hh, self._max_obj, self._max_depth, nd);  // NE
+        self._nodes[1] = FlxQuadTree(self._x, self._y, hw, hh, self._max_obj, self._max_depth, nd);  // NW
+        self._nodes[2] = FlxQuadTree(mx,      my,      hw, hh, self._max_obj, self._max_depth, nd);  // SE
+        self._nodes[3] = FlxQuadTree(self._x, my,      hw, hh, self._max_obj, self._max_depth, nd);  // SW
+        self._divided = true;
+    }
+
+    // Retorna índice do quadrante onde obj cabe completamente (-1 = overlaps vários)
+    def _get_quadrant(obj) {
+        var mid_x = self._x + self._w * 0.5;
+        var mid_y = self._y + self._h * 0.5;
+        var in_top = (obj.y + obj.height <= mid_y);
+        var in_bot = (obj.y >= mid_y);
+        if (obj.x + obj.width <= mid_x) {
+            if (in_top) { return 1; }  // NW
+            if (in_bot) { return 3; }  // SW
+        } elif (obj.x >= mid_x) {
+            if (in_top) { return 0; }  // NE
+            if (in_bot) { return 2; }  // SE
+        }
+        return -1;
+    }
+
+    def insert(obj) {
+        // Se já subdividido, tenta colocar no filho correcto
+        if (self._divided) {
+            var q = self._get_quadrant(obj);
+            if (q >= 0) {
+                self._nodes[q].insert(obj);
+                return;
+            }
+        }
+
+        self._objects.push(obj);
+
+        // Subdividir se passou do limite e ainda há profundidade
+        if (self._objects.len() > self._max_obj and self._depth < self._max_depth) {
+            if (not self._divided) {
+                self._subdivide();
+            }
+            // Redistribuir objectos existentes nos filhos
+            var remaining = [];
+            var i = 0;
+            while (i < self._objects.len()) {
+                var o = self._objects[i];
+                var q = self._get_quadrant(o);
+                if (q >= 0) {
+                    self._nodes[q].insert(o);
+                } else {
+                    remaining.push(o);
+                }
+                i = i + 1;
+            }
+            self._objects = remaining;
+        }
+    }
+
+    // Preenche result com todos os candidatos de colisão para obj
+    def retrieve(result, obj) {
+        if (self._divided) {
+            var q = self._get_quadrant(obj);
+            if (q >= 0) {
+                self._nodes[q].retrieve(result, obj);
+            } else {
+                // Obj está em vários quadrantes — consultar todos
+                var i = 0;
+                while (i < 4) {
+                    if (self._nodes[i] != nil) {
+                        self._nodes[i].retrieve(result, obj);
+                    }
+                    i = i + 1;
+                }
+            }
+        }
+        // Adicionar objectos deste nó
+        var i = 0;
+        while (i < self._objects.len()) {
+            result.push(self._objects[i]);
+            i = i + 1;
+        }
+        return result;
+    }
+}
+
+// Helper: cria QuadTree raiz para um mundo de dimensões dadas
+def make_quadtree(world_x, world_y, world_w, world_h) {
+    return FlxQuadTree(world_x, world_y, world_w, world_h, 10, 5, 0);
+}
+
+// ── Colisão com broad-phase QuadTree ─────────────────────────
+//
+// flx_overlap_groups(ga, gb, callback, qt)
+//   Insere todos os membros vivos de gb no qt, depois para cada membro
+//   vivo de ga faz retrieve e testa AABB exacto só nos candidatos.
+//   qt é passado de fora para poder ser reutilizado entre chamadas.
+//   Chama qt.clear() no início — não precisa ser limpo antes.
+//
+// flx_overlap_obj_group(obj, grp, callback, qt)
+//   Mesmo mas para um único objecto contra um grupo.
+
+def flx_overlap_groups(ga, gb, callback, qt) {
+    qt.clear();
+    // inserir grupo B no QuadTree
+    var bi = 0;
+    while (bi < gb.length) {
+        var b = gb.members[bi];
+        if (b != nil and b.exists and b.alive) { qt.insert(b); }
+        bi = bi + 1;
+    }
+    // para cada membro de A, retrieve candidatos e testar
+    var ai = 0;
+    while (ai < ga.length) {
+        var a = ga.members[ai];
+        if (a != nil and a.exists and a.alive) {
+            var candidates = [];
+            qt.retrieve(candidates, a);
+            var ci = 0;
+            while (ci < candidates.len()) {
+                var c = candidates[ci];
+                if (c.exists and c.alive and a.overlaps(c)) {
+                    callback(a, c);
+                }
+                ci = ci + 1;
+            }
+        }
+        ai = ai + 1;
+    }
+}
+
+def flx_overlap_obj_group(obj, grp, callback, qt) {
+    if (not obj.exists or not obj.alive) { return; }
+    qt.clear();
+    var i = 0;
+    while (i < grp.length) {
+        var m = grp.members[i];
+        if (m != nil and m.exists and m.alive) { qt.insert(m); }
+        i = i + 1;
+    }
+    var candidates = [];
+    qt.retrieve(candidates, obj);
+    i = 0;
+    while (i < candidates.len()) {
+        var c = candidates[i];
+        if (c.exists and c.alive and obj.overlaps(c)) {
+            callback(obj, c);
+        }
+        i = i + 1;
+    }
+}

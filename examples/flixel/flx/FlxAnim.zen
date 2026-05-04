@@ -1,0 +1,16 @@
+// Usado internamente por FlxSprite._anims
+
+class FlxAnim {
+    var name;     // string — identificador (ex: "run", "jump")
+    var frames;   // array de int — índices de frame 0-based
+    var delay;    // float — segundos por frame (1/fps)
+    var looped;   // bool
+
+    def init(anim_name, anim_frames, fps, anim_looped) {
+        self.name   = anim_name;
+        self.frames = anim_frames;
+        self.delay  = 0.0;
+        if (fps > 0.0) { self.delay = 1.0 / fps; }
+        self.looped = anim_looped;
+    }
+}

@@ -1208,14 +1208,30 @@ ObjFunc *load_bytecode_buffer(VM *vm, const uint8_t *data, size_t size, char *er
         return nullptr;
     }
 
-    if (!read_global_names(vm, r, minor, err, err_len))
-        return nullptr;
-    if (!read_selectors(vm, r, err, err_len))
-        return nullptr;
-
+    /* Disable GC for the entire load: objects created during read_global_names /
+       read_selectors / read_func are not yet reachable from any GC root, so a
+       collection triggered by an allocation would sweep them prematurely.      */
     GC &gc = vm->get_gc();
     void *saved_vm = gc.vm;
     gc.vm = nullptr;
+
+    if (!read_global_names(vm, r, minor, err, err_len))
+    {
+        gc.vm = saved_vm;
+        return nullptr;
+    }
+
+    /* Resolve native functions/constants that weren't serialized.
+       Imports (math, os, etc.) register natives as globals at compile time,
+       but native objects can't be serialized into bytecode. */
+    vm->resolve_native_globals();
+
+    if (!read_selectors(vm, r, err, err_len))
+    {
+        gc.vm = saved_vm;
+        return nullptr;
+    }
+
     ObjFunc *fn = read_func(vm, r, minor, err, err_len);
     gc.vm = saved_vm;
 

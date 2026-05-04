@@ -1,0 +1,43 @@
+// FlxBasic — base class for all Flixel objects (ported from AS3)
+// No size/position/graphics — just lifecycle flags.
+
+class FlxBasic {
+    var id;
+    var exists;
+    var active;
+    var visible;
+    var alive;
+
+    def init() {
+        self.id      = -1;
+        self.exists  = true;
+        self.active  = true;
+        self.visible = true;
+        self.alive   = true;
+    }
+
+    def destroy() { }
+
+    def pre_update() { }
+    def update()     { }
+    def post_update() { }
+    def draw()       { }
+
+    def kill() {
+        self.alive  = false;
+        self.exists = false;
+    }
+
+    def revive() {
+        self.alive  = true;
+        self.exists = true;
+    }
+
+    def reset(x, y) {
+        self.revive();
+    }
+
+    def to_str() {
+        return "FlxBasic(id=" + str(self.id) + ")";
+    }
+}

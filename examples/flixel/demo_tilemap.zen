@@ -1,0 +1,234 @@
+// demo_tilemap.zen — testa FlxTilemap (colisão, culling, tileset) + FlxSprite animado + FlxQuadTree
+//
+// Corre com:  bin/zen_game examples/flixel/demo_tilemap.zen
+// Sai após 300 ticks automaticamente (headless CI) ou ESC.
+//
+// O que demonstra:
+//  - Tilemap 80x6 com tile gerado proceduralmente (spritesheet 1 tile 16x16)
+//  - Personagem com animação run/jump (spritesheet 4x1 de 16x16)
+//  - Colisão AABB personagem ↔ tilemap
+//  - Camera a seguir o personagem com parallax e limites correctos
+//  - QuadTree: retrieve de candidatos por tick
+
+import math;
+
+include "examples/flixel/flx/FlxRenderer.zen";
+include "examples/flixel/flx/FlxRendererRaylib.zen";
+include "examples/flixel/flx/FlxPoint.zen";
+include "examples/flixel/flx/FlxRect.zen";
+include "examples/flixel/flx/FlxBasic.zen";
+include "examples/flixel/flx/FlxObject.zen";
+include "examples/flixel/flx/FlxGroup.zen";
+include "examples/flixel/flx/FlxG.zen";
+include "examples/flixel/flx/FlxState.zen";
+include "examples/flixel/flx/FlxAnim.zen";
+include "examples/flixel/flx/FlxSprite.zen";
+include "examples/flixel/flx/FlxCamera.zen";
+include "examples/flixel/flx/FlxTilemap.zen";
+include "examples/flixel/flx/FlxQuadTree.zen";
+include "examples/flixel/flx/FlxAnimDebugger.zen";
+
+var SCREEN_W = 640;
+var SCREEN_H = 480;
+var TW = 16;   // tile width
+var TH = 16;   // tile height
+var MAP_COLS = 80;
+var MAP_ROWS = 6;
+var WORLD_W  = MAP_COLS * TW;   // 1280
+
+width  = SCREEN_W;
+height = SCREEN_H;
+renderer = FlxRendererRaylib(SCREEN_W, SCREEN_H, "demo_tilemap — FlxTilemap + Anim + QuadTree");
+
+// ── Tileset: gerar tile de pedra 16x16 ──────────────────
+var timg = GenImageColor(TW, TH, 80, 90, 105, 255);
+// bevel
+ImageDrawRectangle(timg, 0, 0, TW, 1,   115, 125, 140, 255);  // topo claro
+ImageDrawRectangle(timg, 0, 0, 1,  TH,  115, 125, 140, 255);  // esq  claro
+ImageDrawRectangle(timg, 0, TH-1, TW, 1, 50, 55, 65, 255);    // baixo escuro
+ImageDrawRectangle(timg, TW-1, 0, 1, TH, 50, 55, 65, 255);    // dir  escuro
+// detalhe interior
+ImageDrawPixel(timg, 4,  4,  100, 112, 128, 200);
+ImageDrawPixel(timg, 11, 4,  100, 112, 128, 200);
+ImageDrawPixel(timg, 4,  11, 100, 112, 128, 200);
+ImageDrawPixel(timg, 11, 11, 100, 112, 128, 200);
+var tile_tex = LoadTextureFromImage(timg);
+UnloadImage(timg);
+
+// ── Mapa 80x6: chão sólido no fundo, paredes, plataforma no meio ──
+// Legenda: 0 = vazio, 1 = sólido
+var map_data = [];
+var rr = 0;
+while (rr < MAP_ROWS) {
+    var cc = 0;
+    while (cc < MAP_COLS) {
+        var tid = 0;
+        // paredes laterais e chão (última linha)
+        if (cc == 0 or cc == MAP_COLS - 1) { tid = 1; }
+        elif (rr == MAP_ROWS - 1)          { tid = 1; }  // chão
+        elif (rr == MAP_ROWS - 3 and cc > 20 and cc < 40) { tid = 1; }  // plataforma meio
+        elif (rr == MAP_ROWS - 3 and cc > 55 and cc < 70) { tid = 1; }  // segunda plataforma
+        map_data.push(tid);
+        cc = cc + 1;
+    }
+    rr = rr + 1;
+}
+
+var tm = FlxTilemap(0.0, SCREEN_H - MAP_ROWS * TH * 1.0);
+tm.load_map(map_data, MAP_COLS, TW, TH);
+tm.set_tileset(tile_tex, TW, TH);
+
+// ── Spritesheet do personagem: 4 frames de 16x16 numa imagem 64x16 ──
+// Frame 0: pé esq, 1: neutro, 2: pé dir, 3: salto
+var simg = GenImageColor(64, TH, 0, 0, 0, 0);
+// Frame 0 — pé esquerdo
+ImageDrawRectangle(simg, 2,  2, 12, 14, 220, 190, 150, 255);
+ImageDrawRectangle(simg, 3, 12,  3,  3, 190, 150, 110, 255);
+ImageDrawPixel(simg, 7, 4, 255, 220, 180, 255);
+// Frame 1 — neutro
+ImageDrawRectangle(simg, 18, 2, 12, 14, 220, 190, 150, 255);
+ImageDrawRectangle(simg, 20,14,  8,  2, 190, 150, 110, 255);
+ImageDrawPixel(simg, 23, 4, 255, 220, 180, 255);
+// Frame 2 — pé direito
+ImageDrawRectangle(simg, 34, 2, 12, 14, 220, 190, 150, 255);
+ImageDrawRectangle(simg, 43,12,  3,  3, 190, 150, 110, 255);
+ImageDrawPixel(simg, 39, 4, 255, 220, 180, 255);
+// Frame 3 — salto
+ImageDrawRectangle(simg, 50, 0, 12, 12, 220, 190, 150, 255);
+ImageDrawPixel(simg, 55, 3, 255, 220, 180, 255);
+var spr_tex = LoadTextureFromImage(simg);
+UnloadImage(simg);
+
+// ── Personagem ───────────────────────────────────────────
+var hero = FlxSprite(80.0, tm.y - TH * 3.0);
+hero.load_graphic_anim(spr_tex, TW, TH);
+hero.add_anim("run",   [0, 1, 2, 1], 10.0, true);
+hero.add_anim("idle",  [1], 4.0, true);
+hero.add_anim("jump",  [3], 4.0, false);
+hero.play_anim("idle", true);
+hero.acceleration_y = 500.0;
+hero.max_velocity_y = 400.0;
+var MOVE_SPEED = 140.0;
+var JUMP_SPEED = 240.0;
+var DRAG       = 800.0;
+
+// ── QuadTree ─────────────────────────────────────────────
+var qt = make_quadtree(0.0, 0.0, WORLD_W * 1.0, SCREEN_H * 1.0);
+
+// ── Camera ───────────────────────────────────────────────
+camera = FlxCamera(SCREEN_W, SCREEN_H);
+camera.lerp   = 0.12;
+camera.lead_x = 80.0;
+// bounds_max_x = largura do mundo (FlxCamera clamp: scroll_x + width <= max_x)
+camera.set_bounds(0.0, WORLD_W * 1.0, 0.0, nil);
+camera.follow(hero, 0.12);
+
+var tick = 0;
+var qt_hits = 0;
+var on_ground = false;
+var facing = 1;   // 1 = direita, -1 = esquerda
+
+while (renderer.window_should_close() == false) {
+    var dt = renderer.get_frame_time();
+    elapsed = dt;
+
+    on_ground = (hero.touching & DOWN) != 0;
+
+    // ── Input ─────────────────────────────────────────────
+    var move = 0;
+    if (IsKeyDown(KEY_RIGHT) or IsKeyDown(KEY_D)) { move = 1; }
+    if (IsKeyDown(KEY_LEFT)  or IsKeyDown(KEY_A)) { move = -1; }
+
+    if (move != 0) {
+        hero.velocity_x = MOVE_SPEED * move * 1.0;
+        facing = move;
+    } else {
+        // drag
+        if (hero.velocity_x > 0.0) {
+            hero.velocity_x = hero.velocity_x - DRAG * dt;
+            if (hero.velocity_x < 0.0) { hero.velocity_x = 0.0; }
+        } elif (hero.velocity_x < 0.0) {
+            hero.velocity_x = hero.velocity_x + DRAG * dt;
+            if (hero.velocity_x > 0.0) { hero.velocity_x = 0.0; }
+        }
+    }
+
+    if ((IsKeyPressed(KEY_SPACE) or IsKeyPressed(KEY_UP) or IsKeyPressed(KEY_W)) and on_ground) {
+        hero.velocity_y = 0.0 - JUMP_SPEED;
+    }
+
+    if (IsKeyPressed(KEY_ESCAPE)) {
+        renderer.window_should_close();  // quebrar na próxima iteração via ESC nativo
+    }
+
+    // flip visual via scale_x negativo (DrawTexturePro suporta dst.width < 0)
+    if (facing == -1) {
+        hero.scale_x = -1.0;
+        hero.origin_x = hero.frame_w;
+    } else {
+        hero.scale_x = 1.0;
+        hero.origin_x = 0.0;
+    }
+
+    // Broad-phase QuadTree
+    qt.clear();
+    qt.insert(tm);
+    var candidates = [];
+    qt.retrieve(candidates, hero);
+    qt_hits = candidates.len();
+
+    // Physics + animação
+    hero.pre_update();
+    hero.update();    // avança animação
+    hero.post_update();
+
+    // Colisão tilemap
+    hero.touching = 0;
+    tm.collide(hero);
+
+    on_ground = (hero.touching & DOWN) != 0;
+
+    // Limites laterais do mapa
+    if (hero.x < TW * 1.0) {
+        hero.x = TW * 1.0;
+        hero.velocity_x = 0.0;
+    }
+    if (hero.x + hero.width > (MAP_COLS - 1) * TW * 1.0) {
+        hero.x = (MAP_COLS - 1) * TW * 1.0 - hero.width;
+        hero.velocity_x = 0.0;
+    }
+
+    // Anim
+    if (not on_ground) {
+        hero.play_anim("jump", false);
+    } elif (move != 0) {
+        hero.play_anim("run", false);
+    } else {
+        hero.play_anim("idle", false);
+    }
+
+    camera.update(dt);
+
+    // ── Draw ─────────────────────────────────────────────
+    renderer.begin_frame();
+    renderer.clear(25, 30, 42);
+
+    tm.draw();
+    hero.draw();
+
+    // HUD (scroll_x=0 — fixo)
+    DrawText("Setas/WASD: mover   ESPACO: saltar   F1: anim debug", 8, 8, 14, 100, 220, 100, 255);
+    DrawText("Anim:  " + hero.cur_anim_name(),                 8, 26, 13, 220, 220, 80, 255);
+    DrawText("QT hits: " + str(qt_hits),                       8, 42, 13, 150, 180, 220, 255);
+    DrawText("scroll_x: " + str(int(camera.scroll_x)),         8, 58, 13, 150, 150, 150, 255);
+
+    // Anim debugger overlay (F1 toggle)
+    dbg_anim_update();
+    dbg_anim_draw(hero);
+
+    renderer.end_frame();
+}
+
+UnloadTexture(tile_tex);
+UnloadTexture(spr_tex);
+renderer.close();

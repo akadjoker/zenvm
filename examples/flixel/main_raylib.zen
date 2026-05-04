@@ -1,0 +1,122 @@
+// Flixel port — loop real com raylib
+// Run: bin/zen_game examples/flixel/main_raylib.zen
+
+include "flx/FlxRenderer.zen";
+include "flx/FlxRendererRaylib.zen";
+include "flx/FlxPoint.zen";
+include "flx/FlxRect.zen";
+include "flx/FlxBasic.zen";
+include "flx/FlxObject.zen";
+include "flx/FlxGroup.zen";
+include "flx/FlxG.zen";
+include "flx/FlxState.zen";
+include "flx/FlxAnim.zen";
+include "flx/FlxSprite.zen";
+
+// ─────────────────────────────────────────────
+// Wabbit sprite que ressalta nas paredes
+// ─────────────────────────────────────────────
+class Wabbit : FlxSprite {
+
+    def init(x, y, vx, vy) {
+        super.init(x, y);
+        self.velocity_x = vx;
+        self.velocity_y = vy;
+    }
+
+    def update() {
+        if (self.x < 0.0) {
+            self.x = 0.0;
+            self.velocity_x = 0.0 - self.velocity_x;
+        }
+        if (self.right() > width) {
+            self.x = width - self.width;
+            self.velocity_x = 0.0 - self.velocity_x;
+        }
+        if (self.y < 0.0) {
+            self.y = 0.0;
+            self.velocity_y = 0.0 - self.velocity_y;
+        }
+        if (self.bottom() > height) {
+            self.y = height - self.height;
+            self.velocity_y = 0.0 - self.velocity_y;
+        }
+    }
+}
+
+// ─────────────────────────────────────────────
+// Gameplay state
+// ─────────────────────────────────────────────
+class PlayState : FlxState {
+    var _wabbits;
+    var _tex;
+
+    def init() {
+        super.init();
+        self._wabbits = [];
+        self._tex = nil;
+    }
+
+    def create() {
+        self._tex = LoadTexture("assets/wabbit_alpha.png");
+
+        var positions_x = [60.0, 300.0, 500.0, 180.0, 420.0];
+        var positions_y = [80.0, 200.0, 350.0, 300.0, 120.0];
+        var vels_x      = [180.0, -140.0, 100.0, -220.0, 160.0];
+        var vels_y      = [120.0,  160.0, -200.0, -90.0, 200.0];
+
+        var i = 0;
+        while (i < 5) {
+            var w = Wabbit(positions_x[i], positions_y[i], vels_x[i], vels_y[i]);
+            w.set_graphic(self._tex);
+            self.add(w);
+            self._wabbits.push(w);
+            i = i + 1;
+        }
+    }
+
+    def update() {
+        super.update();
+    }
+
+    def draw() {
+        renderer.clear(18, 18, 28);
+        super.draw();
+        renderer.draw_text("FlxSprite + raylib  |  ESC para sair", 10, 10, 18, 200, 200, 200, 255);
+        renderer.draw_text("frame: " + str(frame_count), 10, 34, 16, 120, 120, 160, 255);
+    }
+
+    def destroy() {
+        if (self._tex != nil) {
+            UnloadTexture(self._tex);
+            self._tex = nil;
+        }
+    }
+}
+
+// ─────────────────────────────────────────────
+// Setup
+// ─────────────────────────────────────────────
+width  = 640;
+height = 480;
+
+renderer = FlxRendererRaylib(width, height, "Flixel port - zen");
+
+state = PlayState();
+state.create();
+
+// ─────────────────────────────────────────────
+// Loop principal
+// ─────────────────────────────────────────────
+while (renderer.window_should_close() == false) {
+    var dt = renderer.get_frame_time();
+    flxg_tick(dt);
+
+    renderer.begin_frame();
+    flxg_draw();
+    renderer.end_frame();
+}
+
+state.destroy();
+renderer.close();
+print("done - " + str(frame_count) + " frames");

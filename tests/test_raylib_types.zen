@@ -1,0 +1,26 @@
+// test_raylib_types.zen — testa NativeStructDef sem abrir janela
+// Cria instâncias directamente via ctor (como test_class_api Test13)
+
+var t = Texture2D(42, 256, 128, 1, 7);
+print(t.id);      // 42
+print(t.width);   // 256
+print(t.height);  // 128
+print(t.mipmaps); // 1
+print(t.format);  // 7
+
+var img = Image(800, 600, 4, 2);
+print(img.width);   // 800
+print(img.height);  // 600
+print(img.mipmaps); // 4
+print(img.format);  // 2
+
+var snd = Sound(99999);
+print(snd.frameCount); // 99999
+
+var rt = RenderTexture2D(7);
+print(rt.id); // 7
+
+// Type-check: erro esperado se passarmos tipo errado
+// (não testamos aqui — seria runtime error)
+
+print("todos os tipos ok");

@@ -1,0 +1,102 @@
+// Flixel port — headless demo
+// Run: bin/zen examples/flixel/main.zen
+
+include "flx/FlxRenderer.zen";
+include "flx/FlxPoint.zen";
+include "flx/FlxRect.zen";
+include "flx/FlxBasic.zen";
+include "flx/FlxObject.zen";
+include "flx/FlxGroup.zen";
+include "flx/FlxG.zen";
+include "flx/FlxState.zen";
+
+// ─────────────────────────────────────────────
+// A bouncing ball that wraps around screen edges
+// ─────────────────────────────────────────────
+class Ball : FlxObject {
+    var color_r;
+    var color_g;
+    var color_b;
+
+    def init(x, y, vx, vy, r, g, b) {
+        super.init(x, y, 16.0, 16.0);
+        self.velocity_x = vx;
+        self.velocity_y = vy;
+        self.color_r = r;
+        self.color_g = g;
+        self.color_b = b;
+    }
+
+    def update() {
+        // Bounce off walls
+        if (self.x < 0.0) {
+            self.x = 0.0;
+            self.velocity_x = 0.0 - self.velocity_x;
+        }
+        if (self.right() > width) {
+            self.x = width - self.width;
+            self.velocity_x = 0.0 - self.velocity_x;
+        }
+        if (self.y < 0.0) {
+            self.y = 0.0;
+            self.velocity_y = 0.0 - self.velocity_y;
+        }
+        if (self.bottom() > height) {
+            self.y = height - self.height;
+            self.velocity_y = 0.0 - self.velocity_y;
+        }
+    }
+
+    def draw() {
+        renderer.draw_rect(self.x, self.y, self.width, self.height,
+                           self.color_r, self.color_g, self.color_b, 255);
+    }
+}
+
+// ─────────────────────────────────────────────
+// Gameplay state
+// ─────────────────────────────────────────────
+class PlayState : FlxState {
+    def create() {
+        self.add(Ball(100.0,  80.0, 120.0, 80.0,  255, 80,  80));
+        self.add(Ball(300.0, 200.0, -90.0, 110.0,  80, 200, 80));
+        self.add(Ball(500.0, 350.0,  70.0, -150.0, 80,  80, 255));
+    }
+
+    def update() {
+        super.update();   // calls update() on all members
+    }
+
+    def draw() {
+        renderer.clear(20, 20, 30);
+        super.draw();     // calls draw() on all members
+    }
+}
+
+// ─────────────────────────────────────────────
+// Main loop (simulated — 5 frames at 60fps)
+// ─────────────────────────────────────────────
+width  = 640;
+height = 480;
+
+state = PlayState();
+state.create();
+
+var fps = 60.0;
+var dt  = 1.0 / fps;
+var frames = 5;
+
+print("=== Flixel port demo ===");
+print("world: " + str(width) + "x" + str(height) + "  dt=" + str(dt));
+print("");
+
+var f = 0;
+while (f < frames) {
+    print("── frame " + str(f) + " ──────────────────────────");
+    flxg_tick(dt);
+    flxg_draw();
+    f = f + 1;
+}
+
+print("");
+print("Done. " + str(frame_count) + " frames simulated.");

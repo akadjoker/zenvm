@@ -1,0 +1,235 @@
+// FlxObject — base game object with physics + AABB collision (ported from Flixel AS3)
+// Inherits: FlxBasic
+
+// Collision direction flags (bitmask)
+var NONE  = 0;
+var LEFT  = 0x0001;
+var RIGHT = 0x0010;
+var UP    = 0x0100;
+var DOWN  = 0x1000;
+var ANY   = 0x1111;
+var WALL  = 0x0011;   // LEFT | RIGHT
+var FLOOR = 0x1000;   // DOWN
+var CEIL  = 0x0100;   // UP
+
+class FlxObject : FlxBasic {
+    // Position
+    var x;
+    var y;
+    var width;
+    var height;
+
+    // Previous position (for collision)
+    var last_x;
+    var last_y;
+
+    // Physics
+    var velocity_x;
+    var velocity_y;
+    var acceleration_x;
+    var acceleration_y;
+    var drag_x;
+    var drag_y;
+    var max_velocity_x;
+    var max_velocity_y;
+
+    // Angular
+    var angle;
+    var angular_velocity;
+    var angular_acceleration;
+    var angular_drag;
+    var max_angular;
+
+    // Mass / elasticity
+    var mass;
+    var elasticity;
+    var health;
+    var immovable;
+    var moves;
+
+    // Scroll parallax (1 = scrolls with world, 0 = HUD)
+    var scroll_x;
+    var scroll_y;
+
+    // Collision flags
+    var touching;
+    var was_touching;
+    var allow_collisions;
+
+    // Flicker
+    var _flicker;
+    var _flicker_timer;
+
+    def init(x, y, width, height) {
+        super.init();
+        self.x = x;
+        self.y = y;
+        self.last_x = x;
+        self.last_y = y;
+        self.width = width;
+        self.height = height;
+
+        self.velocity_x = 0.0;
+        self.velocity_y = 0.0;
+        self.acceleration_x = 0.0;
+        self.acceleration_y = 0.0;
+        self.drag_x = 0.0;
+        self.drag_y = 0.0;
+        self.max_velocity_x = 10000.0;
+        self.max_velocity_y = 10000.0;
+
+        self.angle = 0.0;
+        self.angular_velocity = 0.0;
+        self.angular_acceleration = 0.0;
+        self.angular_drag = 0.0;
+        self.max_angular = 10000.0;
+
+        self.mass = 1.0;
+        self.elasticity = 0.0;
+        self.health = 1.0;
+        self.immovable = false;
+        self.moves = true;
+
+        self.scroll_x = 1.0;
+        self.scroll_y = 1.0;
+
+        self.touching = NONE;
+        self.was_touching = NONE;
+        self.allow_collisions = ANY;
+
+        self._flicker = false;
+        self._flicker_timer = 0.0;
+    }
+
+    // ── Helpers ──────────────────────────────────────────
+
+    def left()   { return self.x; }
+    def right()  { return self.x + self.width; }
+    def top()    { return self.y; }
+    def bottom() { return self.y + self.height; }
+
+    def mid_x()  { return self.x + self.width * 0.5; }
+    def mid_y()  { return self.y + self.height * 0.5; }
+
+    // ── Lifecycle ─────────────────────────────────────────
+
+    def pre_update() {
+        self.last_x = self.x;
+        self.last_y = self.y;
+
+        if (self._flicker_timer != 0.0) {
+            if (self._flicker_timer > 0.0) {
+                self._flicker_timer = self._flicker_timer - elapsed;
+                if (self._flicker_timer <= 0.0) {
+                    self._flicker_timer = 0.0;
+                    self._flicker = false;
+                }
+            }
+        }
+    }
+
+    def post_update() {
+        if (self.moves)
+            self._update_motion();
+        self.was_touching = self.touching;
+        self.touching = NONE;
+    }
+
+    def _update_motion() {
+        var dt = elapsed;
+
+        // Angular
+        var av_delta = (self._compute_velocity(self.angular_velocity, self.angular_acceleration, self.angular_drag, self.max_angular) - self.angular_velocity) * 0.5;
+        self.angular_velocity = self.angular_velocity + av_delta;
+        self.angle = self.angle + self.angular_velocity * dt;
+        self.angular_velocity = self.angular_velocity + av_delta;
+
+        // X
+        var vx_delta = (self._compute_velocity(self.velocity_x, self.acceleration_x, self.drag_x, self.max_velocity_x) - self.velocity_x) * 0.5;
+        self.velocity_x = self.velocity_x + vx_delta;
+        self.x = self.x + self.velocity_x * dt;
+        self.velocity_x = self.velocity_x + vx_delta;
+
+        // Y
+        var vy_delta = (self._compute_velocity(self.velocity_y, self.acceleration_y, self.drag_y, self.max_velocity_y) - self.velocity_y) * 0.5;
+        self.velocity_y = self.velocity_y + vy_delta;
+        self.y = self.y + self.velocity_y * dt;
+        self.velocity_y = self.velocity_y + vy_delta;
+    }
+
+    // Flixel's classic velocity integration with drag
+    def _compute_velocity(vel, accel, drag, max) {
+        if (accel != 0.0) {
+            vel = vel + accel * elapsed;
+        } else if (drag != 0.0) {
+            var drag_delta = drag * elapsed;
+            if (vel - drag_delta > 0.0) {
+                vel = vel - drag_delta;
+            } elif (vel + drag_delta < 0.0) {
+                vel = vel + drag_delta;
+            } else {
+                vel = 0.0;
+            }
+        }
+        if (vel != 0.0 and max != 10000.0) {
+            if (vel > max)  vel = max;
+            elif (vel < 0.0 - max) vel = 0.0 - max;
+        }
+        return vel;
+    }
+
+    // ── Visibility / flicker ──────────────────────────────
+
+    def flicker(duration) {
+        self._flicker_timer = duration;
+        if (duration == 0.0)
+            self._flicker = false;
+    }
+
+    def is_flickering() { return self._flicker_timer > 0.0; }
+
+    // ── Collision helpers ─────────────────────────────────
+
+    def overlaps_point(px, py) {
+        return px >= self.x and px < self.right()
+           and py >= self.y and py < self.bottom();
+    }
+
+    def overlaps(other) {
+        return self.x < other.right()  and self.right()  > other.x
+           and self.y < other.bottom() and self.bottom() > other.y;
+    }
+
+    def overlap_group(grp, callback) {
+        if (not self.exists or not self.alive) { return; }
+        var i = 0;
+        while (i < grp.length) {
+            var m = grp.members[i];
+            if (m != nil and m.exists and m.alive) {
+                if (self.overlaps(m)) { callback(self, m); }
+            }
+            i = i + 1;
+        }
+    }
+
+    // ── Health ────────────────────────────────────────────
+
+    def hurt(damage) {
+        self.health = self.health - damage;
+        if (self.health <= 0.0)
+            self.kill();
+    }
+
+    def reset(x, y) {
+        self.x = x;
+        self.y = y;
+        self.velocity_x = 0.0;
+        self.velocity_y = 0.0;
+        super.revive();
+    }
+
+    def to_str() {
+        return "FlxObject(x=" + str(self.x) + " y=" + str(self.y)
+             + " w=" + str(self.width) + " h=" + str(self.height) + ")";
+    }
+}

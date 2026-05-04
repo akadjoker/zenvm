@@ -1,0 +1,119 @@
+// FlxReplay — gravação e reprodução determinística de input por frame
+//
+// Cada frame é gravado como um bitmask de teclas premidas.
+// Em playback, a função mask_down(m, bit) substitui IsKeyDown.
+//
+// Uso rápido:
+//   F2 → iniciar gravação    F3 → parar + iniciar playback    F4 → parar playback
+//
+// Bits definidos (usar nas funções de input do teu jogo):
+//   RBIT_LEFT  = 1   RBIT_RIGHT = 2   RBIT_UP   = 4
+//   RBIT_DOWN  = 8   RBIT_FIRE  = 16  RBIT_ALT  = 32
+
+var RBIT_LEFT  = 1 << 0;   // 1
+var RBIT_RIGHT = 1 << 1;   // 2
+var RBIT_UP    = 1 << 2;   // 4
+var RBIT_DOWN  = 1 << 3;   // 8
+var RBIT_FIRE  = 1 << 4;   // 16
+var RBIT_ALT   = 1 << 5;   // 32
+
+// Testa se um bit está activo num mask
+def mask_down(mask, bit) {
+    return (mask & bit) != 0;
+}
+
+class FlxReplay {
+    var _frames;    // array of int — bitmask por frame
+    var _pos;       // posição actual de playback
+    var recording;  // bool
+    var playing;    // bool
+    var finished;   // bool — playback chegou ao fim
+
+    def init() {
+        self._frames   = [];
+        self._pos      = 0;
+        self.recording = false;
+        self.playing   = false;
+        self.finished  = false;
+    }
+
+    // ── Gravação ──────────────────────────────────────────────
+
+    def start_record() {
+        self._frames   = [];
+        self._pos      = 0;
+        self.recording = true;
+        self.playing   = false;
+        self.finished  = false;
+    }
+
+    // Chamar uma vez por frame durante a gravação
+    def record_frame(mask) {
+        if (self.recording) {
+            self._frames.push(mask);
+        }
+    }
+
+    def stop_record() {
+        self.recording = false;
+    }
+
+    // ── Playback ──────────────────────────────────────────────
+
+    def start_playback() {
+        if (self._frames.len() == 0) { return; }
+        self._pos      = 0;
+        self.playing   = true;
+        self.recording = false;
+        self.finished  = false;
+    }
+
+    // Chamar uma vez por frame durante o playback.
+    // Retorna o bitmask gravado, ou 0 quando acabar.
+    def playback_frame() {
+        if (not self.playing) { return 0; }
+        if (self._pos >= self._frames.len()) {
+            self.finished = true;
+            self.playing  = false;
+            return 0;
+        }
+        var m = self._frames[self._pos];
+        self._pos = self._pos + 1;
+        return m;
+    }
+
+    def frame_count() { return self._frames.len(); }
+    def playback_pos() { return self._pos; }
+}
+
+// ── HUD helper — mostra estado do replay ───────────────────
+
+def replay_hud(rec, x, y) {
+    if (rec.recording) {
+        DrawText("REC  " + str(rec.frame_count()) + " frames",
+            int(x), int(y), 13, 255, 60, 60, 255);
+        // ponto vermelho piscante (50% do tempo)
+        var t = int(clock() * 2.0);
+        if (t & 1 == 0) {
+            DrawRectangle(int(x) - 12, int(y) + 2, 8, 8, 255, 60, 60, 255);
+        }
+    } elif (rec.playing) {
+        var pct = 0;
+        if (rec.frame_count() > 0) {
+            pct = int(rec.playback_pos() * 100 / rec.frame_count());
+        }
+        DrawText("PLAY  " + str(rec.playback_pos()) + "/" + str(rec.frame_count()) +
+                 "  " + str(pct) + "%",
+            int(x), int(y), 13, 60, 220, 255, 255);
+    } elif (rec.finished) {
+        DrawText("REPLAY END", int(x), int(y), 13, 180, 180, 180, 255);
+    } else {
+        if (rec.frame_count() > 0) {
+            DrawText("F2:REC  F3:PLAY  [" + str(rec.frame_count()) + " frames]",
+                int(x), int(y), 12, 120, 120, 120, 255);
+        } else {
+            DrawText("F2:REC  F3:PLAY",
+                int(x), int(y), 12, 120, 120, 120, 255);
+        }
+    }
+}

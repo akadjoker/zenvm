@@ -68,6 +68,7 @@ namespace zen
         const NativeLib *find_lib(const char *name) const;
         int open_lib_globals(const NativeLib *lib); /* returns base gidx */
         const NativeLib *try_load_plugin(const char *name); /* dlopen fallback */
+        void resolve_native_globals(); /* fill nil globals from registered libs */
 
         /* --- Class builder --- */
         struct ClassBuilder
@@ -92,6 +93,8 @@ namespace zen
         Value make_instance(ObjClass *klass);                    /* creates instance, no init */
         Value make_instance(ObjClass *klass, Value *args, int nargs); /* creates + calls init */
         void destroy_instance(Value instance);                   /* destroy persistent instance */
+        /* Create a native struct instance from C++ (e.g. inside a NativeFn). */
+        Value make_native_struct(NativeStructDef *def, Value *args = nullptr, int nargs = 0);
         Value invoke(Value instance, const char *method, Value *args, int nargs);
         Value invoke(Value instance, int slot, Value *args, int nargs); /* vtable slot, O(1) */
         Value invoke_operator(Value instance, int slot, Value *args, int nargs);

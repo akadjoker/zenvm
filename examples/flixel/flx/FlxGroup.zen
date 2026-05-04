@@ -1,0 +1,201 @@
+// FlxGroup — ordered collection of FlxBasic objects (ported from Flixel AS3)
+// Calls update()/draw() on all alive members.
+
+class FlxGroup : FlxBasic {
+    var members;   // array of FlxBasic
+    var length;
+    var _max_size;
+
+    def init(max_size) {
+        super.init();
+        self.members  = [];
+        self.length   = 0;
+        self._max_size = max_size;  // 0 = unlimited
+    }
+
+    // ── Members ───────────────────────────────────────────
+
+    def add(obj) {
+        // Don't add twice
+        var i = 0;
+        while (i < self.length) {
+            if (self.members[i] == obj)
+                return obj;
+            i = i + 1;
+        }
+        // Respect max size
+        if (self._max_size > 0 and self.length >= self._max_size)
+            return obj;
+        self.members.push(obj);
+        self.length = self.length + 1;
+        return obj;
+    }
+
+    def remove(obj, splice) {
+        var i = 0;
+        while (i < self.length) {
+            if (self.members[i] == obj) {
+                if (splice) {
+                    // shift members down (simple removal)
+                    var j = i;
+                    while (j < self.length - 1) {
+                        self.members[j] = self.members[j + 1];
+                        j = j + 1;
+                    }
+                    self.length = self.length - 1;
+                } else {
+                    self.members[i] = nil;
+                }
+                return obj;
+            }
+            i = i + 1;
+        }
+        return nil;
+    }
+
+    // Replace dead/nil slot or add at end
+    def recycle(factory_fn) {
+        var i = 0;
+        while (i < self.length) {
+            var m = self.members[i];
+            if (m == nil or not m.exists) {
+                var obj = factory_fn();
+                self.members[i] = obj;
+                return obj;
+            }
+            i = i + 1;
+        }
+        // No free slot — add new
+        var obj = factory_fn();
+        return self.add(obj);
+    }
+
+    def get_first_alive() {
+        var i = 0;
+        while (i < self.length) {
+            var m = self.members[i];
+            if (m != nil and m.exists and m.alive)
+                return m;
+            i = i + 1;
+        }
+        return nil;
+    }
+
+    def get_first_dead() {
+        var i = 0;
+        while (i < self.length) {
+            var m = self.members[i];
+            if (m != nil and (not m.exists or not m.alive))
+                return m;
+            i = i + 1;
+        }
+        return nil;
+    }
+
+    def count_living() {
+        var count = 0;
+        var i = 0;
+        while (i < self.length) {
+            var m = self.members[i];
+            if (m != nil and m.exists and m.alive)
+                count = count + 1;
+            i = i + 1;
+        }
+        return count;
+    }
+
+    def count_dead() {
+        var count = 0;
+        var i = 0;
+        while (i < self.length) {
+            var m = self.members[i];
+            if (m != nil and (not m.exists or not m.alive))
+                count = count + 1;
+            i = i + 1;
+        }
+        return count;
+    }
+
+    // ── Lifecycle ─────────────────────────────────────────
+
+    def update() {
+        var i = 0;
+        while (i < self.length) {
+            var m = self.members[i];
+            if (m != nil and m.exists and m.active) {
+                m.pre_update();
+                m.update();
+                m.post_update();
+            }
+            i = i + 1;
+        }
+    }
+
+    def draw() {
+        var i = 0;
+        while (i < self.length) {
+            var m = self.members[i];
+            if (m != nil and m.exists and m.visible)
+                m.draw();
+            i = i + 1;
+        }
+    }
+
+    def kill() {
+        var i = 0;
+        while (i < self.length) {
+            var m = self.members[i];
+            if (m != nil and m.exists)
+                m.kill();
+            i = i + 1;
+        }
+    }
+
+    def revive() {
+        var i = 0;
+        while (i < self.length) {
+            var m = self.members[i];
+            if (m != nil)
+                m.revive();
+            i = i + 1;
+        }
+    }
+
+    def destroy() {
+        var i = 0;
+        while (i < self.length) {
+            var m = self.members[i];
+            if (m != nil)
+                m.destroy();
+            i = i + 1;
+        }
+        self.members = [];
+        self.length = 0;
+    }
+
+    // ── Collision helpers ─────────────────────────────────
+
+    // Call callback(a, b) for every pair of overlapping objects in this group
+    def for_each_overlap(other_group, callback) {
+        var i = 0;
+        while (i < self.length) {
+            var a = self.members[i];
+            if (a != nil and a.exists and a.alive) {
+                var j = 0;
+                while (j < other_group.length) {
+                    var b = other_group.members[j];
+                    if (b != nil and b.exists and b.alive and a != b) {
+                        if (a.overlaps(b))
+                            callback(a, b);
+                    }
+                    j = j + 1;
+                }
+            }
+            i = i + 1;
+        }
+    }
+
+    def to_str() {
+        return "FlxGroup(length=" + str(self.length) + ")";
+    }
+}

@@ -1,0 +1,84 @@
+// FlxTileblock — rectângulo sólido e imóvel (ported from Flixel AS3)
+// Herda de FlxObject. Renderiza como rect sólido colorido ou com textura de tile.
+// Tem colidiu — immovable=true por defeito.
+// Para colidir contra tiles: usa FlxGroup.for_each_overlap ou collide() manual.
+
+class FlxTileblock : FlxObject {
+
+    // Cor de fill (usada se não houver textura)
+    var fill_r;
+    var fill_g;
+    var fill_b;
+    var fill_a;
+
+    // Textura de tile (opcional — nil = só rect colorido)
+    var _tile_tex;
+    var _tile_w;
+    var _tile_h;
+
+    def init(x, y, w, h) {
+        super.init(x, y, w, h);
+        self.immovable = true;
+        self.moves     = false;
+
+        self.fill_r = 100;
+        self.fill_g = 100;
+        self.fill_b = 120;
+        self.fill_a = 255;
+
+        self._tile_tex = nil;
+        self._tile_w   = 16.0;
+        self._tile_h   = 16.0;
+    }
+
+    def set_fill(r, g, b, a) {
+        self.fill_r = r;
+        self.fill_g = g;
+        self.fill_b = b;
+        self.fill_a = a;
+        return self;
+    }
+
+    // Carrega textura de tile para preencher o bloco (tile repetido)
+    def load_tiles(tex, tile_w, tile_h) {
+        self._tile_tex = tex;
+        self._tile_w   = tile_w;
+        self._tile_h   = tile_h;
+        return self;
+    }
+
+    def draw() {
+        if (self.visible == false) { return; }
+
+        var sx = cam_screen_x(self.x, self.scroll_x);
+        var sy = cam_screen_y(self.y, self.scroll_y);
+
+        if (self._tile_tex == nil) {
+            // Sem textura: rect sólido
+            renderer.draw_rect(sx, sy, self.width, self.height,
+                               self.fill_r, self.fill_g, self.fill_b, self.fill_a);
+        } else {
+            // Tile repetido por DrawTextureRec
+            var col   = 0.0;
+            var tx    = 0.0;
+            while (tx < self.width) {
+                var tw = self._tile_w;
+                if (tx + tw > self.width) { tw = self.width - tx; }
+
+                var ty = 0.0;
+                while (ty < self.height) {
+                    var th = self._tile_h;
+                    if (ty + th > self.height) { th = self.height - ty; }
+                    renderer.draw_image(self._tile_tex,
+                        sx + tx, sy + ty,
+                        0.0, 0.0, 0.0,
+                        0.0, 0.0, tw, th,
+                        1.0, 1.0,
+                        255, 255, 255, 255);
+                    ty = ty + self._tile_h;
+                }
+                tx = tx + self._tile_w;
+            }
+        }
+    }
+}

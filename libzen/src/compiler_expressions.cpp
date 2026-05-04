@@ -2056,7 +2056,7 @@ namespace zen
         fn_state.is_method = false;
         fn_state.is_process = false;
 
-        fn_state.emitter.begin("<anon>", 0, "<anon>");
+        fn_state.emitter.begin("<anon>", 0, current_file_);
 
         CompilerState *enclosing = state_;
         state_ = &fn_state;
