@@ -1,106 +1,106 @@
-# Tutorial 08 — Módulos (import)
+# Tutorial 08 — Modules (`import`)
 
-Este tutorial mostra esta parte da linguagem através de exemplos práticos.
+This tutorial introduces module imports through practical examples.
 
-## Objetivo
+## Goal
 
-Aprender a sintaxe e os padrões principais deste tópico em BuLang/Zen.
+Learn the main syntax and patterns for this topic in BuLang/Zen.
 
-## Código completo
+## Full code
 
 ```zen
 // ============================================================
-// Tutorial 08 — Módulos (import)
+// Tutorial 08 — Modules (import)
 // ============================================================
 
 import math;
 
 // --- math.random ---
 
-// inteiro entre 0 e N-1
-var dado = math.random(6) + 1;
-print("dado: {dado}");
+// integer between 0 and N-1
+var die = math.random(6) + 1;
+print("die: {die}");
 
-// inteiro num intervalo [min, max]
+// integer in a [min, max] range
 var x = math.random(100, 200);
-print("x entre 100 e 200: {x}");
+print("x between 100 and 200: {x}");
 
-// simulação de lançamento de moeda
-var cara_ou_coroa = math.random(2);   // 0 ou 1
-if (cara_ou_coroa == 0) {
-    print("cara");
+// coin flip simulation
+var heads_or_tails = math.random(2);   // 0 or 1
+if (heads_or_tails == 0) {
+    print("heads");
 } else {
-    print("coroa");
+    print("tails");
 }
 
-// --- Velocidades aleatórias ---
-def velocidade_aleatoria(mag) {
+// --- Random velocities ---
+def random_velocity(mag) {
     var vx = math.random(mag * 2) - mag;
     var vy = math.random(mag * 2) - mag;
-    return vx;   // simplificado — zen não tem multi-return
+    return vx;   // simplified - Zen has no multi-return here
 }
 
 var i = 0;
 while (i < 5) {
     var vx = math.random(10) - 5;
     var vy = math.random(10) - 10;
-    print("particula {i}: vx={vx} vy={vy}");
+    print("particle {i}: vx={vx} vy={vy}");
     i = i + 1;
 }
 
-// --- Escala normalizada ---
-// Converter random int numa float [0.0, 1.0)
+// --- Normalized scale ---
+// Convert a random int into a float in [0.0, 1.0)
 var r_float = math.random(1000) / 1000.0;
-print("float aleatório: {r_float}");
+print("random float: {r_float}");
 
 // Float num intervalo [lo, hi)
 def random_float(lo, hi) {
     return lo + math.random(10000) / 10000.0 * (hi - lo);
 }
 
-print("entre 2.0 e 5.0: {random_float(2.0, 5.0)}");
+print("between 2.0 and 5.0: {random_float(2.0, 5.0)}");
 
-// --- Exemplo prático: gerar nuvem de pontos ---
+// --- Practical example: generate a point cloud ---
 import math;
 
-struct Ponto { x, y }
+struct Point { x, y }
 
-var nuvem = [];
+var cloud = [];
 var j = 0;
 while (j < 10) {
     var px = math.random(1280);
     var py = math.random(720);
-    nuvem.push(Ponto(px, py));
+    cloud.push(Point(px, py));
     j = j + 1;
 }
 
-print("gerados {nuvem.len()} pontos:");
+print("generated {cloud.len()} points:");
 var k = 0;
-while (k < nuvem.len()) {
-    var p = nuvem[k];
+while (k < cloud.len()) {
+    var p = cloud[k];
     print("  ({p.x}, {p.y})");
     k = k + 1;
 }
 ```
 
-## Como correr
+## How to run
 
 ```bash
 zen examples/tutorial_08_modulos.zen
 ```
 
-ou ajusta para o nome real do teu executável:
+or adjust the command to match your executable name:
 
 ```bash
 bulang examples/tutorial_08_modulos.zen
 ```
 
-## O que observar
+## What to look for
 
-- A sintaxe é direta e usa blocos com `{` e `}`.
-- Os exemplos usam `print()` para mostrar o resultado esperado.
-- Comentários no próprio código explicam cada secção.
+- The syntax is direct and uses `{` and `}` blocks.
+- The examples use `print()` to show the expected result.
+- Inline comments explain each section of the example.
 
-## Exercício sugerido
+## Suggested exercise
 
-Altera os valores do exemplo, corre outra vez e confirma se o output muda como esperas.
+Change the example values, run it again, and confirm that the output changes as expected.

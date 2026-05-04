@@ -1,8 +1,8 @@
 # BuLang / Zen Language Guide
 
-BuLang, also named Zen in the script examples, is a lightweight scripting language with C-like blocks, dynamic values, functions, structs, classes, collections and cooperative execution features.
+BuLang, also referred to as Zen in the examples, is a lightweight scripting language with C-like blocks, dynamic values, functions, structs, classes, collections, fibers, and cooperative process execution.
 
-The language is intended to be simple to read and practical for game-engine scripting.
+The language is meant to stay small, readable, and practical for gameplay scripting and host-driven tools.
 
 ## Values
 
@@ -40,7 +40,7 @@ Verbatim strings use `@` and are useful for paths:
 
 ```zen
 var path = @"C:\users\djoker\file.txt";
-var quote = @"ela disse ""olá""";
+var quote = @"she said ""hello""";
 ```
 
 ## Functions
@@ -56,6 +56,18 @@ print(add(2, 3));
 ```
 
 Functions can call other functions and can be recursive.
+
+Optional type hints can be attached to parameters and return values when the type is a known struct or class:
+
+```zen
+struct Vec3 { x, y, z }
+
+def add(a: Vec3, b: Vec3) : Vec3 {
+    return Vec3(a.x + b.x, a.y + b.y, a.z + b.z);
+}
+```
+
+These hints are optional. They are currently used by the compiler to improve compile-time field resolution and generate more direct bytecode.
 
 ## Control flow
 
@@ -120,6 +132,18 @@ var c = Counter();
 c.inc();
 ```
 
+Methods can also use the same optional type hint syntax:
+
+```zen
+class Quat {
+    var x, y, z, w;
+
+    def __mul__(other: Quat) : Quat {
+        return self;
+    }
+}
+```
+
 ## Collections
 
 Arrays:
@@ -164,6 +188,17 @@ blink();
 advance_process();
 ```
 
+## Bytecode
+
+Zen source can be compiled to `.znb` bytecode and loaded later without shipping the original script source:
+
+```bash
+./bin/zen --dump game.znb game.zen
+./bin/zen game.znb
+```
+
+Pure script features such as functions, closures, structs, classes, collections, and processes round-trip through the bytecode loader. Host-owned native objects still need to be registered by the embedding application.
+
 ## Core philosophy
 
-BuLang should stay small, readable and focused. It does not need to replace C++; it can act as a gameplay scripting layer on top of a C++ engine.
+BuLang should stay small, readable, and focused. It does not need to replace C++; it is a scripting layer that complements a C++ runtime.

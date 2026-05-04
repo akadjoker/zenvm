@@ -1,75 +1,75 @@
 # Tutorial 05 — Structs
 
-Este tutorial mostra structs como tipos de dados leves com campos nomeados, úteis para pontos, cores, retângulos e dados simples.
+This tutorial shows structs as lightweight named-field records, useful for points, colors, rectangles, and simple data containers.
 
-## Objetivo
+## Goal
 
-Aprender a sintaxe e os padrões principais deste tópico em BuLang/Zen.
+Learn the main syntax and patterns for this topic in BuLang/Zen.
 
-## Código completo
+## Full code
 
 ```zen
 // ============================================================
 // Tutorial 05 — Structs
 // ============================================================
 
-// struct é um tipo de dados leve com campos nomeados
-// Não tem métodos — para isso usa class (ver tutorial 06)
+// struct is a lightweight data type with named fields
+// It does not have methods - for that use class (see tutorial 06)
 
-// --- Definição ---
-struct Ponto  { x, y }
-struct Cor    { r, g, b, a }
+// --- Definition ---
+struct Point  { x, y }
+struct Color  { r, g, b, a }
 struct Rect   { x, y, w, h }
 
-// --- Criação de instâncias ---
-var p = Ponto(100, 200);
+// --- Creating instances ---
+var p = Point(100, 200);
 print("p.x = {p.x}");   // 100
 print("p.y = {p.y}");   // 200
 
-var c = Cor(255, 128, 0, 255);
-print("cor: ({c.r}, {c.g}, {c.b}, {c.a})");
+var c = Color(255, 128, 0, 255);
+print("color: ({c.r}, {c.g}, {c.b}, {c.a})");
 
-// --- Mutação de campos ---
+// --- Field mutation ---
 p.x = 50;
 p.y = 75;
-print("p movido: ({p.x}, {p.y})");
+print("p moved: ({p.x}, {p.y})");
 
 c.r = 0;
 c.b += 100;
-print("cor alterada: ({c.r}, {c.g}, {c.b})");
+print("changed color: ({c.r}, {c.g}, {c.b})");
 
-// --- Structs em funções ---
-def mover_ponto(pt, dx, dy) {
+// --- Structs in functions ---
+def move_point(pt, dx, dy) {
     pt.x = pt.x + dx;
     pt.y = pt.y + dy;
 }
 
-var pos = Ponto(0, 0);
-mover_ponto(pos, 10, 5);
-print("pos após mover: ({pos.x}, {pos.y})");
+var pos = Point(0, 0);
+move_point(pos, 10, 5);
+print("pos after move: ({pos.x}, {pos.y})");
 
-// --- Structs em arrays ---
-var pontos = [];
-pontos.push(Ponto(0, 0));
-pontos.push(Ponto(50, 100));
-pontos.push(Ponto(200, 150));
+// --- Structs in arrays ---
+var points = [];
+points.push(Point(0, 0));
+points.push(Point(50, 100));
+points.push(Point(200, 150));
 
 var i = 0;
-while (i < pontos.len()) {
-    var pt = pontos[i];
-    print("ponto {i}: ({pt.x}, {pt.y})");
+while (i < points.len()) {
+    var pt = points[i];
+    print("point {i}: ({pt.x}, {pt.y})");
     i = i + 1;
 }
 
-// --- Struct como retorno de função ---
-def criar_rect_centrado(cx, cy, w, h) {
+// --- Struct returned from a function ---
+def make_centered_rect(cx, cy, w, h) {
     return Rect(cx - w / 2, cy - h / 2, w, h);
 }
 
-var r = criar_rect_centrado(320, 240, 100, 60);
+var r = make_centered_rect(320, 240, 100, 60);
 print("rect: ({r.x}, {r.y}) {r.w}x{r.h}");
 
-// --- Colisão AABB com structs ---
+// --- AABB collision with structs ---
 def aabb(a, b) {
     return a.x < b.x + b.w &&
            a.x + a.w > b.x &&
@@ -81,28 +81,28 @@ var rA = Rect(10, 10, 50, 50);
 var rB = Rect(40, 40, 50, 50);
 var rC = Rect(200, 200, 30, 30);
 
-print("A colide com B? {aabb(rA, rB)}");   // true
-print("A colide com C? {aabb(rA, rC)}");   // false
+print("A collides with B? {aabb(rA, rB)}");   // true
+print("A collides with C? {aabb(rA, rC)}");   // false
 ```
 
-## Como correr
+## How to run
 
 ```bash
 zen examples/tutorial_05_structs.zen
 ```
 
-ou ajusta para o nome real do teu executável:
+or adjust the command to match your executable name:
 
 ```bash
 bulang examples/tutorial_05_structs.zen
 ```
 
-## O que observar
+## What to look for
 
-- A sintaxe é direta e usa blocos com `{` e `}`.
-- Os exemplos usam `print()` para mostrar o resultado esperado.
-- Comentários no próprio código explicam cada secção.
+- The syntax is direct and uses `{` and `}` blocks.
+- The examples use `print()` to show the expected result.
+- Inline comments explain each section of the example.
 
-## Exercício sugerido
+## Suggested exercise
 
-Altera os valores do exemplo, corre outra vez e confirma se o output muda como esperas.
+Change the example values, run it again, and confirm that the output changes as expected.

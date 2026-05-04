@@ -27,6 +27,8 @@ Some types also support `.len()`.
 
 ## Math functions
 
+These are compiled to dedicated bytecode opcodes in the VM, so they do not pay normal function call overhead in hot paths.
+
 ```zen
 sin(x)
 cos(x)
@@ -119,6 +121,8 @@ son
 
 These are useful for cooperative scheduling and game-like update flows.
 
+`advance_process()` resumes suspended processes for one scheduler step. When embedding Zen in a host application, the C++ side can instead call the VM process tick functions directly.
+
 ## Typed buffers / arrays
 
 The examples mention typed array names such as:
@@ -135,3 +139,7 @@ Float64Array
 ```
 
 Document their exact constructors and methods according to your C++ VM implementation.
+
+## Bytecode notes
+
+Script-facing standard-library usage round-trips through `.znb` bytecode, but any host-specific native registration still needs to happen before loading the bytecode in an embedding application.

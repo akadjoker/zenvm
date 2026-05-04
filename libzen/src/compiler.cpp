@@ -23,16 +23,22 @@ namespace zen
           had_error_(false), panic_mode_(false), current_file_(nullptr), include_count_(0), include_depth_(0), num_imports_(0), expected_results_(1),
           last_call_struct_def_(nullptr), last_call_class_def_(nullptr),
           global_class_hints_(nullptr), global_class_hints_capacity_(0),
+          global_struct_hints_(nullptr), global_struct_hints_capacity_(0),
+          global_return_struct_(nullptr), global_return_class_(nullptr), global_return_hints_capacity_(0),
           current_class_fields_(nullptr)
     {
         current_.type = TOK_EOF;
         previous_.type = TOK_EOF;
         ensure_global_class_hint(kInitGlobalCapacity - 1);
+        ensure_global_struct_hint(kInitGlobalCapacity - 1);
     }
 
     Compiler::~Compiler()
     {
         free(global_class_hints_);
+        free(global_struct_hints_);
+        free(global_return_struct_);
+        free(global_return_class_);
         for (int i = 0; i < include_count_; i++)
         {
             free(include_sources_[i]);
@@ -69,6 +75,59 @@ namespace zen
         global_class_hints_ = grown;
         global_class_hints_capacity_ = new_cap;
         return true;
+    }
+
+    bool Compiler::ensure_global_struct_hint(int idx)
+    {
+        if (idx < 0)
+            return false;
+        if (idx < global_struct_hints_capacity_)
+            return true;
+        if (idx >= kMaxGlobalsHard)
+        {
+            error("Too many globals.");
+            return false;
+        }
+
+        int new_cap = global_struct_hints_capacity_ > 0 ? global_struct_hints_capacity_ : kInitGlobalCapacity;
+        while (new_cap <= idx && new_cap < kMaxGlobalsHard)
+            new_cap *= 2;
+        if (new_cap <= idx)
+            new_cap = kMaxGlobalsHard;
+
+        ObjStructDef **grown = (ObjStructDef **)realloc(global_struct_hints_, sizeof(ObjStructDef *) * (size_t)new_cap);
+        if (!grown)
+        {
+            error("Out of memory growing global struct hints.");
+            return false;
+        }
+        for (int i = global_struct_hints_capacity_; i < new_cap; i++)
+            grown[i] = nullptr;
+        global_struct_hints_ = grown;
+        global_struct_hints_capacity_ = new_cap;
+        return true;
+    }
+
+    void Compiler::set_global_return_hint(int gidx, ObjStructDef *s, ObjClass *c)
+    {
+        if (gidx < 0)
+            return;
+        if (gidx >= global_return_hints_capacity_)
+        {
+            int new_cap = global_return_hints_capacity_ > 0 ? global_return_hints_capacity_ : kInitGlobalCapacity;
+            while (new_cap <= gidx && new_cap < kMaxGlobalsHard)
+                new_cap *= 2;
+            global_return_struct_ = (ObjStructDef **)realloc(global_return_struct_, sizeof(ObjStructDef *) * (size_t)new_cap);
+            global_return_class_ = (ObjClass **)realloc(global_return_class_, sizeof(ObjClass *) * (size_t)new_cap);
+            for (int i = global_return_hints_capacity_; i < new_cap; i++)
+            {
+                global_return_struct_[i] = nullptr;
+                global_return_class_[i] = nullptr;
+            }
+            global_return_hints_capacity_ = new_cap;
+        }
+        global_return_struct_[gidx] = s;
+        global_return_class_[gidx] = c;
     }
 
     int Compiler::require_global_slot(const char *name, Token *token)
@@ -361,6 +420,35 @@ namespace zen
         local.class_type = nullptr;
         state_->reg_class_hints[reg] = nullptr;
         return reg;
+    }
+
+    void Compiler::try_parse_type_hint()
+    {
+        if (!match(TOK_COLON))
+            return;
+        consume(TOK_IDENTIFIER, "Expected type name after ':'.");
+        Token type_tok = previous_;
+
+        /* Look up the type name as a global */
+        char buf[128];
+        int len = type_tok.length < 127 ? type_tok.length : 127;
+        memcpy(buf, type_tok.start, len);
+        buf[len] = '\0';
+        int gidx = vm_->find_global(buf);
+        if (gidx < 0)
+            return; /* type not found — silently ignore (forward decl) */
+
+        Value gval = vm_->get_global(gidx);
+        Local &local = state_->locals[state_->local_count - 1];
+        if (is_struct_def(gval))
+        {
+            local.struct_type = as_struct_def(gval);
+        }
+        else if (is_class(gval))
+        {
+            local.class_type = as_class(gval);
+            state_->reg_class_hints[local.reg] = as_class(gval);
+        }
     }
 
     /* =========================================================

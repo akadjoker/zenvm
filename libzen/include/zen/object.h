@@ -142,6 +142,8 @@ namespace zen
         UpvalDesc *upval_descs; /* upvalue descriptors (NULL se 0) */
         ObjString *name;   /* nome da função (debug) */
         ObjString *source; /* ficheiro fonte (debug) */
+        ObjStructDef *return_struct; /* return type hint (struct), NULL if unknown */
+        ObjClass *return_class;      /* return type hint (class), NULL if unknown */
     };
 
     inline bool is_func(Value v) { return is_obj_type(v, OBJ_FUNC); }

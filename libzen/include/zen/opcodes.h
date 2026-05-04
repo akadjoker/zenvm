@@ -154,6 +154,10 @@ namespace zen
 
         /* --- Fused field+arith (2-word superinstructions) --- */
         OP_GETFIELD_MUL, /* word1: R[A]=R[B].fields[C]; word2: R[A]=R[B]*R[C] */
+        OP_GETFIELD_SUB, /* word1: R[A]=R[B].fields[C]; word2: R[A]=R[B]-R[C] */
+
+        /* --- Iteration (foreach) --- */
+        OP_ITER_ELEM, /* R[A] = iter_elem(R[B], R[C]) — ordinal access for foreach */
 
         OP_HALT,
     };

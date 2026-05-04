@@ -390,7 +390,7 @@ class Entity {
     }
 }
 
-// Herança
+// Inheritance
 class Boss : Entity {
     var rage;
     def init(x, y) {
@@ -409,18 +409,18 @@ var b = Boss(10, 20);
 b.damage(50);
 ```
 
-- Herança single-level (`: Parent`)
-- `self` para aceder fields e métodos
-- `init` chamado automaticamente na construção
-- Override de métodos da classe pai
-- Vtable dispatch O(1) para todos os métodos
+- Single-level inheritance (`: Parent`)
+- `self` accesses fields and methods
+- `init` is called automatically during construction
+- Overrides work across parent/child classes
+- O(1) vtable dispatch is used for methods
 
 ## C++ Class Bindings
 
-### Classe básica (GC-managed)
+### Basic class (GC-managed)
 
 ```cpp
-// Script cria, GC destrói. Dados vivem no native_data (void*).
+// Script creates instances, GC destroys them. Data lives in native_data (void*).
 auto *cls = vm.def_class("Sprite")
     .ctor(sprite_ctor)          // void* fn(VM*, int argc, Value* args)
     .dtor(sprite_dtor)          // void fn(VM*, void* data)
@@ -429,33 +429,33 @@ auto *cls = vm.def_class("Sprite")
     .end();
 ```
 
-### Classe persistente (C++ owns lifetime)
+### Persistent class (C++ owns lifetime)
 
 ```cpp
-// C++ cria, C++ destrói. GC nunca toca.
+// C++ creates and destroys the instance. GC never owns it.
 auto *cls = vm.def_class("Transform")
     .ctor(transform_ctor)
     .dtor(transform_dtor)
-    .persistent(true)           // malloc directo, fora do GC
-    .constructable(false)       // script NÃO pode fazer Transform()
+    .persistent(true)           // direct allocation outside the GC heap
+    .constructable(false)       // script code cannot call Transform()
     .method("translate", transform_translate, 2)
     .end();
 
-// C++ cria
+// C++ creates the instance
 Value t = vm.make_instance(cls, args, nargs);
 
-// Script usa (via global)
+// Script uses it via a global
 vm.def_global("player_transform", t);
 
-// C++ destrói quando quiser
+// C++ destroys it explicitly when needed
 vm.destroy_instance(t);
 ```
 
 ### Native constructor
 
 ```cpp
-// Retorna void* — o objecto C++ real.
-// Recebe args do script (Sprite(10, 20) → argc=2, args=[10,20]).
+// Returns void* - the backing C++ object.
+// Receives script args (Sprite(10, 20) -> argc=2, args=[10,20]).
 static void *sprite_ctor(VM *vm, int argc, Value *args) {
     SpriteData *s = new SpriteData();
     s->x = (argc > 0) ? (float)args[0].as.integer : 0.0f;
@@ -467,7 +467,7 @@ static void *sprite_ctor(VM *vm, int argc, Value *args) {
 ### Native destructor
 
 ```cpp
-// Chamado pelo GC (non-persistent) ou por destroy_instance (persistent).
+// Called by the GC (non-persistent) or by destroy_instance (persistent).
 static void sprite_dtor(VM *vm, void *data) {
     delete (SpriteData *)data;
 }
@@ -477,12 +477,12 @@ static void sprite_dtor(VM *vm, void *data) {
 
 ```cpp
 // Signature: int fn(VM *vm, Value *args, int nargs)
-// args[0] = self (instância), args[1..] = argumentos
-// Escreve return value em args[0], retorna número de returns.
+// args[0] = self (instance), args[1..] = method arguments
+// Writes the return value into args[0], returns the number of return values.
 static int sprite_get_x(VM *vm, Value *args, int nargs) {
     SpriteData *s = zen_instance_data<SpriteData>(args[0]);
     args[0] = val_int((int64_t)s->x);
-    return 1;  // 1 valor retornado
+    return 1;  // one returned value
 }
 
 static int sprite_set_pos(VM *vm, Value *args, int nargs) {
@@ -493,11 +493,11 @@ static int sprite_set_pos(VM *vm, Value *args, int nargs) {
 }
 ```
 
-### Script herda classe C++
+### Script class inheriting from a C++ class
 
 ```zen
-// Sprite definido em C++ com ctor/dtor/methods.
-// Player herda: native_ctor corre (cria SpriteData*), depois init script.
+// Sprite is defined in C++ with ctor/dtor/methods.
+// Player inherits from it: native_ctor runs first, then the script init().
 class Player : Sprite {
     var score;
     def init() {
@@ -509,59 +509,59 @@ class Player : Sprite {
 }
 ```
 
-O `native_data` do parent propaga automaticamente para subclasses.
+The parent `native_data` propagates automatically into subclasses.
 
-### Bidireccional (C++ ↔ Script)
+### Bidirectional flow (C++ <-> Script)
 
 ```cpp
-// C++ cria objecto
+// C++ creates an object
 Value t = vm.make_instance(transform_class, nullptr, 0);
 vm.def_global("player_transform", t);
 
-// Script controla
+// Script controls it
 // player_transform.translate(10, 5);
 
-// C++ lê resultado de volta
+// C++ reads the modified state back
 TransformData *td = zen_instance_data<TransformData>(t);
 printf("x = %f\n", td->x);  // modificado pelo script
 
-// C++ chama método no objecto
+// C++ can also invoke methods directly
 Value args[] = { val_int(100), val_int(200) };
 vm.invoke(t, "translate", args, 2);
 ```
 
 ### Helpers
 
-| Helper | Descrição |
+| Helper | Description |
 |--------|-----------|
-| `zen_instance_data<T>(val)` | Cast `native_data` para `T*` |
-| `val_is_instance_of(val, "Sprite")` | Type check por nome |
-| `vm.make_instance(klass, args, n)` | Cria instância (chama ctor + init) |
-| `vm.destroy_instance(val)` | Destrói persistent (chama dtor + free) |
-| `vm.invoke(val, "method", args, n)` | Chama método por nome |
-| `vm.invoke(val, slot, args, n)` | Chama método por vtable slot O(1) |
-| `vm.find_selector("name", len)` | Obtém slot index dum método |
+| `zen_instance_data<T>(val)` | Casts `native_data` to `T*` |
+| `val_is_instance_of(val, "Sprite")` | Type check by class name |
+| `vm.make_instance(klass, args, n)` | Creates an instance (ctor + init) |
+| `vm.destroy_instance(val)` | Destroys a persistent instance (dtor + free) |
+| `vm.invoke(val, "method", args, n)` | Invokes a method by name |
+| `vm.invoke(val, slot, args, n)` | Invokes a method by vtable slot in O(1) |
+| `vm.find_selector("name", len)` | Returns the selector slot for a method |
 
 ### ClassBuilder API
 
-| Método | Descrição |
+| Method | Description |
 |--------|-----------|
-| `.field("name")` | Field script (Value) |
-| `.method("name", fn, arity)` | Método nativo |
-| `.ctor(fn)` | Constructor C++ (retorna `void*`) |
+| `.field("name")` | Script field (`Value`) |
+| `.method("name", fn, arity)` | Native method |
+| `.ctor(fn)` | C++ constructor (returns `void*`) |
 | `.dtor(fn)` | Destructor C++ |
-| `.persistent(true)` | Instâncias fora do GC |
-| `.constructable(false)` | Script não pode instanciar |
-| `.parent("Base")` | Herança |
-| `.end()` | Regista classe como global |
+| `.persistent(true)` | Instances live outside the GC heap |
+| `.constructable(false)` | Script code cannot instantiate it |
+| `.parent("Base")` | Inheritance |
+| `.end()` | Registers the class as a global |
 
-### Regras de lifetime
+### Lifetime rules
 
-| Tipo | Quem cria | Quem destrói | native_data |
+| Type | Created by | Destroyed by | native_data |
 |------|-----------|--------------|-------------|
-| Normal (GC) | Script ou C++ | GC (chama dtor) | Opcional |
-| Persistent | Só C++ | Só C++ (`destroy_instance`) | Quase sempre |
-| Non-constructable | Só C++ | Depende de persistent | Sim |
+| Normal (GC) | Script or C++ | GC (calls dtor) | Optional |
+| Persistent | C++ only | C++ only (`destroy_instance`) | Usually yes |
+| Non-constructable | C++ only | Depends on `persistent` | Yes |
 
 ## Reserved (not yet implemented)
 

@@ -302,6 +302,8 @@ namespace zen
         fn->upval_descs = nullptr;
         fn->name = nullptr;
         fn->source = nullptr;
+        fn->return_struct = nullptr;
+        fn->return_class = nullptr;
         return fn;
     }
 

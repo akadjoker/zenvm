@@ -1,27 +1,27 @@
-# Tutorial 11 — Fibers: spawn / resume / yield
+# Tutorial 11 — Fibers: `spawn` / `resume` / `yield`
 
-Este tutorial mostra esta parte da linguagem através de exemplos práticos.
+This tutorial introduces fibers and explicit cooperative control flow through practical examples.
 
-## Objetivo
+## Goal
 
-Aprender a sintaxe e os padrões principais deste tópico em BuLang/Zen.
+Learn the main syntax and patterns for this topic in BuLang/Zen.
 
-## Código completo
+## Full code
 
 ```zen
 // ============================================================
 // Tutorial 11 — Fibers: spawn / resume / yield
 // ============================================================
 
-// Fibers são corrotinas leves: funções que podem ser pausadas
-// (yield) e retomadas (resume) mantendo o seu estado interno.
+// Fibers are lightweight coroutines: functions that can be paused
+// (yield) and resumed while keeping their internal state.
 //
-// spawn fn   → cria uma fiber a partir de fn (não executa ainda)
-// resume(f)  → executa a fiber até ao próximo yield; retorna o valor
-// yield v    → pausa a fiber e devolve v ao chamador
-// Quando a fiber termina, resume() devolve nil.
+// spawn fn   -> creates a fiber from fn (does not run yet)
+// resume(f)  -> runs the fiber until the next yield; returns the yielded value
+// yield v    -> pauses the fiber and returns v to the caller
+// When the fiber finishes, resume() returns nil.
 
-// --- Fiber básica ---
+// --- Basic fiber ---
 def gen() {
     yield 1;
     yield 2;
@@ -32,10 +32,10 @@ var f = spawn gen;
 print(resume(f));   // 1
 print(resume(f));   // 2
 print(resume(f));   // 3
-print(resume(f));   // nil  ← fiber terminou
+print(resume(f));   // nil  <- fiber finished
 
-// --- Iterar uma fiber com while ---
-def contar(max) {
+// --- Iterate a fiber with while ---
+def count(max) {
     var i = 0;
     while (i < max) {
         yield i;
@@ -44,7 +44,7 @@ def contar(max) {
 }
 
 def make_range(n) {
-    def gen() { contar(n); }
+    def gen() { count(n); }
     return gen;
 }
 
@@ -55,35 +55,35 @@ while (v != nil) {
     v = resume(r);
 }
 
-// --- Comunicação bidirecional ---
-// resume(f, valor) envia um valor para dentro da fiber.
-// O yield recebe esse valor como resultado de expressão.
+// --- Bidirectional communication ---
+// resume(f, value) sends a value into the fiber.
+// yield receives that value as the result of an expression.
 
 def echo_dobro() {
-    var x = yield 0;     // pausa, recebe valor no resume seguinte
+    var x = yield 0;     // pauses and receives a value from the next resume
     yield x * 2;
 }
 
 var e = spawn echo_dobro;
-resume(e);           // arranca até ao primeiro yield → devolve 0
-print(resume(e, 7)); // envia 7 → fiber faz yield 14 → 14
+resume(e);           // starts until the first yield -> returns 0
+print(resume(e, 7)); // sends 7 -> fiber yields 14 -> 14
 
-// --- Acumulador (múltiplos envios) ---
-def acumulador() {
-    var soma = 0;
+// --- Accumulator (multiple sends) ---
+def accumulator() {
+    var sum = 0;
     loop {
-        var v = yield soma;
-        soma = soma + v;
+        var v = yield sum;
+        sum = sum + v;
     }
 }
 
-var ac = spawn acumulador;
-resume(ac);             // inicializa (yield 0)
+var ac = spawn accumulator;
+resume(ac);             // initialize (yield 0)
 print(resume(ac, 5));   // 5
 print(resume(ac, 3));   // 8
 print(resume(ac, 7));   // 15
 
-// --- Gerador de Fibonacci com fiber ---
+// --- Fibonacci generator with a fiber ---
 def fib_fiber() {
     var a = 0;
     var b = 1;
@@ -104,13 +104,13 @@ print(resume(ff));   // 3
 print(resume(ff));   // 5
 print(resume(ff));   // 8
 
-// --- Múltiplas fibers em paralelo ---
-def make_seq(inicio, passo) {
+// --- Multiple fibers in parallel ---
+def make_seq(start, step) {
     def gen() {
-        var n = inicio;
+        var n = start;
         loop {
             yield n;
-            n = n + passo;
+            n = n + step;
         }
     }
     return gen;
@@ -119,7 +119,7 @@ def make_seq(inicio, passo) {
 var fa = spawn make_seq(0, 1);
 var fb = spawn make_seq(100, 10);
 
-// intercalar resultados
+// interleave results
 print(resume(fa));   // 0
 print(resume(fb));   // 100
 print(resume(fa));   // 1
@@ -127,8 +127,8 @@ print(resume(fb));   // 110
 print(resume(fa));   // 2
 print(resume(fb));   // 120
 
-// --- Fiber com números pares (yield condicional) ---
-def pares(max) {
+// --- Fiber with even numbers (conditional yield) ---
+def evens(max) {
     def gen() {
         var i = 0;
         while (i < max) {
@@ -139,14 +139,14 @@ def pares(max) {
     return gen;
 }
 
-var fp = spawn pares(10);
+var fp = spawn evens(10);
 var vp = resume(fp);
 while (vp != nil) {
     print(vp);   // 0 2 4 6 8
     vp = resume(fp);
 }
 
-// --- Fiber com closure capturando upvalue ---
+// --- Fiber with a closure capturing an upvalue ---
 def make_upvalue_gen() {
     var x = 0;
     def gen() {
@@ -164,31 +164,31 @@ print(resume(fu));   // 1
 print(resume(fu));   // 2
 print(resume(fu));   // 3
 
-// --- Spawn com função anónima ---
+// --- Spawn with an anonymous function ---
 var fanon = spawn def() { yield 10; yield 20; };
 print(resume(fanon));   // 10
 print(resume(fanon));   // 20
 print(resume(fanon));   // nil
 ```
 
-## Como correr
+## How to run
 
 ```bash
 zen examples/tutorial_11_fibers.zen
 ```
 
-ou ajusta para o nome real do teu executável:
+or adjust the command to match your executable name:
 
 ```bash
 bulang examples/tutorial_11_fibers.zen
 ```
 
-## O que observar
+## What to look for
 
-- A sintaxe é direta e usa blocos com `{` e `}`.
-- Os exemplos usam `print()` para mostrar o resultado esperado.
-- Comentários no próprio código explicam cada secção.
+- The syntax is direct and uses `{` and `}` blocks.
+- The examples use `print()` to show the expected result.
+- Inline comments explain each section of the example.
 
-## Exercício sugerido
+## Suggested exercise
 
-Altera os valores do exemplo, corre outra vez e confirma se o output muda como esperas.
+Change the example values, run it again, and confirm that the output changes as expected.

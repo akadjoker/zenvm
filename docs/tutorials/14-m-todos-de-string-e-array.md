@@ -1,16 +1,16 @@
-# Tutorial 14 — Métodos de String e Array
+# Tutorial 14 — String and Array Methods
 
-Este tutorial documenta métodos úteis de strings e arrays.
+This tutorial documents useful string and array methods.
 
-## Objetivo
+## Goal
 
-Aprender a sintaxe e os padrões principais deste tópico em BuLang/Zen.
+Learn the main syntax and patterns for this topic in BuLang/Zen.
 
-## Código completo
+## Full code
 
 ```zen
 // ============================================================
-// Tutorial 14 — Métodos de String e Array
+// Tutorial 14 — String and Array Methods
 // ============================================================
 
 // ==========================================================
@@ -19,69 +19,69 @@ Aprender a sintaxe e os padrões principais deste tópico em BuLang/Zen.
 
 var s = "Hello World";
 
-// --- Tamanho ---
+// --- Length ---
 print(s.len());          // 11
-print(len(s));           // 11  (função global equivalente)
+print(len(s));           // 11  (equivalent global function)
 
-// --- Caso ---
+// --- Case ---
 print(s.upper());        // HELLO WORLD
 print(s.lower());        // hello world
 
-// --- Sub-string: sub(inicio, fim) ---
-print(s.sub(0, 5));      // Hello   (índice fim exclusivo)
+// --- Substring: sub(start, end) ---
+print(s.sub(0, 5));      // Hello   (end index is exclusive)
 print(s.sub(6, 11));     // World
 
-// --- Procurar: find(padrão) → índice ou -1 ---
+// --- Search: find(pattern) -> index or -1 ---
 print(s.find("World"));  // 6
 print(s.find("xyz"));    // -1
 
-// --- Substituir: replace(antigo, novo) ---
+// --- Replace: replace(old, new) ---
 print(s.replace("World", "Zen"));   // Hello Zen
 
-// --- Prefixo / sufixo ---
+// --- Prefix / suffix ---
 print(s.starts_with("Hello"));   // true
 print(s.starts_with("World"));   // false
 print(s.ends_with("World"));     // true
 print(s.ends_with("Hello"));     // false
 
-// --- Trim (remove espaços nas extremidades) ---
-var sp = "   espaços   ";
-print(sp.trim());   // espaços
+// --- Trim (remove whitespace at the ends) ---
+var sp = "   spaces   ";
+print(sp.trim());   // spaces
 
-// --- Carácter por índice ---
+// --- Character by index ---
 print(s.char_at(0));   // H
 print(s.char_at(6));   // W
 
 // --- Split ---
-var csv = "um,dois,três,quatro";
-var partes = csv.split(",");
-print(partes.len());    // 4
-print(partes[0]);       // um
-print(partes[3]);       // quatro
+var csv = "one,two,three,four";
+var parts = csv.split(",");
+print(parts.len());    // 4
+print(parts[0]);       // one
+print(parts[3]);       // four
 
-// split sem match → array com 1 elemento
+// split with no match -> array with 1 element
 var sem = "hello".split(",");
 print(sem.len());       // 1
 print(sem[0]);          // hello
 
-// --- Concatenação com + ---
-var nome = "Bu" + "Lang";
-print(nome);            // BuLang
+// --- Concatenation with + ---
+var name = "Bu" + "Lang";
+print(name);            // BuLang
 
-// --- Comparação ---
+// --- Comparison ---
 print("abc" == "abc");   // true
-print("abc" < "abd");    // true  (lexicográfico)
+print("abc" < "abd");    // true  (lexicographic)
 
-// --- Strings verbatim (@ — sem escape) ---
-var path = @"C:\users\djoker\ficheiro.txt";
-print(path);   // C:\users\djoker\ficheiro.txt
+// --- Verbatim strings (@ - no escaping) ---
+var path = @"C:\users\djoker\file.txt";
+print(path);   // C:\users\djoker\file.txt
 
-// aspas duplas dentro de verbatim: ""
-var q = @"ela disse ""olá""";
-print(q);      // ela disse "olá"
+// double quotes inside verbatim strings: ""
+var q = @"she said ""hello""";
+print(q);      // she said "hello"
 
 // ==========================================================
-// ARRAY  (métodos extra além de push/pop/len)
+// ARRAY  (extra methods beyond push/pop/len)
 // ==========================================================
 
 var arr = [3, 1, 4, 1, 5, 9, 2, 6];
@@ -97,17 +97,17 @@ var r = [1, 2, 3, 4, 5];
 r.reverse();
 print(r.join(","));   // 5,4,3,2,1
 
-// --- slice(inicio, fim) → novo array ---
+// --- slice(start, end) -> new array ---
 var base = [10, 20, 30, 40, 50];
 var sl = base.slice(1, 3);
 print(sl.join(","));   // 20,30
 
-// --- insert(indice, valor) ---
+// --- insert(index, value) ---
 var ins = [1, 3, 4];
 ins.insert(1, 2);
 print(ins.join(","));   // 1,2,3,4
 
-// --- remove(indice) ---
+// --- remove(index) ---
 var rem = [1, 2, 3, 4];
 rem.remove(2);
 print(rem.join(","));   // 1,2,4
@@ -117,7 +117,7 @@ var cl = [1, 2, 3];
 cl.clear();
 print(cl.len());   // 0
 
-// --- join(separador) ---
+// --- join(separator) ---
 var nums = [1, 2, 3, 4, 5];
 print(nums.join(", "));   // 1, 2, 3, 4, 5
 print(nums.join("-"));    // 1-2-3-4-5
@@ -130,12 +130,12 @@ print(desordenado.join(","));   // 1,1,2,3,4,5,6,9
 desordenado.sort("desc");
 print(desordenado.join(","));   // 9,6,5,4,3,2,1,1
 
-// sort de strings
-var frutas = ["banana", "maçã", "abacate", "cereja"];
-frutas.sort();
-print(frutas.join(", "));   // abacate, banana, cereja, maçã
+// string sort
+var fruits = ["banana", "apple", "avocado", "cherry"];
+fruits.sort();
+print(fruits.join(", "));   // apple, avocado, banana, cherry
 
-// --- Encadeamento de métodos ---
+// --- Method chaining ---
 print("Hello World".lower().len());   // 11
 
 var sub = [10, 30, 20, 50, 40].slice(1, 4);
@@ -143,24 +143,24 @@ sub.sort();
 print(sub.join(","));   // 20,30,50
 ```
 
-## Como correr
+## How to run
 
 ```bash
 zen examples/tutorial_14_metodos.zen
 ```
 
-ou ajusta para o nome real do teu executável:
+or adjust the command to match your executable name:
 
 ```bash
 bulang examples/tutorial_14_metodos.zen
 ```
 
-## O que observar
+## What to look for
 
-- A sintaxe é direta e usa blocos com `{` e `}`.
-- Os exemplos usam `print()` para mostrar o resultado esperado.
-- Comentários no próprio código explicam cada secção.
+- The syntax is direct and uses `{` and `}` blocks.
+- The examples use `print()` to show the expected result.
+- Inline comments explain each section of the example.
 
-## Exercício sugerido
+## Suggested exercise
 
-Altera os valores do exemplo, corre outra vez e confirma se o output muda como esperas.
+Change the example values, run it again, and confirm that the output changes as expected.

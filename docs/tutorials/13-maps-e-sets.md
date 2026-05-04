@@ -1,40 +1,40 @@
-# Tutorial 13 — Maps e Sets
+# Tutorial 13 — Maps and Sets
 
-Este tutorial cobre mapas chave-valor e sets para coleções sem duplicados.
+This tutorial covers key-value maps and sets for collections without duplicates.
 
-## Objetivo
+## Goal
 
-Aprender a sintaxe e os padrões principais deste tópico em BuLang/Zen.
+Learn the main syntax and patterns for this topic in BuLang/Zen.
 
-## Código completo
+## Full code
 
 ```zen
 // ============================================================
-// Tutorial 13 — Maps e Sets
+// Tutorial 13 — Maps and Sets
 // ============================================================
 
-// Map  {}      — tabela de chave→valor (hash map)
-// Set  #{}     — conjunto de valores únicos
+// Map  {}      - key->value table (hash map)
+// Set  #{}     - collection of unique values
 
 // ==========================================================
 // MAP
 // ==========================================================
 
-// --- Criação e set/get ---
+// --- Creation and set/get ---
 var m = {};
-m.set("nome", "Luis");
-m.set("idade", 30);
-m.set("activo", true);
+m.set("name", "Luis");
+m.set("age", 30);
+m.set("active", true);
 
-print(m.get("nome"));     // Luis
-print(m.get("idade"));    // 30
-print(m.get("activo"));   // true
+print(m.get("name"));     // Luis
+print(m.get("age"));      // 30
+print(m.get("active"));   // true
 
-// --- get com valor por omissão ---
-print(m.get("email", "n/a"));   // n/a  ← chave não existe
+// --- get with a default value ---
+print(m.get("email", "n/a"));   // n/a  <- key does not exist
 
 // --- has / size ---
-print(m.has("nome"));      // true
+print(m.has("name"));      // true
 print(m.has("email"));     // false
 print(m.size());           // 3
 
@@ -51,11 +51,11 @@ config.set("w", 1280);
 config.set("h", 720);
 config.set("fps", 60);
 
-var chaves = config.keys();
-print("chaves: {chaves.len()}");   // 3
+var keys = config.keys();
+print("keys: {keys.len()}");   // 3
 
-var valores = config.values();
-// valores estão em ordem não garantida — verificar individualmente
+var values = config.values();
+// values have no guaranteed order - check them individually
 print(config.get("w"));    // 1280
 print(config.get("fps"));  // 60
 
@@ -65,44 +65,44 @@ tmp.set("x", 1);
 tmp.clear();
 print(tmp.size());   // 0
 
-// --- Map como registo de entidades ---
-def criar_jogador(nome, hp, nivel) {
+// --- Map as an entity record ---
+def create_player(name, hp, level) {
     var p = {};
-    p.set("nome", nome);
+    p.set("name", name);
     p.set("hp", hp);
-    p.set("nivel", nivel);
+    p.set("level", level);
     return p;
 }
 
-var j1 = criar_jogador("Djoker", 100, 5);
-var j2 = criar_jogador("Bot",    60,  2);
+var j1 = create_player("Djoker", 100, 5);
+var j2 = create_player("Bot",    60,  2);
 
-print(j1.get("nome"));    // Djoker
+print(j1.get("name"));    // Djoker
 print(j2.get("hp"));      // 60
 
 j1.set("hp", j1.get("hp") - 25);
 print(j1.get("hp"));      // 75
 
-// --- Map de maps (nested) ---
-var mundo = {};
-mundo.set("jogadores", criar_jogador("Hero", 200, 10));
-mundo.set("boss",      criar_jogador("Dragon", 1000, 50));
+// --- Map of maps (nested) ---
+var world = {};
+world.set("players", create_player("Hero", 200, 10));
+world.set("boss",    create_player("Dragon", 1000, 50));
 
-var boss = mundo.get("boss");
-print(boss.get("nome"));    // Dragon
+var boss = world.get("boss");
+print(boss.get("name"));    // Dragon
 print(boss.get("hp"));      // 1000
 
 // ==========================================================
 // SET
 // ==========================================================
 
-// --- Criação e has ---
+// --- Creation and has ---
 var s = #{10, 20, 30};
 print(s.size());     // 3
 print(s.has(20));    // true
 print(s.has(99));    // false
 
-// --- Deduplicação automática ---
+// --- Automatic deduplication ---
 var sd = #{1, 1, 2, 2, 3};
 print(sd.size());    // 3
 
@@ -121,55 +121,55 @@ var st = #{1, 2, 3};
 st.clear();
 print(st.size());    // 0
 
-// --- values() → converte para array ---
-var numeros = #{5, 3, 1, 4, 2};
-var arr = numeros.values();
+// --- values() -> convert to array ---
+var numbers = #{5, 3, 1, 4, 2};
+var arr = numbers.values();
 print(arr.len());    // 5
-// (ordem não garantida)
+// (order is not guaranteed)
 
-// --- Set vazio ---
-var vazio = #{};
-print(vazio.size());    // 0
+// --- Empty set ---
+var empty = #{};
+print(empty.size());    // 0
 
-// --- Set de strings ---
-var palavras = #{"olá", "mundo", "olá"};
-print(palavras.size());        // 2  (deduplicado)
-print(palavras.has("mundo"));  // true
+// --- Set of strings ---
+var words = #{"hello", "world", "hello"};
+print(words.size());          // 2  (deduplicated)
+print(words.has("world"));   // true
 
-// --- Caso prático: IDs únicos visitados ---
-var visitados = #{};
-visitados.add(42);
-visitados.add(7);
-visitados.add(42);   // duplicado
-visitados.add(13);
-print("visitados: {visitados.size()}");   // 3
+// --- Practical case: unique visited IDs ---
+var visited = #{};
+visited.add(42);
+visited.add(7);
+visited.add(42);   // duplicate
+visited.add(13);
+print("visited: {visited.size()}");   // 3
 
-def ja_visto(id) {
-    return visitados.has(id);
+def already_seen(id) {
+    return visited.has(id);
 }
 
-print(ja_visto(7));    // true
-print(ja_visto(99));   // false
+print(already_seen(7));    // true
+print(already_seen(99));   // false
 ```
 
-## Como correr
+## How to run
 
 ```bash
 zen examples/tutorial_13_maps_sets.zen
 ```
 
-ou ajusta para o nome real do teu executável:
+or adjust the command to match your executable name:
 
 ```bash
 bulang examples/tutorial_13_maps_sets.zen
 ```
 
-## O que observar
+## What to look for
 
-- A sintaxe é direta e usa blocos com `{` e `}`.
-- Os exemplos usam `print()` para mostrar o resultado esperado.
-- Comentários no próprio código explicam cada secção.
+- The syntax is direct and uses `{` and `}` blocks.
+- The examples use `print()` to show the expected result.
+- Inline comments explain each section of the example.
 
-## Exercício sugerido
+## Suggested exercise
 
-Altera os valores do exemplo, corre outra vez e confirma se o output muda como esperas.
+Change the example values, run it again, and confirm that the output changes as expected.

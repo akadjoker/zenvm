@@ -761,6 +761,8 @@ namespace zen
                     state_->emitter.emit_abx(OP_SETGLOBAL, val_reg, gidx, token.line);
                     if (ensure_global_class_hint(gidx))
                         global_class_hints_[gidx] = last_call_class_def_ ? last_call_class_def_ : state_->reg_class_hints[val_reg];
+                    if (ensure_global_struct_hint(gidx))
+                        global_struct_hints_[gidx] = last_call_struct_def_;
                 }
                 if (dest >= 0 && dest != val_reg)
                 {
@@ -893,12 +895,18 @@ namespace zen
         Value gval = vm_->get_global(gidx);
         if (is_struct_def(gval))
             last_call_struct_def_ = as_struct_def(gval);
+        else if (gidx >= 0 && gidx < global_struct_hints_capacity_ && global_struct_hints_[gidx])
+            last_call_struct_def_ = global_struct_hints_[gidx];
+        else if (gidx >= 0 && gidx < global_return_hints_capacity_ && global_return_struct_[gidx])
+            last_call_struct_def_ = global_return_struct_[gidx];
         else
             last_call_struct_def_ = nullptr;
         if (gidx >= 0 && gidx < global_class_hints_capacity_ && global_class_hints_[gidx])
             last_call_class_def_ = global_class_hints_[gidx];
         else if (is_class(gval))
             last_call_class_def_ = as_class(gval);
+        else if (gidx >= 0 && gidx < global_return_hints_capacity_ && global_return_class_[gidx])
+            last_call_class_def_ = global_return_class_[gidx];
         else
             last_call_class_def_ = nullptr;
 
@@ -1179,6 +1187,24 @@ namespace zen
                     if (gf_dest == left || gf_dest == right)
                     {
                         state_->emitter.rewrite_opcode_at(mul_off - 1, OP_GETFIELD_MUL);
+                    }
+                }
+            }
+        }
+
+        /* Peephole: fuse GETFIELD_IDX + SUB → OP_GETFIELD_SUB (2-word) */
+        if (opcode == OP_SUB)
+        {
+            int sub_off = state_->emitter.current_offset() - 1;
+            if (sub_off >= 1)
+            {
+                Instruction prev = state_->emitter.instruction_at(sub_off - 1);
+                if (ZEN_OP(prev) == OP_GETFIELD_IDX)
+                {
+                    uint8_t gf_dest = ZEN_A(prev);
+                    if (gf_dest == left || gf_dest == right)
+                    {
+                        state_->emitter.rewrite_opcode_at(sub_off - 1, OP_GETFIELD_SUB);
                     }
                 }
             }
@@ -1487,6 +1513,20 @@ namespace zen
                 }
             }
         }
+        /* Try struct hint from global (set by GETGLOBAL when struct_hints_ is populated) */
+        if (field_idx < 0 && last_call_struct_def_)
+        {
+            ObjStructDef *def = last_call_struct_def_;
+            for (int i = 0; i < def->num_fields; i++)
+            {
+                if (def->field_names[i]->length == field_tok.length &&
+                    memcmp(def->field_names[i]->chars, field_tok.start, field_tok.length) == 0)
+                {
+                    field_idx = i;
+                    break;
+                }
+            }
+        }
         /* Try to resolve class field index (self.x inside a method) */
         if (field_idx < 0 && current_class_fields_ && state_->is_method && obj_reg == 0)
         {
@@ -1631,6 +1671,8 @@ namespace zen
             ObjClass *known_class = nullptr;
             if (loc && loc->class_type)
                 known_class = loc->class_type;
+            else if (obj_reg >= 0 && obj_reg < 256 && state_->reg_class_hints[obj_reg])
+                known_class = state_->reg_class_hints[obj_reg];
             else if (current_class_fields_ && state_->is_method && obj_reg == 0)
             {
                 /* self inside a method — find the class being compiled */
@@ -1670,9 +1712,33 @@ namespace zen
             int result_reg = dest >= 0 ? dest : base;
             if (result_reg != base)
                 emit_move(result_reg, base);
-            last_call_class_def_ = nullptr;
+
+            /* Propagate return type hint from vtable method if available */
+            ObjClass *ret_class_hint = nullptr;
+            ObjStructDef *ret_struct_hint = nullptr;
+            if (known_class)
+            {
+                int slot = vm_->find_selector(field_tok.start, field_tok.length);
+                if (slot >= 0 && slot < known_class->vtable_size &&
+                    !is_nil(known_class->vtable[slot]))
+                {
+                    ObjFunc *mfn = nullptr;
+                    Value vt_val = known_class->vtable[slot];
+                    if (is_func(vt_val))
+                        mfn = as_func(vt_val);
+                    else if (is_closure(vt_val))
+                        mfn = as_closure(vt_val)->func;
+                    if (mfn)
+                    {
+                        ret_class_hint = mfn->return_class;
+                        ret_struct_hint = mfn->return_struct;
+                    }
+                }
+            }
+            last_call_class_def_ = ret_class_hint;
+            last_call_struct_def_ = ret_struct_hint;
             if (result_reg >= 0 && result_reg < 256)
-                state_->reg_class_hints[result_reg] = nullptr;
+                state_->reg_class_hints[result_reg] = ret_class_hint;
             return result_reg;
         }
 
@@ -1936,6 +2002,7 @@ namespace zen
             {
                 consume(TOK_IDENTIFIER, "Expected parameter name.");
                 add_local(previous_);
+                try_parse_type_hint();
                 arity++;
             } while (match(TOK_COMMA));
         }

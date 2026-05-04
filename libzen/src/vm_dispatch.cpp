@@ -279,6 +279,8 @@ namespace zen
             &&lbl_OP_FORPREP,
             &&lbl_OP_FORLOOP,
             &&lbl_OP_GETFIELD_MUL,
+            &&lbl_OP_GETFIELD_SUB,
+            &&lbl_OP_ITER_ELEM,
             &&lbl_OP_HALT,
         };
 
@@ -1849,8 +1851,62 @@ namespace zen
                     R[ZEN_A(i)] = val_float(v);
                 else
                     R[ZEN_A(i)] = val_int((int64_t)v);
+            } else if (is_string(container)) {
+                if (!is_int(key)) { runtime_error("string index must be integer"); return; }
+                ObjString *s = as_string(container);
+                int32_t idx = (int32_t)key.as.integer;
+                if ((uint32_t)idx >= (uint32_t)s->length) { runtime_error("string index out of bounds"); return; }
+                R[ZEN_A(i)] = val_obj((Obj *)new_string(&gc_, &s->chars[idx], 1));
             } else {
                 runtime_error("cannot index value");
+                return;
+            }
+            NEXT();
+        }
+        CASE(OP_ITER_ELEM)
+        {
+            uint32_t i = *ip;
+            Value container = R[ZEN_B(i)];
+            Value vidx = R[ZEN_C(i)];
+            int32_t idx = (int32_t)vidx.as.integer;
+            if (is_array(container)) {
+                R[ZEN_A(i)] = array_get(as_array(container), idx);
+            } else if (is_buffer(container)) {
+                ObjBuffer *buf = as_buffer(container);
+                if ((uint32_t)idx >= (uint32_t)buf->count) { runtime_error("buffer index out of bounds"); return; }
+                double v = buffer_get(buf, idx);
+                if (buf->btype >= BUF_FLOAT32)
+                    R[ZEN_A(i)] = val_float(v);
+                else
+                    R[ZEN_A(i)] = val_int((int64_t)v);
+            } else if (is_string(container)) {
+                ObjString *s = as_string(container);
+                if ((uint32_t)idx >= (uint32_t)s->length) { runtime_error("string index out of bounds"); return; }
+                R[ZEN_A(i)] = val_obj((Obj *)new_string(&gc_, &s->chars[idx], 1));
+            } else if (is_map(container)) {
+                ObjMap *map = as_map(container);
+                int32_t ord = 0;
+                bool found = false;
+                for (int32_t n = 0; n < map->capacity; n++) {
+                    if (map->nodes[n].hash != 0xFFFFFFFFu) {
+                        if (ord == idx) { R[ZEN_A(i)] = map->nodes[n].key; found = true; break; }
+                        ord++;
+                    }
+                }
+                if (!found) { runtime_error("map iteration index out of bounds"); return; }
+            } else if (is_set(container)) {
+                ObjSet *set = as_set(container);
+                int32_t ord = 0;
+                bool found = false;
+                for (int32_t n = 0; n < set->capacity; n++) {
+                    if (set->nodes[n].hash != 0xFFFFFFFFu) {
+                        if (ord == idx) { R[ZEN_A(i)] = set->nodes[n].key; found = true; break; }
+                        ord++;
+                    }
+                }
+                if (!found) { runtime_error("set iteration index out of bounds"); return; }
+            } else {
+                runtime_error("cannot iterate value");
                 return;
             }
             NEXT();
@@ -2488,6 +2544,23 @@ namespace zen
                 R[ZEN_A(i2)] = val_int((int64_t)((uint64_t)vb.as.integer * (uint64_t)vc.as.integer));
             else
                 R[ZEN_A(i2)] = val_float(to_number(vb) * to_number(vc));
+            NEXT();
+        }
+
+        CASE(OP_GETFIELD_SUB)
+        {
+            /* word1: GETFIELD_IDX  R[A] = R[B].fields[C]
+               word2: SUB           R[A] = R[B] - R[C]    */
+            uint32_t i1 = *ip;
+            ObjInstance *inst = as_instance(R[ZEN_B(i1)]);
+            R[ZEN_A(i1)] = inst->fields[ZEN_C(i1)];
+            ++ip;
+            uint32_t i2 = *ip;
+            Value vb = R[ZEN_B(i2)], vc = R[ZEN_C(i2)];
+            if (vb.type == VAL_INT && vc.type == VAL_INT)
+                R[ZEN_A(i2)] = val_int(vb.as.integer - vc.as.integer);
+            else
+                R[ZEN_A(i2)] = val_float(to_number(vb) - to_number(vc));
             NEXT();
         }
 
