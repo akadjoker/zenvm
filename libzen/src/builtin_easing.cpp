@@ -230,6 +230,7 @@ namespace zen
         31,
         nullptr,
         0,
+        nullptr
     };
 
 } /* namespace zen */

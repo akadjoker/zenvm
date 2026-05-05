@@ -1,0 +1,113 @@
+import glfw;
+import gl;
+import canvas;
+
+glfwInit();
+glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+var win = glfwCreateWindow(800, 600, "canvas test");
+glfwMakeContextCurrent(win);
+glfwSwapInterval(1);
+LoadOpenGLExtensions();
+
+canvas.backend_init(800, 600);
+var dl = canvas.new();
+
+var t = 0.0;
+
+while (!glfwWindowShouldClose(win)) {
+    glfwPollEvents();
+
+    glViewport(0, 0, 800, 600);
+    glClearColor(0.12, 0.12, 0.14, 1.0);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    // Fundo
+    dl.set_rgba(20, 20, 30, 255);
+    dl.rect(0, 0, 800, 600);
+
+    // Rectângulos
+    dl.set_color(220, 50, 50);
+    dl.rect(20, 20, 200, 80);
+
+    dl.set_color(255, 255, 255);
+    dl.rect_outline(20, 120, 200, 80);
+
+    dl.set_color(60, 120, 220);
+    dl.round_rect(20, 220, 200, 80, 16.0);
+
+    dl.set_color(50, 200, 80);
+    dl.round_rect_outline(20, 320, 200, 80, 16.0);
+
+    // Gradiente — cores explícitas (sem cur_col)
+    dl.rect_gradient(250, 20, 200, 80,
+        canvas.pack(255, 0, 0, 255),   canvas.pack(255, 200, 0, 255),
+        canvas.pack(0, 0, 255, 255),   canvas.pack(0, 200, 100, 255));
+
+    // Círculos
+    dl.set_color(220, 50, 50);
+    dl.circle(350, 200, 60.0);
+
+    dl.set_color(50, 200, 80);
+    dl.circle_outline(500, 200, 60.0);
+
+    // Elipses
+    dl.set_rgba(240, 200, 40, 200);
+    dl.ellipse(350, 350, 100.0, 40.0);
+
+    dl.set_rgba(255, 255, 255, 255);
+    dl.ellipse_outline(550, 350, 80.0, 40.0);
+
+    // Triângulos
+    dl.set_color(60, 120, 220);
+    dl.triangle(600, 20, 760, 20, 680, 100);
+
+    dl.set_color(220, 50, 50);
+    dl.triangle_outline(600, 120, 760, 120, 680, 200);
+
+    // Polígonos
+    dl.set_color(50, 200, 80);
+    dl.ngon(680, 300, 50.0, 6);
+
+    dl.set_rgba(240, 200, 40, 200);
+    dl.ngon_outline(680, 400, 50.0, 6);
+
+    // Linhas
+    dl.set_rgba(255, 255, 255, 255);
+    dl.line(20, 520, 780, 520);
+
+    dl.set_rgba(240, 200, 40, 200);
+    dl.line(20, 540, 780, 540, dl.get_color(), 3.0);
+
+    // Beziers
+    dl.set_color(60, 120, 220);
+    dl.bezier_cubic(20, 560, 200, 480, 600, 600, 780, 560);
+
+    dl.set_color(220, 50, 50);
+    dl.bezier_quad(20, 580, 400, 500, 780, 580);
+
+    // Path — estrela de 5 pontas
+    dl.set_rgba(240, 200, 40, 255);
+    dl.path_move(400, 430);
+    dl.path_line_to(415, 469);
+    dl.path_line_to(457, 471);
+    dl.path_line_to(424, 497);
+    dl.path_line_to(435, 538);
+    dl.path_line_to(400, 515);
+    dl.path_line_to(365, 538);
+    dl.path_line_to(376, 497);
+    dl.path_line_to(343, 471);
+    dl.path_line_to(385, 469);
+    dl.path_fill();
+
+    dl.flush();
+    glfwSwapBuffers(win);
+
+    t = t + 0.016;
+}
+
+canvas.backend_destroy();
+glfwDestroyWindow(win);
+glfwTerminate();
+print("canvas test OK");

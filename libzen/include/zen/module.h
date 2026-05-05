@@ -75,6 +75,9 @@ namespace zen
 #ifdef ZEN_ENABLE_GIF
     extern const NativeLib zen_lib_gif;
 #endif
+#ifdef ZEN_ENABLE_CANVAS
+    extern const NativeLib zen_lib_canvas;
+#endif
 
 } /* namespace zen */
 

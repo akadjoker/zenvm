@@ -108,6 +108,11 @@ if(ZEN_ENABLE_GIF_MODULE)
     add_subdirectory(modules/gif)
 endif()
 
+option(ZEN_ENABLE_CANVAS_MODULE "Enable canvas 2D draw module" ON)
+if(ZEN_ENABLE_CANVAS_MODULE)
+    add_subdirectory(modules/canvas)
+endif()
+
 # --- CLI (zen executable) ---
 add_subdirectory(cli)
 

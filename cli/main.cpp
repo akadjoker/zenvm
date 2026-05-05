@@ -126,6 +126,9 @@ static void register_default_libs(VM &vm)
 #ifdef ZEN_ENABLE_GIF
     vm.register_lib(&zen_lib_gif);
 #endif
+#ifdef ZEN_ENABLE_CANVAS
+    vm.register_lib(&zen_lib_canvas);
+#endif
 #ifdef ZEN_ENABLE_STB_IMAGE
     vm.register_lib(&zen_lib_image);
 #endif

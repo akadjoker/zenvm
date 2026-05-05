@@ -586,7 +586,7 @@ namespace zen
         5,
         nullptr,
         0,
-    };
+        nullptr};
 
 } /* namespace zen */
 

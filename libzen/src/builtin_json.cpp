@@ -949,6 +949,7 @@ namespace zen
         2,
         nullptr,
         0,
+        nullptr
     };
 
 } /* namespace zen */

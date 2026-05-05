@@ -252,6 +252,8 @@ namespace zen
         path_functions,
         6,
         nullptr,
-        0};
+        0,
+        nullptr
+    };
 
 } /* namespace zen */

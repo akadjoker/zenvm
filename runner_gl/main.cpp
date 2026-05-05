@@ -40,6 +40,9 @@
 #ifdef ZEN_ENABLE_SDL2
 #    include "zen/module_sdl2.h"
 #endif
+#ifdef ZEN_ENABLE_CANVAS
+#    include "module.h"  /* zen_lib_canvas declared in module.h */
+#endif
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -112,6 +115,9 @@ static void register_libs(VM &vm)
 #endif
 #ifdef ZEN_ENABLE_SDL2
     vm.register_lib(&zen_lib_sdl2);
+#endif
+#ifdef ZEN_ENABLE_CANVAS
+    vm.register_lib(&zen_lib_canvas);
 #endif
 }
 

@@ -467,6 +467,7 @@ namespace zen
         6,
         nullptr,
         0,
+        nullptr
     };
 
 } /* namespace zen */

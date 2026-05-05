@@ -683,7 +683,7 @@ namespace zen
     };
 
     const NativeLib zen_lib_glfw = {
-        "glfw", glfw_funcs, ZEN_ARRAY_COUNT(glfw_funcs), glfw_constants, ZEN_ARRAY_COUNT(glfw_constants)
+        "glfw", glfw_funcs, ZEN_ARRAY_COUNT(glfw_funcs), glfw_constants, ZEN_ARRAY_COUNT(glfw_constants), nullptr
     };
 }
 

@@ -41,6 +41,10 @@ if(TARGET zen_module_sdl2)
     target_link_libraries(zen_gl zen_module_sdl2)
 endif()
 
+if(TARGET zen_module_canvas_gl)
+    target_link_libraries(zen_gl zen_module_canvas_gl)
+endif()
+
 if(NOT WIN32)
     target_link_options(zen_gl PRIVATE -rdynamic)
 endif()

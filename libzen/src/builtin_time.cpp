@@ -192,6 +192,7 @@ namespace zen
         time_functions,
         8,
         nullptr,
-        0};
+        0,
+        nullptr};
 
 } /* namespace zen */

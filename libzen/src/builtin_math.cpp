@@ -236,6 +236,7 @@ namespace zen
         math_functions,
         8,
         math_constants,
-        5};
+        5,
+        nullptr};
 
 } /* namespace zen */

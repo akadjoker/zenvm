@@ -1,0 +1,209 @@
+
+import glfw;
+import gl;
+import image;
+import canvas;
+import font;
+
+glfwInit();
+glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+var win = glfwCreateWindow(800, 600, "wabbit batch");
+glfwMakeContextCurrent(win);
+glfwSwapInterval(1);
+LoadOpenGLExtensions();
+
+canvas.backend_init(800, 600);
+var dl = canvas.new();
+
+// --- Fonte: bake TTF → atlas R8 → converter para RGBA8 (canvas shader precisa RGBA) ---
+var TTF = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+var ttf = font.load(TTF);
+var FONT_FIRST = 32;
+var FONT_NUM   = 96;
+var ATLAS_W = 256;
+var ATLAS_H = 64;
+var PX_H    = 16.0;
+var (atlas_r8, faw, fah, chardata) = font.bake(ttf, PX_H, ATLAS_W, ATLAS_H, FONT_FIRST, FONT_NUM);
+// Converter R8 → RGBA8: cada byte v torna-se (255,255,255,v)
+var atlas_rgba = Uint8Array(faw * fah * 4);
+var fi = 0;
+while (fi < faw * fah) {
+    var fv = atlas_r8[fi];
+    atlas_rgba[fi*4]   = 255;
+    atlas_rgba[fi*4+1] = 255;
+    atlas_rgba[fi*4+2] = 255;
+    atlas_rgba[fi*4+3] = fv;
+    fi = fi + 1;
+}
+var font_tex = glGenTextures(1);
+glBindTexture(GL_TEXTURE_2D, font_tex);
+glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, faw, fah, 0, GL_RGBA, GL_UNSIGNED_BYTE, atlas_rgba);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+glBindTexture(GL_TEXTURE_2D, 0);
+
+// --- Carregar wabbit_alpha.png ---
+var (iw, ih, ic, pixels) = image.load("assets/wabbit_alpha.png", 4);
+if (pixels == nil) {
+    print("ERRO: nao foi possivel carregar assets/wabbit_alpha.png");
+    glfwTerminate();
+}
+
+var tex = glGenTextures(1);
+glBindTexture(GL_TEXTURE_2D, tex);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, iw, ih, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+glBindTexture(GL_TEXTURE_2D, 0);
+
+// --- Buffers pre-alocados para MAX_SPRITES quads ---
+var MAX = 100000;
+var verts   = Float32Array(MAX * 16);   // 4 verts * 4 floats
+var indices = Uint32Array(MAX * 6);     // 6 indices
+var colors  = Uint32Array(MAX);         // 1 cor por sprite (packed RGBA)
+
+// Preencher indices uma vez (nao mudam)
+var i = 0;
+while (i < MAX) {
+    var base = i * 4;
+    var bi   = i * 6;
+    indices[bi]   = base;     indices[bi+1] = base+1; indices[bi+2] = base+2;
+    indices[bi+3] = base;     indices[bi+4] = base+2; indices[bi+5] = base+3;
+    i = i + 1;
+}
+
+// --- Estado dos sprites: posicao + velocidade ---
+var sx  = Float32Array(MAX);
+var sy  = Float32Array(MAX);
+var svx = Float32Array(MAX);
+var svy = Float32Array(MAX);
+var count = 0;
+
+var W = 800.0;
+var H = 600.0;
+var SW = iw * 1.0;
+var SH = ih * 1.0;
+
+// --- draw_text: buffer pre-alocado (max 64 chars); count explícito evita contaminação de cor ---
+var MAX_TEXT_CHARS = 64;
+var fverts1 = Float32Array(MAX_TEXT_CHARS * 6 * 4);
+
+def draw_text_buf(buf, text, x, y, col) {
+    var n = text.len();
+    if (n == 0) { return; }
+    if (n > MAX_TEXT_CHARS) { n = MAX_TEXT_CHARS; }
+    var vi = 0;
+    var px = x;
+    var ci = 0;
+    while (ci < n) {
+        var cp = text.byte_at(ci);
+        var (x0,y0,x1,y1,s0,t0,s1,t1,xadv) = font.quad(chardata, faw, fah, FONT_FIRST, cp, px, y);
+        // tri 1
+        buf[vi]=x0; buf[vi+1]=y0; buf[vi+2]=s0; buf[vi+3]=t0; vi=vi+4;
+        buf[vi]=x1; buf[vi+1]=y1; buf[vi+2]=s1; buf[vi+3]=t1; vi=vi+4;
+        buf[vi]=x1; buf[vi+1]=y0; buf[vi+2]=s1; buf[vi+3]=t0; vi=vi+4;
+        // tri 2
+        buf[vi]=x0; buf[vi+1]=y0; buf[vi+2]=s0; buf[vi+3]=t0; vi=vi+4;
+        buf[vi]=x0; buf[vi+1]=y1; buf[vi+2]=s0; buf[vi+3]=t1; vi=vi+4;
+        buf[vi]=x1; buf[vi+1]=y1; buf[vi+2]=s1; buf[vi+3]=t1; vi=vi+4;
+        px = px + xadv;
+        ci = ci + 1;
+    }
+    dl.image_vertices(font_tex, buf, n * 6, col);
+}
+
+var prev_btn = 0;
+var t_last  = glfwGetTime();
+var fps_acc = 0;
+var fps_n   = 0;
+var cur_fps = 0.0;
+
+while (!glfwWindowShouldClose(win)) {
+    glfwPollEvents();
+
+    // Click esquerdo — adicionar 100 sprites por frame enquanto botao premido
+    var btn = glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_LEFT);
+    if (btn == GLFW_PRESS && count < MAX) {
+        var (mx, my) = glfwGetCursorPos(win);
+        var add = 0;
+        while (add < 100 && count < MAX) {
+            sx[count]  = mx;
+            sy[count]  = my;
+            svx[count] = (count * 7 % 400) / 100.0 - 2.0;
+            svy[count] = (count * 13 % 400) / 100.0 - 2.0;
+            count = count + 1;
+            add = add + 1;
+        }
+    }
+
+    // Actualizar posicoes
+    i = 0;
+    while (i < count) 
+    {
+        sx[i] = sx[i] + svx[i];
+        sy[i] = sy[i] + svy[i];
+        if (sx[i] < 0.0 || sx[i] > W - SW) { svx[i] = -svx[i]; }
+        if (sy[i] < 0.0 || sy[i] > H - SH) { svy[i] = -svy[i]; }
+        i = i + 1;
+    }
+
+    // Preencher vertex buffer + cores por sprite
+    i = 0;
+    while (i < count) 
+    {
+        var bv = i * 16;
+        var x  = sx[i];
+        var y  = sy[i];
+        verts[bv]    = x;      verts[bv+1]  = y;      verts[bv+2]  = 0.0; verts[bv+3]  = 0.0;
+        verts[bv+4]  = x + SW; verts[bv+5]  = y;      verts[bv+6]  = 1.0; verts[bv+7]  = 0.0;
+        verts[bv+8]  = x + SW; verts[bv+9]  = y + SH; verts[bv+10] = 1.0; verts[bv+11] = 1.0;
+        verts[bv+12] = x;      verts[bv+13] = y + SH; verts[bv+14] = 0.0; verts[bv+15] = 1.0;
+        // cor ciclica por sprite: varia hue usando R/G/B
+        var r = (i * 73 % 200) + 55;
+        var g = (i * 37 % 200) + 55;
+        var b = (i * 59 % 200) + 55;
+        colors[i] = canvas.pack(r, g, b, 255);
+        i = i + 1;
+    }
+
+    glViewport(0, 0, 800, 600);
+    glClearColor(0.1, 0.1, 0.15, 1.0);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    dl.set_rgba(15, 15, 25, 255);
+    dl.rect(0, 0, 800, 600);
+
+    // UM unico draw call para todos os sprites (com cor por sprite)
+    dl.image_batch_col(tex, verts, indices, colors, count);
+
+    // HUD
+    dl.set_rgba(0, 0, 0, 160);
+    dl.round_rect(8, 8, 280, 36, 5.0);
+    draw_text_buf(fverts1, "sprites: " + str(count), 16, 14, canvas.pack(255, 220, 50, 255));
+    draw_text_buf(fverts1, "FPS: " + str(cur_fps), 16, 26, canvas.pack(100, 255, 100, 255));
+    dl.flush();
+
+    glfwSwapBuffers(win);
+
+    // FPS
+    fps_n = fps_n + 1;
+    var t_now = glfwGetTime();
+    if (t_now - t_last >= 1.0) {
+        cur_fps = fps_n / (t_now - t_last);
+        print("sprites: " + str(count) + "  FPS: " + str(cur_fps));
+        fps_n  = 0;
+        t_last = t_now;
+    }
+}
+
+canvas.backend_destroy();
+glDeleteTextures(tex);
+glfwDestroyWindow(win);
+glfwTerminate();

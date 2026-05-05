@@ -273,7 +273,7 @@ static int nat_ini_stringify(VM *vm, Value *args, int nargs)
     auto out_cstr = [&](const char *s) { out_str(s, strlen(s)); };
 
     /* __global__ first, then other sections */
-    bool did_global = false;
+ 
     for (int pass = 0; pass < 2; pass++)
     {
         for (int i = 0; i < arr_count(sections); i++)

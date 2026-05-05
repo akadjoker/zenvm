@@ -1,0 +1,147 @@
+// test_gfx/bench_canvas.zen
+// Benchmark: 10 000 draw calls por frame + image draw
+// Correr: bin/zen_gl test_gfx/bench_canvas.zen
+
+import glfw;
+import gl;
+import canvas;
+
+glfwInit();
+glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+var win = glfwCreateWindow(800, 600, "canvas bench");
+glfwMakeContextCurrent(win);
+glfwSwapInterval(0);        // sem vsync — medir velocidade real
+LoadOpenGLExtensions();
+
+canvas.backend_init(800, 600);
+var dl = canvas.new();
+
+// --- Textura 64x64 checkerboard gerada por código ---
+var TEX_W = 64;
+var TEX_H = 64;
+var pixels = Uint8Array(TEX_W * TEX_H * 4);
+var row = 0;
+while (row < TEX_H) {
+    var col_i = 0;
+    while (col_i < TEX_W) {
+        var idx = (row * TEX_W + col_i) * 4;
+        var checker = (row / 8 + col_i / 8) % 2;
+        pixels[idx]     = checker * 200 + 55;
+        pixels[idx + 1] = (1 - checker) * 200 + 55;
+        pixels[idx + 2] = 120;
+        pixels[idx + 3] = 220;
+        col_i = col_i + 1;
+    }
+    row = row + 1;
+}
+var tex = glGenTextures(1);
+glBindTexture(GL_TEXTURE_2D, tex);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, TEX_W, TEX_H, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+glBindTexture(GL_TEXTURE_2D, 0);
+
+var frame_n   = 0;
+var t_start = glfwGetTime();
+var t_last  = t_start;
+var fps_str = "...";
+
+while (!glfwWindowShouldClose(win)) {
+    glfwPollEvents();
+
+    glViewport(0, 0, 800, 600);
+    glClearColor(0.08, 0.08, 0.10, 1.0);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    // Fundo
+    dl.set_rgba(15, 15, 20, 255);
+    dl.rect(0, 0, 800, 600);
+
+    // === 2500 rects coloridos ===
+    var i = 0;
+    while (i < 2500) {
+        var x = (i * 31 % 780);
+        var y = (i * 17 % 580);
+        dl.set_rgba(
+            (i * 73 % 200) + 55,
+            (i * 37 % 200) + 55,
+            (i * 59 % 200) + 55,
+            180
+        );
+        dl.rect(x, y, 8, 8);
+        i = i + 1;
+    }
+
+    // === 2500 círculos ===
+    i = 0;
+    while (i < 2500) {
+        var cx = (i * 43 % 780) + 10;
+        var cy = (i * 29 % 580) + 10;
+        dl.set_rgba(
+            (i * 11 % 200) + 55,
+            (i * 83 % 200) + 55,
+            (i * 67 % 200) + 55,
+            160
+        );
+        dl.circle(cx, cy, 5.0);
+        i = i + 1;
+    }
+
+    // === 2500 linhas ===
+    i = 0;
+    while (i < 2500) {
+        var x1 = (i * 53 % 780);
+        var y1 = (i * 41 % 580);
+        var x2 = x1 + (i * 7 % 40) - 20;
+        var y2 = y1 + (i * 13 % 40) - 20;
+        dl.set_rgba(
+            (i * 97 % 200) + 55,
+            (i * 23 % 200) + 55,
+            (i * 47 % 200) + 55,
+            200
+        );
+        dl.line(x1, y1, x2, y2);
+        i = i + 1;
+    }
+
+    // === 2500 imagens (textura checker) ===
+    i = 0;
+    while (i < 2500) {
+        var ix = (i * 61 % 760);
+        var iy = (i * 19 % 560);
+        dl.image(tex, ix, iy, 32, 32);
+        i = i + 1;
+    }
+
+    // HUD: rect de fundo + estrela decorativa no centro
+    dl.set_rgba(0, 0, 0, 180);
+    dl.round_rect(10, 10, 250, 36, 6.0);
+    dl.set_rgba(255, 220, 50, 255);
+    dl.ngon(780, 20, 12.0, 5);
+
+    dl.flush();
+    glfwSwapBuffers(win);
+
+    frame_n = frame_n + 1;
+    var t_now = glfwGetTime();
+    if (t_now - t_last >= 1.0) {
+        var fps = frame_n / (t_now - t_last);
+        print("FPS: " + str(fps) + "  frames: " + str(frame_n) + "  draw_calls/frame: 10001");
+        frame_n = 0;
+        t_last = t_now;
+    }
+
+    if (t_now - t_start >= 5.0) {
+     //   glfwSetWindowShouldClose(win, true);
+    }
+}
+
+canvas.backend_destroy();
+glDeleteTextures(tex);
+glfwDestroyWindow(win);
+glfwTerminate();
+print("bench done");

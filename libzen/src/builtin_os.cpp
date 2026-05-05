@@ -291,6 +291,8 @@ namespace zen
         os_functions_full,
         9,
         nullptr,
-        0};
+        0,
+        nullptr
+    };
 
 } /* namespace zen */
