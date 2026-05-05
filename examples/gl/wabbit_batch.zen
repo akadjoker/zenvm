@@ -17,6 +17,9 @@ LoadOpenGLExtensions();
 canvas.backend_init(800, 600);
 var dl = canvas.new();
 
+// --- Fonte (nativa) — canvas.font_load faz bake+upload em C++ ---
+var fnt = canvas.font_load("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 16.0);
+
 // --- Fonte: bake TTF → atlas R8 → converter para RGBA8 (canvas shader precisa RGBA) ---
 var TTF = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
 var ttf = font.load(TTF);
@@ -187,7 +190,7 @@ while (!glfwWindowShouldClose(win)) {
     dl.set_rgba(0, 0, 0, 160);
     dl.round_rect(8, 8, 280, 36, 5.0);
     draw_text_buf(fverts1, "sprites: " + str(count), 16, 14, canvas.pack(255, 220, 50, 255));
-    draw_text_buf(fverts1, "FPS: " + str(cur_fps), 16, 26, canvas.pack(100, 255, 100, 255));
+    dl.draw_text(fnt, "FPS: " + str(cur_fps), 16, 26, canvas.pack(100, 255, 100, 255));
     dl.flush();
 
     glfwSwapBuffers(win);

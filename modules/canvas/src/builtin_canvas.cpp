@@ -60,6 +60,10 @@
 #include "vm.h"
 #include "memory.h"
 #include <cstring>
+#include <cstdlib>
+
+/* stb_truetype types only (no implementation — already in zen_module_stb_font) */
+#include "../../stb_trutype/vendor/stb_truetype.h"
 
 namespace zen
 {
@@ -75,9 +79,29 @@ struct CanvasCtx
 };
 
 static ObjClass *g_canvas_class = nullptr;
+static ObjClass *g_font_class   = nullptr;
 #if defined(ZEN_CANVAS_GL) || defined(ZEN_CANVAS_GLES)
 static canvas::GLBackend g_backend;
 #endif
+
+/* =========================================================
+** FontCtx — native data for canvas.Font instances
+** ========================================================= */
+
+struct FontCtx {
+    stbtt_bakedchar chardata[96]; /* ASCII printable: 32..127 */
+    uint64_t        tex        = 0;
+    int             atlas_w    = 0;
+    int             atlas_h    = 0;
+    int             first_char = 32;
+    int             num_chars  = 96;
+    float           px_height  = 16.f;
+};
+
+static void font_ctx_dtor(VM * /*vm*/, void *ptr)
+{
+    delete (FontCtx *)ptr;
+}
 
 static void canvas_dtor(VM * /*vm*/, void *ptr)
 {
@@ -773,6 +797,142 @@ static int nat_commands(VM *vm, Value *args, int /*nargs*/)
 }
 
 /* =========================================================
+** Font functions
+** ========================================================= */
+
+/* canvas.font_load(path, px_height) → Font
+** Loads a TTF, bakes ASCII printable chars, uploads atlas to GL (RGBA8).
+** Returns a Font instance or nil on failure. */
+static int nat_font_load(VM *vm, Value *args, int nargs)
+{
+    if (nargs < 1 || !is_string(args[0])) {
+        vm->runtime_error("canvas: font_load(path [, px_height])");
+        return 0;
+    }
+    float px_h = (nargs >= 2) ? fval(args[1]) : 16.f;
+    if (px_h <= 0.f) px_h = 16.f;
+
+    long file_size = 0;
+    char *bytes = vm->read_file(as_string(args[0])->chars, nullptr, &file_size);
+    if (!bytes || file_size <= 0) {
+        free(bytes);
+        args[0] = val_nil();
+        return 1;
+    }
+
+    /* choose atlas size based on px_height */
+    int aw = 512, ah = 256;
+    if (px_h <= 16.f) { aw = 256; ah = 128; }
+    else if (px_h <= 32.f) { aw = 512; ah = 256; }
+    else { aw = 1024; ah = 512; }
+
+    FontCtx *fc = new FontCtx();
+    fc->first_char = 32;
+    fc->num_chars  = 96;
+    fc->px_height  = px_h;
+    fc->atlas_w    = aw;
+    fc->atlas_h    = ah;
+
+    uint8_t *bitmap = (uint8_t *)malloc((size_t)(aw * ah));
+    if (!bitmap) { delete fc; args[0] = val_nil(); free(bytes); return 1; }
+    memset(bitmap, 0, (size_t)(aw * ah));
+
+    int result = stbtt_BakeFontBitmap(
+        (const unsigned char *)bytes, 0, px_h,
+        bitmap, aw, ah,
+        fc->first_char, fc->num_chars,
+        fc->chardata);
+
+    free(bytes);
+
+    if (result < 0) { free(bitmap); delete fc; args[0] = val_nil(); return 1; }
+
+#if defined(ZEN_CANVAS_GL) || defined(ZEN_CANVAS_GLES)
+    /* Convert R8 → RGBA8 and upload */
+    uint8_t *rgba = (uint8_t *)malloc((size_t)(aw * ah * 4));
+    if (!rgba) { free(bitmap); delete fc; args[0] = val_nil(); return 1; }
+    for (int p = 0; p < aw * ah; p++) {
+        rgba[p*4+0] = 255; rgba[p*4+1] = 255;
+        rgba[p*4+2] = 255; rgba[p*4+3] = bitmap[p];
+    }
+    free(bitmap);
+
+    unsigned int tex_id = 0;
+    glGenTextures(1, &tex_id);
+    glBindTexture(GL_TEXTURE_2D, tex_id);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, aw, ah, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    free(rgba);
+    fc->tex = (uint64_t)tex_id;
+#else
+    free(bitmap);
+#endif
+
+    Value inst_val = vm->make_instance(g_font_class);
+    as_instance(inst_val)->native_data = fc;
+    args[0] = inst_val;
+    return 1;
+}
+
+/* dl.draw_text(font, text, x, y [, col]) → x_end
+** Renders text into the DrawList using the font atlas.
+** Returns the X position after the last glyph (for cursor/layout). */
+static int nat_draw_text(VM *vm, Value *args, int nargs)
+{
+    CanvasCtx *ctx = get_ctx(vm, args); if (!ctx) return 0;
+    if (nargs < 4 || !is_instance(args[1]) || !is_string(args[2])) {
+        vm->runtime_error("canvas: draw_text(font, text, x, y [, col])");
+        return 0;
+    }
+    FontCtx *fc = (FontCtx *)as_instance(args[1])->native_data;
+    if (!fc) { vm->runtime_error("canvas: draw_text — invalid font"); return 0; }
+
+    ObjString *s = as_string(args[2]);
+    float x   = fval(args[3]);
+    float fy  = (nargs >= 5) ? fval(args[4]) : 0.f;
+    uint32_t col = getcol(ctx, args, nargs, 5);
+
+    float x_end = ctx->dl.add_text(
+        fc->tex,
+        (const canvas::DrawList::BakedChar *)fc->chardata,
+        fc->first_char, fc->num_chars,
+        (float)fc->atlas_w, (float)fc->atlas_h,
+        s->chars, s->length,
+        x, fy, col);
+
+    args[0] = val_float((double)x_end);
+    return 1;
+}
+
+/* canvas.font_measure(font, text) → (width, height) */
+static int nat_font_measure(VM *vm, Value *args, int nargs)
+{
+    if (nargs < 2 || !is_instance(args[0]) || !is_string(args[1])) {
+        vm->runtime_error("canvas: font_measure(font, text)");
+        return 0;
+    }
+    FontCtx *fc = (FontCtx *)as_instance(args[0])->native_data;
+    if (!fc) { args[0] = val_float(0.0); args[1] = val_float(0.0); return 2; }
+    ObjString *s = as_string(args[1]);
+    float w = 0.f;
+    for (int i = 0; i < s->length; i++) {
+        int idx = (unsigned char)s->chars[i] - fc->first_char;
+        if (idx >= 0 && idx < fc->num_chars)
+            w += fc->chardata[idx].xadvance;
+        else
+            w += 4.f;
+    }
+    args[0] = val_float((double)w);
+    args[1] = val_float((double)fc->px_height);
+    return 2;
+}
+
+/* =========================================================
 ** Class + module registration
 ** ========================================================= */
 
@@ -815,6 +975,8 @@ static void canvas_module_init(VM *vm)
         .method("image_vertices",         nat_image_vertices,        -1)
         .method("image_batch",            nat_image_batch,           -1)
         .method("image_batch_col",        nat_image_batch_col,       -1)
+        /* text */
+        .method("draw_text",               nat_draw_text,             -1)
         /* path builder */
         .method("path_move",              nat_path_move,              2)
         .method("path_line_to",           nat_path_line_to,           2)
@@ -835,11 +997,17 @@ static void canvas_module_init(VM *vm)
         .method("index_data",             nat_index_data,             0)
         .method("commands",               nat_commands,               0)
         .end();
+
+    g_font_class = vm->def_class("Font")
+        .dtor(font_ctx_dtor)
+        .end();
 }
 
 static const NativeReg canvas_functions[] = {
-    {"new",  nat_new,  0},
-    {"pack", nat_pack, 4},
+    {"new",         nat_new,          0},
+    {"pack",        nat_pack,         4},
+    {"font_load",   nat_font_load,   -1},
+    {"font_measure",nat_font_measure, 2},
 #if defined(ZEN_CANVAS_GL) || defined(ZEN_CANVAS_GLES)
     {"backend_init",    nat_backend_init,    2},
     {"backend_resize",  nat_backend_resize,  2},

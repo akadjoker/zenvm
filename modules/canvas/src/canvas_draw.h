@@ -448,6 +448,49 @@ public:
     void path_fill(uint32_t col)                  { do_fill(col); }
     void path_stroke(uint32_t col, float t, bool closed) { do_stroke(col,t,closed); }
 
+    /* ── text ──────────────────────────────────────────────────────────── */
+    /* Render a UTF-8 (ASCII subset) string using pre-baked chardata.
+    ** chardata: stbtt_bakedchar array (num_chars entries, first_char offset)
+    ** atlas_w/h: texture atlas dimensions in pixels (for UV normalisation)
+    ** tex:       opaque GL texture handle for the font atlas
+    ** first_char/num_chars: range baked (typically 32/96)
+    ** Returns the pen X position after the last glyph. */
+    struct BakedChar {
+        unsigned short x0, y0, x1, y1;
+        float xoff, yoff, xadvance;
+    };
+
+    float add_text(uint64_t tex,
+                   const BakedChar *chardata, int first_char, int num_chars,
+                   float atlas_w, float atlas_h,
+                   const char *str, int len,
+                   float x, float y,
+                   uint32_t col = 0xFFFFFFFFu)
+    {
+        float px = x;
+        for (int i = 0; i < len; i++) {
+            int cp = (unsigned char)str[i];
+            int idx = cp - first_char;
+            if (idx < 0 || idx >= num_chars) { px += 4.f; continue; }
+            const BakedChar &c = chardata[idx];
+            float x0 = px + c.xoff;
+            float y0 = y  + c.yoff;
+            float x1 = x0 + (c.x1 - c.x0);
+            float y1 = y0 + (c.y1 - c.y0);
+            float u0 = c.x0 / atlas_w, v0 = c.y0 / atlas_h;
+            float u1 = c.x1 / atlas_w, v1 = c.y1 / atlas_h;
+            uint32_t off = idx_off();
+            uint32_t b   = vtx(x0, y0, u0, v0, col);
+                          vtx(x1, y0, u1, v0, col);
+                          vtx(x1, y1, u1, v1, col);
+                          vtx(x0, y1, u0, v1, col);
+            push_idx6(b, off);
+            flush_cmd(tex, 6, off);
+            px += c.xadvance;
+        }
+        return px;
+    }
+
 private:
     struct Clip { float x1,y1,x2,y2; };
     std::vector<Clip>     clip_stack_;
