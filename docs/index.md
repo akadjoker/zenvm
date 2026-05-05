@@ -3,7 +3,21 @@
 - [Language Guide](language-guide.md)
 - [Syntax Reference](syntax-reference.md)
 - [Quick Reference](quick-reference.md)
-- [Standard Library Notes](standard-library.md)
+- [Standard Library & Native Modules](standard-library.md)
+
+## Native modules (`zen_gl`)
+
+| Module | `import` | Descrição |
+|---|---|---|
+| image | `import image` | Load/save/encode/flip pixel data (stb_image) |
+| noise | `import noise` | Perlin/fbm/ridge/turbulence (stb_perlin) |
+| rectpack | `import rectpack` | Rectangle bin-packing (stb_rect_pack) |
+| font | `import font` | TTF rasterisation (stb_truetype) |
+| audio | `import audio` | Playback + synthesis (miniaudio) |
+| gl | `import gl` | Raw OpenGL 3.3 / GLES 3.0 bindings |
+| sdl2 | `import sdl2` | Window, GL context, 2D renderer, events |
+| glfw | `import glfw` | GLFW window + input (desktop only) |
+
 
 ## Tutorials
 
