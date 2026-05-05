@@ -3,6 +3,16 @@
 /zen
 /zen_bench
 /build_release
+
+# Compiled binaries
+/bin/zen
+/bin/zen_debug
+/bin/zen_game
+/bin/zen_gl
+/bin/test_visual
+/bin/test_visual_engine
+/bin/test_visual_intern
+/bin/test_visual_loop
 /study
 # Build artifacts
 *.o
