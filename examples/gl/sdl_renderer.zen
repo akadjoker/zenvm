@@ -1,0 +1,96 @@
+// sdl_renderer.zen — SDL2 renderer 2D (sem OpenGL manual)
+// Correr: bin/zen_gl examples/gl/sdl_renderer.zen
+
+import sdl2;
+
+SDL_Init(SDL_INIT_VIDEO);
+
+var win = SDL_CreateWindow("zen — SDL2 Renderer 2D",
+    SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+    640, 480,
+    SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+
+var ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+
+// textura com gradiente simples (64x64 RGBA)
+var tex_w = 64;
+var tex_h = 64;
+var pixels = Uint8Array(tex_w * tex_h * 4);
+var i = 0;
+var y = 0;
+while (y < tex_h) {
+    var x = 0;
+    while (x < tex_w) {
+        pixels[i]     = x * 4;           // R
+        pixels[i + 1] = y * 4;           // G
+        pixels[i + 2] = 128;             // B
+        pixels[i + 3] = 255;             // A
+        i = i + 4;
+        x = x + 1;
+    }
+    y = y + 1;
+}
+
+var tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, tex_w, tex_h);
+SDL_UpdateTexture(tex, 0, 0, tex_w, tex_h, pixels, tex_w * 4);
+
+var t = 0;
+var running = true;
+while (running) {
+    // eventos
+    var ev = SDL_PollEvent();
+    while (ev != 0) {
+        if (ev == SDL_QUIT) { running = false; }
+        if (ev == SDL_KEYDOWN) {
+            var (scan, sym, mod, rep) = SDL_event_key();
+            if (scan == SDL_SCANCODE_ESCAPE) { running = false; }
+        }
+        ev = SDL_PollEvent();
+    }
+
+    t = t + 1;
+    var (w, h) = SDL_GetWindowSize(win);
+
+    // fundo
+    SDL_SetRenderDrawColor(ren, 30, 30, 45, 255);
+    SDL_RenderClear(ren);
+
+    // grelha de rectângulos a animar
+    var row = 0;
+    while (row < 4) {
+        var col = 0;
+        while (col < 6) {
+            var rx = 20 + col * 100 + (t + col * 15) % 20 - 10;
+            var ry = 40 + row * 100 + (t + row * 20) % 20 - 10;
+            SDL_SetRenderDrawColor(ren,
+                (col * 40 + t) % 256,
+                (row * 50 + t * 2) % 256,
+                180, 255);
+            SDL_RenderFillRect(ren, rx, ry, 80, 80);
+            col = col + 1;
+        }
+        row = row + 1;
+    }
+
+    // borda branca
+    SDL_SetRenderDrawColor(ren, 255, 255, 255, 255);
+    SDL_RenderDrawRect(ren, 10, 10, w - 20, h - 20);
+
+    // linha diagonal animada
+    SDL_SetRenderDrawColor(ren, 255, 220, 50, 255);
+    var lx = t % w;
+    SDL_RenderDrawLine(ren, lx, 10, w - lx, h - 10);
+
+    // textura gradiente no centro
+    var tx = (w - 128) / 2;
+    var ty = (h - 128) / 2;
+    SDL_RenderCopy(ren, tex, 0, 0, 0, 0, tx, ty, 128, 128);
+
+    SDL_RenderPresent(ren);
+}
+
+// cleanup
+SDL_DestroyTexture(tex);
+SDL_DestroyRenderer(ren);
+SDL_DestroyWindow(win);
+SDL_Quit();

@@ -34,12 +34,48 @@ if(ZEN_ENABLE_STB_IMAGE)
     add_subdirectory(modules/stb_image)
 endif()
 
-option(ZEN_ENABLE_GLFW "Enable GLFW window module" ON)
+option(ZEN_ENABLE_STB_PERLIN "Enable stb_perlin noise module" ON)
+if(ZEN_ENABLE_STB_PERLIN)
+    add_subdirectory(modules/stb_perlin)
+endif()
+
+option(ZEN_ENABLE_STB_RECTPACK "Enable stb_rectpack module" ON)
+if(ZEN_ENABLE_STB_RECTPACK)
+    add_subdirectory(modules/stb_rectpack)
+endif()
+
+option(ZEN_ENABLE_STB_FONT "Enable stb_truetype font module" ON)
+if(ZEN_ENABLE_STB_FONT)
+    add_subdirectory(modules/stb_trutype)
+endif()
+
+option(ZEN_ENABLE_AUDIO "Enable miniaudio sound module" ON)
+if(ZEN_ENABLE_AUDIO)
+    add_subdirectory(modules/audio)
+endif()
+
+# --- Platform detection ---
+# GLFW nao suporta Android nem iOS nem Emscripten
+if(ANDROID OR IOS OR EMSCRIPTEN)
+    set(_ZEN_GLFW_DEFAULT OFF)
+else()
+    set(_ZEN_GLFW_DEFAULT ON)
+endif()
+
+# SDL2 suporta tudo (desktop + Android + iOS)
+# Em Emscripten usa-se SDL2 via emcc flags, nao o find_package normal
+if(EMSCRIPTEN)
+    set(_ZEN_SDL2_DEFAULT OFF)  # Emscripten precisa de tratamento especial
+else()
+    set(_ZEN_SDL2_DEFAULT ON)
+endif()
+
+option(ZEN_ENABLE_GLFW "Enable GLFW window module" ${_ZEN_GLFW_DEFAULT})
 if(ZEN_ENABLE_GLFW)
     add_subdirectory(modules/glfw)
 endif()
 
-option(ZEN_ENABLE_SDL2 "Enable SDL2 window module" OFF)
+option(ZEN_ENABLE_SDL2 "Enable SDL2 window module" ${_ZEN_SDL2_DEFAULT})
 if(ZEN_ENABLE_SDL2)
     add_subdirectory(modules/sdl2)
 endif()
@@ -50,11 +86,20 @@ if(ZEN_ENABLE_RAYLIB_MODULE)
     add_subdirectory(modules/raylib)
 endif()
 
+# OpenGL bindings (raw GL API) — gl, gl4, gll all in modules/opengl
+option(ZEN_ENABLE_GL_MODULE "Enable OpenGL bindings module" ON)
+if(ZEN_ENABLE_GL_MODULE)
+    add_subdirectory(modules/opengl)
+endif()
+
 # --- CLI (zen executable) ---
 add_subdirectory(cli)
 
 # --- Game runner (zen_game — zen + raylib module) ---
 add_subdirectory(runner)
+
+# --- GL runner (zen_gl — zen + glfw + opengl + stb_image) ---
+add_subdirectory(runner_gl)
 
 # --- Test functions (ScriptComponent O(1) pattern) ---
 #add_subdirectory(test_functions)

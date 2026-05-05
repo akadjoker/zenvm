@@ -1,0 +1,133 @@
+// gl/gll_lighting.zen — lighting fixo GL1 (glLight, glMaterial, fog, shade model)
+// Testa: glEnable(GL_LIGHTING), glLight*, glMaterial*, glFog*, glShadeModel,
+//        perspectiva com glFrustum, esfera aproximada com GL_TRIANGLE_STRIP
+// Correr: bin/zen_gl examples/gl/gll_lighting.zen
+
+import glfw;
+import gl;
+import gll;
+import math;
+
+glfwInit();
+glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
+glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+var win = glfwCreateWindow(640, 480, "gll — lighting & fog");
+glfwMakeContextCurrent(win);
+glfwSwapInterval(1);
+LoadOpenGLExtensions();
+
+// --- Activar depth test e lighting ---
+glEnable(GL_DEPTH_TEST);
+glEnable(GL_LIGHTING);
+glEnable(GL_LIGHT0);
+glEnable(GL_NORMALIZE);
+glShadeModel(GL_SMOOTH);
+
+// Posição da luz (homogénea: w=1 → ponto, w=0 → direcional)
+var light_pos = Float32Array([2.0, 3.0, 2.0, 1.0]);
+var ambient   = Float32Array([0.1, 0.1, 0.15, 1.0]);
+var diffuse   = Float32Array([1.0, 0.95, 0.8, 1.0]);
+var specular  = Float32Array([1.0, 1.0, 1.0, 1.0]);
+glLightfv(GL_LIGHT0, GL_POSITION,  light_pos);
+glLightfv(GL_LIGHT0, GL_AMBIENT,   ambient);
+glLightfv(GL_LIGHT0, GL_DIFFUSE,   diffuse);
+glLightfv(GL_LIGHT0, GL_SPECULAR,  specular);
+
+// Material da esfera
+var mat_amb  = Float32Array([0.2, 0.1, 0.3, 1.0]);
+var mat_diff = Float32Array([0.4, 0.2, 0.8, 1.0]);
+var mat_spec = Float32Array([0.9, 0.9, 0.9, 1.0]);
+glMaterialfv(GL_FRONT, GL_AMBIENT,   mat_amb);
+glMaterialfv(GL_FRONT, GL_DIFFUSE,   mat_diff);
+glMaterialfv(GL_FRONT, GL_SPECULAR,  mat_spec);
+glMaterialf (GL_FRONT, GL_SHININESS, 64.0);
+
+// Fog exponencial
+glEnable(GL_FOG);
+glFogi(GL_FOG_MODE, GL_EXP2);
+glFogf(GL_FOG_DENSITY, 0.18);
+var fog_col = Float32Array([0.08, 0.08, 0.12, 1.0]);
+glFogfv(GL_FOG_COLOR, fog_col);
+
+// --- Gerar esfera por código (latlong) ---
+// Verts: posição + normal (6 floats cada)
+var STACKS = 12;
+var SLICES = 16;
+var PI = 3.14159265;
+
+// Alocamos o buffer de verts
+var nv = (STACKS + 1) * (SLICES + 1);
+var sphere_v = Float32Array(nv * 6);
+var ni = 0;
+var si = 0;
+while (si <= STACKS) {
+    var phi = -PI / 2.0 + PI * si / STACKS;
+    var cp  = cos(phi);
+    var sp  = sin(phi);
+    var li = 0;
+    while (li <= SLICES) {
+        var theta = 2.0 * PI * li / SLICES;
+        var ct = cos(theta);
+        var st = sin(theta);
+        var nx = cp * ct;
+        var ny = sp;
+        var nz = cp * st;
+        sphere_v[ni]     = nx;  // pos == normal para esfera unitária
+        sphere_v[ni + 1] = ny;
+        sphere_v[ni + 2] = nz;
+        sphere_v[ni + 3] = nx;
+        sphere_v[ni + 4] = ny;
+        sphere_v[ni + 5] = nz;
+        ni = ni + 6;
+        li = li + 1;
+    }
+    si = si + 1;
+}
+
+// Ângulo de rotação
+var angle = 0.0;
+
+while (glfwWindowShouldClose(win) == false) {
+    var (w, h) = glfwGetFramebufferSize(win);
+    var asp = w / h;
+    glViewport(0, 0, w, h);
+    glClearColor(0.08, 0.08, 0.12, 1.0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    // Perspectiva
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glFrustum(-asp * 0.5, asp * 0.5, -0.5, 0.5, 1.0, 20.0);
+
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    glTranslatef(0.0, 0.0, -4.0);
+    glRotatef(angle, 0.4, 1.0, 0.2);
+
+    // Actualizar posição da luz no espaço câmara (antes do rotate da esfera)
+    glLightfv(GL_LIGHT0, GL_POSITION, light_pos);
+
+    // Desenhar esfera por strip latitudinais
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_NORMAL_ARRAY);
+    glVertexPointer(3, GL_FLOAT, 24, sphere_v);       // stride 6*4=24, offset 0
+    glNormalPointer(GL_FLOAT,    24, sphere_v);        // mesmo buffer, offset 0 (pos==normal)
+
+    var row = 0;
+    while (row < STACKS) {
+        // Cada strip: 2*(SLICES+1) verts
+        glDrawArrays(GL_TRIANGLE_STRIP, row * (SLICES + 1), 2 * (SLICES + 1));
+        row = row + 1;
+    }
+
+    glDisableClientState(GL_VERTEX_ARRAY);
+    glDisableClientState(GL_NORMAL_ARRAY);
+
+    glfwSwapBuffers(win);
+    glfwPollEvents();
+    angle = angle + 0.4;
+}
+
+glfwDestroyWindow(win);
+glfwTerminate();
+print("OK");

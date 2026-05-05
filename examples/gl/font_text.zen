@@ -1,0 +1,186 @@
+// gl/font_text.zen — renderizar texto com stb_truetype + OpenGL ES 3.0
+// Bake uma fonte TTF para atlas 1-canal → textura GL → quad por caracter
+// Correr: bin/zen_gl examples/gl/font_text.zen
+
+import glfw;
+import gl;
+import font;
+
+// --- Janela ---
+glfwInit();
+glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+var WIN_W = 800;
+var WIN_H = 200;
+var win = glfwCreateWindow(WIN_W, WIN_H, "font — stb_truetype");
+glfwMakeContextCurrent(win);
+glfwSwapInterval(1);
+LoadOpenGLExtensions();
+
+// --- Carregar TTF ---
+var TTF_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+var ttf = font.load(TTF_PATH);
+if (ttf == nil) {
+    print("Erro: não foi possível carregar " + TTF_PATH);
+}
+
+// --- Bake: ASCII printable (32..127 = 96 chars), 32px, atlas 512x128 ---
+var FIRST_CHAR = 32;
+var NUM_CHARS  = 96;
+var ATLAS_W    = 512;
+var ATLAS_H    = 128;
+var PX_HEIGHT  = 32.0;
+var (atlas_bmp, aw, ah, chardata) = font.bake(ttf, PX_HEIGHT, ATLAS_W, ATLAS_H, FIRST_CHAR, NUM_CHARS);
+if (atlas_bmp == nil) {
+    print("Bake falhou — atlas demasiado pequeno?");
+}
+print("Atlas: " + str(aw) + "x" + str(ah));
+
+// --- Upload atlas para textura GL (1 canal = GL_RED) ---
+var tex = glGenTextures(1);
+glBindTexture(GL_TEXTURE_2D, tex);
+glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, aw, ah, 0, GL_RED, GL_UNSIGNED_BYTE, atlas_bmp);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+// --- Shaders ---
+// Coordenadas de ecrã em píxeis → clip space via uniform ortho
+var vert_src = '
+#version 330 core
+layout(location=0) in vec2 pos;
+layout(location=1) in vec2 uv;
+out vec2 vUV;
+uniform vec2 uScreen;   // (width, height)
+void main() {
+    // ortho: [0,W]x[0,H] → [-1,1]x[-1,1]  (Y invertido: 0=top)
+    vec2 clip = vec2(pos.x / uScreen.x * 2.0 - 1.0,
+                     1.0 - pos.y / uScreen.y * 2.0);
+    gl_Position = vec4(clip, 0.0, 1.0);
+    vUV = uv;
+}
+';
+var frag_src = '
+#version 330 core
+in vec2 vUV;
+uniform sampler2D uTex;
+uniform vec4 uColor;
+out vec4 fragColor;
+void main() {
+    float a = texture(uTex, vUV).r;
+    fragColor = vec4(uColor.rgb, uColor.a * a);
+}
+';
+
+def compile_shader(_type, src) {
+    var s = glCreateShader(_type);
+    glShaderSource(s, src);
+    glCompileShader(s);
+    if (glGetShaderiv(s, GL_COMPILE_STATUS) == 0) {
+        print("Shader error: " + glGetShaderInfoLog(s));
+    }
+    return s;
+}
+
+var vs   = compile_shader(GL_VERTEX_SHADER,   vert_src);
+var fs   = compile_shader(GL_FRAGMENT_SHADER, frag_src);
+var prog = glCreateProgram();
+glAttachShader(prog, vs);
+glAttachShader(prog, fs);
+glLinkProgram(prog);
+if (glGetProgramiv(prog, GL_LINK_STATUS) == 0) {
+    print("Link error: " + glGetProgramInfoLog(prog));
+}
+glDeleteShader(vs);
+glDeleteShader(fs);
+
+var loc_screen = glGetUniformLocation(prog, "uScreen");
+var loc_color  = glGetUniformLocation(prog, "uColor");
+
+// --- VAO / VBO dinâmico ---
+// Cada caracter = 2 triângulos = 6 vértices × 4 floats (x,y,u,v)
+var MAX_CHARS = 256;
+var vao = glGenVertexArrays(1);
+var vbo = glGenBuffers(1);
+glBindVertexArray(vao);
+glBindBuffer(GL_ARRAY_BUFFER, vbo);
+glBufferData(GL_ARRAY_BUFFER, MAX_CHARS * 6 * 4 * 4, GL_DYNAMIC_DRAW);
+glEnableVertexAttribArray(0);
+glVertexAttribPointer(0, 2, GL_FLOAT, false, 16, 0);
+glEnableVertexAttribArray(1);
+glVertexAttribPointer(1, 2, GL_FLOAT, false, 16, 8);
+glBindVertexArray(0);
+
+// --- Função: construir mesh de texto numa Float32Array ---
+def build_text_mesh(text, x, y) {
+    var n = text.len();
+    var verts = Float32Array(n * 6 * 4);
+    var vi = 0;
+    var px = x;
+    var py = y;
+    var i = 0;
+    while (i < n) {
+        var cp = text.byte_at(i);  // codepoint (byte value)
+        var (x0, y0, x1, y1, s0, t0, s1, t1, xadv) = font.quad(chardata, aw, ah, FIRST_CHAR, cp, px, py);
+        // 2 triângulos (TL, BR, TR  /  TL, BL, BR)
+        // tri 1
+        verts[vi+0]=x0; verts[vi+1]=y0; verts[vi+2]=s0; verts[vi+3]=t0; vi=vi+4;
+        verts[vi+0]=x1; verts[vi+1]=y1; verts[vi+2]=s1; verts[vi+3]=t1; vi=vi+4;
+        verts[vi+0]=x1; verts[vi+1]=y0; verts[vi+2]=s1; verts[vi+3]=t0; vi=vi+4;
+        // tri 2
+        verts[vi+0]=x0; verts[vi+1]=y0; verts[vi+2]=s0; verts[vi+3]=t0; vi=vi+4;
+        verts[vi+0]=x0; verts[vi+1]=y1; verts[vi+2]=s0; verts[vi+3]=t1; vi=vi+4;
+        verts[vi+0]=x1; verts[vi+1]=y1; verts[vi+2]=s1; verts[vi+3]=t1; vi=vi+4;
+        px = px + xadv;
+        i = i + 1;
+    }
+    return verts;
+}
+
+// --- Loop ---
+glEnable(GL_BLEND);
+glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+var TEXT1 = "Hello, Zen!";
+var TEXT2 = "stb_truetype + OpenGL 3.3";
+
+var mesh1 = build_text_mesh(TEXT1, 20.0, 60.0);
+var mesh2 = build_text_mesh(TEXT2, 20.0, 130.0);
+var (tw1, th1) = font.measure(chardata, FIRST_CHAR, TEXT1);
+print("\"" + TEXT1 + "\" → " + str(tw1) + "×" + str(th1) + " px");
+
+while (!glfwWindowShouldClose(win)) {
+    glfwPollEvents();
+    if (glfwGetKey(win, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+        glfwSetWindowShouldClose(win, true);
+    }
+
+    glViewport(0, 0, WIN_W, WIN_H);
+    glClearColor(0.12, 0.12, 0.12, 1.0);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glUseProgram(prog);
+    glUniform2f(loc_screen, WIN_W, WIN_H);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+
+    // Linha 1 — branco
+    glUniform4f(loc_color, 1.0, 1.0, 1.0, 1.0);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, mesh1);
+    glDrawArrays(GL_TRIANGLES, 0, TEXT1.len() * 6);
+
+    // Linha 2 — amarelo
+    glUniform4f(loc_color, 1.0, 0.85, 0.2, 1.0);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, mesh2);
+    glDrawArrays(GL_TRIANGLES, 0, TEXT2.len() * 6);
+
+    glBindVertexArray(0);
+    glfwSwapBuffers(win);
+}
+
+glfwDestroyWindow(win);
+glfwTerminate();

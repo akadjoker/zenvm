@@ -1,0 +1,79 @@
+// gl/triangle.zen — triângulo RGB com VAO/VBO/shaders (GL 3.3 core)
+// Correr: bin/zen_gl examples/gl/triangle.zen
+
+import glfw;
+import gl;
+
+glfwInit();
+glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+var win = glfwCreateWindow(640, 480, "zen_gl — triangle");
+glfwMakeContextCurrent(win);
+glfwSwapInterval(1);
+LoadOpenGLExtensions();
+
+var vert_src = '#version 330 core\nlayout(location=0) in vec2 pos;\nlayout(location=1) in vec3 col;\nout vec3 vCol;\nvoid main() { gl_Position = vec4(pos, 0.0, 1.0); vCol = col; }\n';
+var frag_src = '#version 330 core\nin vec3 vCol;\nout vec4 fragColor;\nvoid main() { fragColor = vec4(vCol, 1.0); }\n';
+
+var vs = glCreateShader(GL_VERTEX_SHADER);
+glShaderSource(vs, vert_src);
+glCompileShader(vs);
+if (glGetShaderiv(vs, GL_COMPILE_STATUS) == 0) { print("VS: " + glGetShaderInfoLog(vs)); }
+
+var fs = glCreateShader(GL_FRAGMENT_SHADER);
+glShaderSource(fs, frag_src);
+glCompileShader(fs);
+if (glGetShaderiv(fs, GL_COMPILE_STATUS) == 0) { print("FS: " + glGetShaderInfoLog(fs)); }
+
+var prog = glCreateProgram();
+glAttachShader(prog, vs);
+glAttachShader(prog, fs);
+glLinkProgram(prog);
+if (glGetProgramiv(prog, GL_LINK_STATUS) == 0) { print("Link: " + glGetProgramInfoLog(prog)); }
+glDetachShader(prog, vs);
+glDetachShader(prog, fs);
+glDeleteShader(vs);
+glDeleteShader(fs);
+
+// layout: x, y, r, g, b  (stride = 5 floats = 20 bytes)
+var verts = Float32Array([
+     0.0,  0.6,   1.0, 0.2, 0.2,
+    -0.5, -0.4,   0.2, 1.0, 0.2,
+     0.5, -0.4,   0.2, 0.2, 1.0
+]);
+
+var vao = glGenVertexArrays(1);
+var vbo = glGenBuffers(1);
+glBindVertexArray(vao);
+glBindBuffer(GL_ARRAY_BUFFER, vbo);
+glBufferData(GL_ARRAY_BUFFER, verts, GL_STATIC_DRAW);
+glVertexAttribPointer(0, 2, GL_FLOAT, false, 20, 0);   // pos
+glEnableVertexAttribArray(0);
+glVertexAttribPointer(1, 3, GL_FLOAT, false, 20, 8);   // col (offset 8 = 2*float)
+glEnableVertexAttribArray(1);
+glBindVertexArray(0);
+
+var tick = 0;
+while (glfwWindowShouldClose(win) == false and tick < 300) {
+    var (w, h) = glfwGetFramebufferSize(win);
+    glViewport(0, 0, w, h);
+    glClearColor(0.08, 0.08, 0.12, 1.0);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glUseProgram(prog);
+    glBindVertexArray(vao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindVertexArray(0);
+
+    glfwSwapBuffers(win);
+    glfwPollEvents();
+    tick = tick + 1;
+}
+
+glDeleteVertexArrays(vao);
+glDeleteBuffers(vbo);
+glDeleteProgram(prog);
+glfwDestroyWindow(win);
+glfwTerminate();
+print("OK - " + str(tick) + " ticks");

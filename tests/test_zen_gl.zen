@@ -1,0 +1,33 @@
+import glfw;
+import gl;
+
+glfwInit();
+glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+var win = glfwCreateWindow(640, 480, "zen_gl test");
+glfwMakeContextCurrent(win);
+glfwSwapInterval(1);
+
+var ok = LoadOpenGLExtensions();
+if (ok == false) {
+    print("ERRO: LoadOpenGLExtensions falhou");
+} else {
+    print("LoadOpenGLExtensions OK");
+}
+
+print("GL_VERSION: " + glGetString(GL_VERSION));
+print("GL_RENDERER: " + glGetString(GL_RENDERER));
+
+var tick = 0;
+while (glfwWindowShouldClose(win) == false and tick < 120) {
+    glClearColor(0.1, 0.2, 0.4, 1.0);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glfwSwapBuffers(win);
+    glfwPollEvents();
+    tick = tick + 1;
+}
+
+glfwDestroyWindow(win);
+glfwTerminate();
+print("OK - " + str(tick) + " ticks");
