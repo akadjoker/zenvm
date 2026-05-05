@@ -252,16 +252,44 @@ namespace zen
         panic_mode_ = true;
         had_error_ = true;
 
-        fprintf(stderr, "[line %d] Error", token->line);
+        /* --- header line: file, line number, token --- */
+        const char *file = current_file_ ? current_file_ : "<input>";
+        fprintf(stderr, "File \"%s\", line %d\n", file, token->line);
+
+        /* --- source snippet: find the line start by walking back from token --- */
+        if (token->start)
+        {
+            /* walk back to start of line */
+            const char *line_start = token->start;
+            while (line_start > lexer_.save_state().source && *(line_start - 1) != '\n')
+                line_start--;
+
+            /* find end of line */
+            const char *line_end = token->start;
+            while (*line_end && *line_end != '\n')
+                line_end++;
+
+            int line_len = (int)(line_end - line_start);
+            fprintf(stderr, "  %.*s\n", line_len, line_start);
+
+            /* caret pointing at the token */
+            if (token->type != TOK_EOF && token->type != TOK_ERROR)
+            {
+                int col = (int)(token->start - line_start);
+                int tok_len = token->length > 0 ? token->length : 1;
+                for (int i = 0; i < col + 2; i++) fputc(' ', stderr); /* 2 = "  " indent */
+                for (int i = 0; i < tok_len; i++) fputc('^', stderr);
+                fputc('\n', stderr);
+            }
+        }
+
+        /* --- error message --- */
         if (token->type == TOK_EOF)
-        {
-            fprintf(stderr, " at end");
-        }
-        else if (token->type != TOK_ERROR)
-        {
-            fprintf(stderr, " at '%.*s'", token->length, token->start);
-        }
-        fprintf(stderr, ": %s\n", msg);
+            fprintf(stderr, "Error at end: %s\n", msg);
+        else if (token->type == TOK_ERROR)
+            fprintf(stderr, "Error: %s\n", msg);
+        else
+            fprintf(stderr, "Error at '%.*s': %s\n", token->length, token->start, msg);
     }
 
     void Compiler::error(const char *msg)

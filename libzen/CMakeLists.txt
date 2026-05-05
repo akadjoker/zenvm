@@ -7,7 +7,6 @@ option(ZEN_ENABLE_ZIP    "Enable zip module (requires miniz)" ON)
 option(ZEN_ENABLE_NET    "Enable net module (POSIX sockets)" ON)
 option(ZEN_ENABLE_HTTP   "Enable http module (POSIX sockets)" ON)
 option(ZEN_ENABLE_CRYPTO "Enable crypto module (pure C)" ON)
-option(ZEN_ENABLE_NN     "Enable nn module (pure C math)" ON)
 option(ZEN_ENABLE_JSON   "Enable json module (pure C)" ON)
 option(ZEN_ENABLE_UTF8   "Enable utf8 module (pure C)" ON)
 
@@ -53,10 +52,6 @@ if(ZEN_ENABLE_CRYPTO)
     list(APPEND ZEN_DEFINITIONS ZEN_ENABLE_CRYPTO)
 endif()
 
-if(ZEN_ENABLE_NN)
-    list(APPEND ZEN_DEFINITIONS ZEN_ENABLE_NN)
-endif()
-
 if(ZEN_ENABLE_JSON)
     list(APPEND ZEN_DEFINITIONS ZEN_ENABLE_JSON)
 endif()
@@ -64,6 +59,13 @@ endif()
 if(ZEN_ENABLE_UTF8)
     list(APPEND ZEN_DEFINITIONS ZEN_ENABLE_UTF8)
 endif()
+
+# TinyXML-2 (always on, zero deps)
+add_library(tinyxml2 STATIC ../vendor/tinyxml2/tinyxml2.cpp)
+target_include_directories(tinyxml2 PUBLIC ../vendor/tinyxml2)
+target_compile_options(tinyxml2 PRIVATE -w)
+list(APPEND ZEN_VENDOR_LIBS tinyxml2)
+list(APPEND ZEN_VENDOR_INCLUDES ${CMAKE_SOURCE_DIR}/vendor/tinyxml2)
 
 # Core library sources
 file(GLOB CORE_SRCS CONFIGURE_DEPENDS src/*.cpp)

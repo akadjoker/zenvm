@@ -1,0 +1,5 @@
+File "/media/ctw04578/data/projects/zen/zen/tests/bad_syntax.zen", line 1
+  var x = ;
+          ^
+Error at ';': Expected expression.
+zen: compilation failed.

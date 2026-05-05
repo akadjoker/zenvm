@@ -92,6 +92,22 @@ if(ZEN_ENABLE_GL_MODULE)
     add_subdirectory(modules/opengl)
 endif()
 
+# DNN module (nn functions + optional Network class via MiniDNN)
+option(ZEN_ENABLE_DNN_MODULE    "Enable DNN/nn module" ON)
+if(ZEN_ENABLE_DNN_MODULE)
+    add_subdirectory(modules/dnn)
+endif()
+
+option(ZEN_ENABLE_SQLITE_MODULE "Enable SQLite module" ON)
+if(ZEN_ENABLE_SQLITE_MODULE)
+    add_subdirectory(modules/sqlite)
+endif()
+
+option(ZEN_ENABLE_GIF_MODULE "Enable GIF recording module" ON)
+if(ZEN_ENABLE_GIF_MODULE)
+    add_subdirectory(modules/gif)
+endif()
+
 # --- CLI (zen executable) ---
 add_subdirectory(cli)
 

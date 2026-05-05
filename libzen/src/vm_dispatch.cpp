@@ -23,6 +23,33 @@ namespace zen
             dst[j] = val_nil();
     }
 
+    static inline const char *val_type_str(Value v)
+    {
+        switch (v.type)
+        {
+            case VAL_NIL:   return "nil";
+            case VAL_BOOL:  return "bool";
+            case VAL_INT:   return "int";
+            case VAL_FLOAT: return "float";
+            case VAL_OBJ:
+                switch (v.as.obj->type)
+                {
+                    case OBJ_STRING:            return "string";
+                    case OBJ_FUNC:              return "function";
+                    case OBJ_NATIVE:            return "native function";
+                    case OBJ_CLOSURE:           return "function";
+                    case OBJ_ARRAY:             return "array";
+                    case OBJ_MAP:               return "map";
+                    case OBJ_CLASS:             return "class";
+                    case OBJ_INSTANCE:          return "instance";
+                    case OBJ_NATIVE_STRUCT_DEF: return "struct_def";
+                    case OBJ_NATIVE_STRUCT:     return "struct";
+                    default:                    return "object";
+                }
+            default: return "unknown";
+        }
+    }
+
 
     static inline int int_to_cstr(int64_t n, char *buf)
     {
@@ -1175,7 +1202,7 @@ namespace zen
                 /* No init and no args (or native_ctor consumed them) — just return the instance */
                 DISPATCH();
             }
-            RT_ERROR("attempt to call non-function");
+            RT_ERROR("attempt to call non-function (got %s)", val_type_str(R[a]));
         }
 
         CASE(OP_CALLGLOBAL)
@@ -1217,7 +1244,7 @@ namespace zen
                 copy_native_results(&R[a], &R[a + 1], nret, nresults);
                 DISPATCH();
             }
-            RT_ERROR("attempt to call non-function");
+            RT_ERROR("attempt to call non-function (got %s)", val_type_str(callee));
         }
 
         CASE(OP_RETURN)

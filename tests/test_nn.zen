@@ -1,0 +1,50 @@
+import nn;
+
+// --- Activations ---
+// sigmoid: 0 → 0.5, large → ~1, negative → ~0
+print(nn.sigmoid(0.0));
+print(nn.sigmoid(100.0) > 0.99);
+print(nn.sigmoid(-100.0) < 0.01);
+
+// relu
+print(nn.relu(3.5));
+print(nn.relu(-2.0));
+
+// leaky_relu (default alpha=0.01)
+print(nn.leaky_relu(2.0));
+print(nn.leaky_relu(-1.0) < 0.0);
+
+// elu
+print(nn.elu(1.0));
+print(nn.elu(-1.0) < 0.0);
+
+// swish / silu (same formula)
+print(nn.swish(0.0));
+print(nn.silu(0.0));
+
+// step: threshold 0
+print(nn.step(1.0));
+print(nn.step(-1.0));
+print(nn.step(0.0));
+
+// tanh
+print(nn.tanh(0.0));
+print(nn.tanh(100.0) > 0.99);
+
+// --- Derivatives ---
+print(nn.sigmoid_d(0.0));   // 0.25
+print(nn.relu_d(1.0));      // 1.0
+print(nn.relu_d(-1.0));     // 0.0
+print(nn.tanh_d(0.0));      // 1.0
+
+// --- Loss ---
+var pred = [0.9, 0.1, 0.8];
+var tgt  = [1.0, 0.0, 1.0];
+print(nn.mse(pred, tgt) < 0.1);
+print(nn.bce(pred, tgt) < 0.5);
+
+// --- Normalize / Denormalize ---
+var x = nn.normalize(5.0, 0.0, 10.0);
+print(x);
+var back = nn.denormalize(x, 0.0, 10.0);
+print(back);

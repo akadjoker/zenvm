@@ -60,9 +60,6 @@ namespace zen
 #ifdef ZEN_ENABLE_CRYPTO
     extern const NativeLib zen_lib_crypto;
 #endif
-#ifdef ZEN_ENABLE_NN
-    extern const NativeLib zen_lib_nn;
-#endif
 #ifdef ZEN_ENABLE_JSON
     extern const NativeLib zen_lib_json;
 #endif
@@ -71,6 +68,13 @@ namespace zen
 #endif
     extern const NativeLib zen_lib_easing;
     extern const NativeLib zen_lib_base64;
+    extern const NativeLib zen_lib_csv;
+    extern const NativeLib zen_lib_xml;
+    extern const NativeLib zen_lib_ini;
+    extern const NativeLib zen_lib_log;
+#ifdef ZEN_ENABLE_GIF
+    extern const NativeLib zen_lib_gif;
+#endif
 
 } /* namespace zen */
 

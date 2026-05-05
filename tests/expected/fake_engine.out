@@ -1,5 +1,5 @@
-[line 1] Error at '{': Parent class not found.
-[line 38] Error at '}': Expected expression.
-[line 40] Error at '{': Parent class not found.
-[line 65] Error at '}': Expected expression.
+File "/media/ctw04578/data/projects/zen/zen/tests/fake_engine.zen", line 1
+  class Player : ScriptComponent {
+                                 ^
+Error at '{': Parent class not found.
 zen: compilation failed.

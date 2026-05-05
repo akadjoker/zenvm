@@ -952,7 +952,7 @@ namespace zen
         }
 
         /* Register all functions/constants as globals */
-        int base = vm_->open_lib_globals(lib);
+        int base = vm_->open_lib_globals(lib, /*warn_shadows=*/false);
 
         imports_[num_imports_].lib = lib;
         imports_[num_imports_].base_gidx = base;
@@ -998,7 +998,7 @@ namespace zen
             return;
         }
 
-        int base = vm_->open_lib_globals(lib);
+        int base = vm_->open_lib_globals(lib, /*warn_shadows=*/true);
         imports_[num_imports_].lib = lib;
         imports_[num_imports_].base_gidx = base;
         imports_[num_imports_].exposed = true;

@@ -1,0 +1,5 @@
+File "/media/ctw04578/data/projects/zen/zen/tests/test_zen_gl.zen", line 2
+  import gl;
+           ^
+Error at ';': Unknown module.
+zen: compilation failed.

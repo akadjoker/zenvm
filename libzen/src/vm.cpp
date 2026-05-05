@@ -409,13 +409,33 @@ namespace zen
         return nullptr;
     }
 
-    int VM::open_lib_globals(const NativeLib *lib)
+    int VM::open_lib_globals(const NativeLib *lib, bool warn_shadows)
     {
-        int base = num_globals_;
+        /* Run init_fn FIRST (it may register helper globals like classes).
+           base is then set to the index where module functions start, so
+           that compiler dot-access (module.fn → base + f) is correct. */
         if (lib->init_fn)
             lib->init_fn(this);
+        int base = num_globals_;
         for (int i = 0; i < lib->num_functions; i++)
-            def_native(lib->functions[i].name, lib->functions[i].fn, lib->functions[i].arity);
+        {
+            /* Always force-allocate a new slot, even if a global with this name
+               already exists (e.g. a built-in called "error" or "warn").
+               The compiler accesses module functions via explicit index (base + f),
+               so each function MUST occupy exactly slot base + f. */
+            if (warn_shadows && find_global(lib->functions[i].name) >= 0)
+                fprintf(stderr, "[zen warning] module '%s': function '%s' shadows an existing global\n",
+                        lib->name, lib->functions[i].name);
+            if (!grow_globals(num_globals_ + 1))
+                return base;
+            int idx = num_globals_++;
+            const char *name = lib->functions[i].name;
+            int nlen = (int)strlen(name);
+            ObjString *s = intern_string(&gc_, name, nlen, hash_string(name, nlen));
+            ObjNative *nat = new_native(&gc_, lib->functions[i].fn, lib->functions[i].arity, s);
+            global_names_[idx] = s;
+            globals_[idx] = val_obj((Obj *)nat);
+        }
         for (int i = 0; i < lib->num_constants; i++)
             def_global(lib->constants[i].name, lib->constants[i].value);
         return base;

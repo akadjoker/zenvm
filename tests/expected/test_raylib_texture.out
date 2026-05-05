@@ -1,0 +1,2 @@
+[zen runtime error] attempt to call non-function (got nil)
+  File "/media/ctw04578/data/projects/zen/zen/tests/test_raylib_texture.zen", line 5, in /media/ctw04578/data/projects/zen/zen/tests/test_raylib_texture.zen

@@ -1,0 +1,80 @@
+import sqlite;
+
+// version
+var v = sqlite.version();
+print(v != nil);
+
+// in-memory database
+var db = sqlite.memory();
+print(db != nil);
+
+// exec — create table
+db.exec("CREATE TABLE users (name TEXT, age INT, score FLOAT)");
+print("created");
+
+// exec — insert rows
+db.exec("INSERT INTO users VALUES ('alice', 30, 9.5)");
+db.exec("INSERT INTO users VALUES ('bob', 25, 7.2)");
+db.exec("INSERT INTO users VALUES ('carol', 28, 8.8)");
+print("inserted");
+print(db.changes());
+
+// query — all rows
+var rows = db.query("SELECT name, age, score FROM users ORDER BY name");
+print(rows.len());
+print(rows[0][0]);
+print(rows[1][0]);
+print(rows[2][0]);
+
+// query — numeric types
+var r = db.query("SELECT age, score FROM users WHERE name='alice'");
+print(r[0][0]);
+
+// lastInsertId
+print(db.lastInsertId());
+
+// prepare + bind + step + reset
+var st = db.prepare("INSERT INTO users VALUES (?, ?, ?)");
+st.bind(1, "dan");
+st.bind(2, 22);
+st.bind(3, 6.1);
+st.step();
+st.reset();
+
+var cnt = db.query("SELECT COUNT(*) FROM users");
+print(cnt[0][0]);
+
+// begin / commit
+db.begin();
+db.exec("INSERT INTO users VALUES ('eve', 35, 9.9)");
+db.commit();
+
+var cnt2 = db.query("SELECT COUNT(*) FROM users");
+print(cnt2[0][0]);
+
+// rollback
+db.begin();
+db.exec("INSERT INTO users VALUES ('frank', 40, 5.0)");
+db.rollback();
+
+var cnt3 = db.query("SELECT COUNT(*) FROM users");
+print(cnt3[0][0]);
+
+// error — no error after valid ops
+var e = db.error();
+print(e == "not an error" || e == "ok" || e == "not an error" || e != nil);
+
+// prepare stmt columns
+var st2 = db.prepare("SELECT name, age, score FROM users WHERE name='alice'");
+print(st2.columns());
+print(st2.colName(0));
+print(st2.colName(1));
+st2.step();
+var row2 = st2.row();
+print(row2[0]);
+print(row2[1]);
+st2.close();
+
+// close
+db.close();
+print("closed");

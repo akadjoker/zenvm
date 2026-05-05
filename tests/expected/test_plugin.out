@@ -1,2 +1,5 @@
-[line 1] Error at ';': Unknown module.
+File "/media/ctw04578/data/projects/zen/zen/tests/test_plugin.zen", line 1
+  import hello;
+              ^
+Error at ';': Unknown module.
 zen: compilation failed.

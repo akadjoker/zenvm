@@ -1,0 +1,8 @@
+gif module ok
+GifWriter created: true
+save ok: true
+gif size > 0: true
+file-mode GifWriter: true
+close ok: true
+file exists: true
+done

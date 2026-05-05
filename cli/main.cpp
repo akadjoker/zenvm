@@ -21,6 +21,15 @@
 #ifdef ZEN_ENABLE_SDL2
 #include "zen/module_sdl2.h"
 #endif
+#ifdef ZEN_ENABLE_NN
+#include "zen/module_dnn.h"
+#endif
+#ifdef ZEN_ENABLE_SQLITE
+#include "zen/module_sqlite.h"
+#endif
+#ifdef ZEN_ENABLE_GIF
+/* gif module is part of module.h (builtin), no separate header needed */
+#endif
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -97,7 +106,10 @@ static void register_default_libs(VM &vm)
     vm.register_lib(&zen_lib_crypto);
 #endif
 #ifdef ZEN_ENABLE_NN
-    vm.register_lib(&zen_lib_nn);
+    vm.register_lib(&zen_lib_nn);  /* modules/dnn */
+#endif
+#ifdef ZEN_ENABLE_SQLITE
+    vm.register_lib(&zen_lib_sqlite);
 #endif
 #ifdef ZEN_ENABLE_JSON
     vm.register_lib(&zen_lib_json);
@@ -107,6 +119,13 @@ static void register_default_libs(VM &vm)
 #endif
     vm.register_lib(&zen_lib_easing);
     vm.register_lib(&zen_lib_base64);
+    vm.register_lib(&zen_lib_csv);
+    vm.register_lib(&zen_lib_xml);
+    vm.register_lib(&zen_lib_ini);
+    vm.register_lib(&zen_lib_log);
+#ifdef ZEN_ENABLE_GIF
+    vm.register_lib(&zen_lib_gif);
+#endif
 #ifdef ZEN_ENABLE_STB_IMAGE
     vm.register_lib(&zen_lib_image);
 #endif

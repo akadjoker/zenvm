@@ -66,7 +66,7 @@ namespace zen
         void register_lib(const NativeLib *lib);  /* make available for import */
         void open_lib(const NativeLib *lib);       /* register + put in globals */
         const NativeLib *find_lib(const char *name) const;
-        int open_lib_globals(const NativeLib *lib); /* returns base gidx */
+        int open_lib_globals(const NativeLib *lib, bool warn_shadows = false); /* returns base gidx */
         const NativeLib *try_load_plugin(const char *name); /* dlopen fallback */
         void resolve_native_globals(); /* fill nil globals from registered libs */
 
