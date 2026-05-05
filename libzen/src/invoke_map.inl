@@ -84,6 +84,14 @@ case MAP_CLEAR:
     R[base] = val_nil();
     break;
 }
+case MAP_DUMP:
+{
+    /* map.dump() → pretty-print contents recursively */
+    dump_value_rec(receiver, 0);
+    putchar('\n');
+    R[base] = val_nil();
+    break;
+}
 default:
 {
     RT_ERROR("map has no method '%s'", mname);

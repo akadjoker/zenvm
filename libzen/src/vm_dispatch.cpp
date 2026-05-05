@@ -65,6 +65,79 @@ namespace zen
         return len;
     }
 
+    static void dump_value_rec(Value v, int depth)
+    {
+        static const int MAX_DEPTH = 8;
+        auto do_indent = [](int d) {
+            for (int i = 0; i < d * 2; i++) putchar(' ');
+        };
+
+        if (is_nil(v)) {
+            printf("nil");
+        } else if (is_bool(v)) {
+            printf(v.as.boolean ? "true" : "false");
+        } else if (is_int(v)) {
+            printf("%lld", (long long)v.as.integer);
+        } else if (is_float(v)) {
+            printf("%g", v.as.number);
+        } else if (is_string(v)) {
+            printf("\"%s\"", as_cstring(v));
+        } else if (is_array(v)) {
+            ObjArray *a = as_array(v);
+            int32_t n = arr_count(a);
+            if (n == 0) { printf("[]"); return; }
+            if (depth >= MAX_DEPTH) { printf("<array[%d]>", n); return; }
+            printf("[\n");
+            for (int32_t i = 0; i < n; i++) {
+                do_indent(depth + 1);
+                dump_value_rec(a->data[i], depth + 1);
+                printf(",\n");
+            }
+            do_indent(depth);
+            printf("]");
+        } else if (is_map(v)) {
+            ObjMap *m = as_map(v);
+            if (m->count == 0) { printf("{}"); return; }
+            if (depth >= MAX_DEPTH) { printf("<map[%d]>", m->count); return; }
+            printf("{\n");
+            for (int32_t i = 0; i < m->capacity; i++) {
+                if (m->nodes[i].hash == 0xFFFFFFFFu) continue;
+                do_indent(depth + 1);
+                dump_value_rec(m->nodes[i].key, depth + 1);
+                printf(": ");
+                dump_value_rec(m->nodes[i].value, depth + 1);
+                printf(",\n");
+            }
+            do_indent(depth);
+            printf("}");
+        } else if (is_set(v)) {
+            ObjSet *s = as_set(v);
+            if (s->count == 0) { printf("#{}"); return; }
+            if (depth >= MAX_DEPTH) { printf("<set[%d]>", s->count); return; }
+            printf("#{\n");
+            for (int32_t i = 0; i < s->capacity; i++) {
+                if (s->nodes[i].hash == 0xFFFFFFFFu) continue;
+                do_indent(depth + 1);
+                dump_value_rec(s->nodes[i].key, depth + 1);
+                printf(",\n");
+            }
+            do_indent(depth);
+            printf("}");
+        } else if (is_obj(v)) {
+            Obj *obj = v.as.obj;
+            switch (obj->type) {
+            case OBJ_FUNC:
+            case OBJ_CLOSURE:   printf("<function>"); break;
+            case OBJ_NATIVE:    printf("<native %s>", ((ObjNative *)obj)->name->chars); break;
+            case OBJ_INSTANCE:  printf("<instance %s>", ((ObjInstance *)obj)->klass->name->chars); break;
+            case OBJ_CLASS:     printf("<class %s>", ((ObjClass *)obj)->name->chars); break;
+            default:            printf("<object>"); break;
+            }
+        } else {
+            printf("?");
+        }
+    }
+
     static const char *value_debug_type(Value v)
     {
         switch (v.type)

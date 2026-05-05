@@ -276,6 +276,14 @@ case ARRAY_INDEX_OF:
     R[base] = val_int(array_find(arr, args[0]));
     break;
 }
+case ARRAY_DUMP:
+{
+    /* arr.dump() → pretty-print contents recursively */
+    dump_value_rec(receiver, 0);
+    putchar('\n');
+    R[base] = val_nil();
+    break;
+}
 default:
 {
     RT_ERROR("array has no method '%s'", mname);

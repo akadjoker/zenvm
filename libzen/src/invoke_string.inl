@@ -177,6 +177,92 @@ case STRING_BYTE_AT:
     else { R[base] = val_int((uint8_t)str->chars[idx]); }
     break;
 }
+case STRING_REPEAT:
+{
+    /* str.repeat(n) → string repeated n times */
+    if (arg_count != 1 || !is_int(args[0])) { RT_ERROR("repeat() expects an integer"); }
+    int32_t n = (int32_t)args[0].as.integer;
+    if (n <= 0 || str->length == 0) { R[base] = val_obj((Obj *)new_string(&gc_, "", 0)); break; }
+    int32_t new_len = str->length * n;
+    char *buf = (char *)malloc(new_len);
+    for (int ri = 0; ri < n; ri++)
+        memcpy(buf + ri * str->length, str->chars, str->length);
+    R[base] = val_obj((Obj *)new_string(&gc_, buf, new_len));
+    free(buf);
+    break;
+}
+case STRING_COUNT:
+{
+    /* str.count(needle) → number of non-overlapping occurrences */
+    if (arg_count != 1 || !is_string(args[0])) { RT_ERROR("count() expects a string"); }
+    ObjString *needle = as_string(args[0]);
+    if (needle->length == 0) { R[base] = val_int(str->length + 1); break; }
+    int32_t cnt = 0;
+    const char *sp = str->chars;
+    const char *ep = str->chars + str->length;
+    while (sp < ep) {
+        const char *f = (const char *)memmem(sp, ep - sp, needle->chars, needle->length);
+        if (!f) break;
+        cnt++;
+        sp = f + needle->length;
+    }
+    R[base] = val_int(cnt);
+    break;
+}
+case STRING_PAD_LEFT:
+{
+    /* str.pad_left(width [, char=' ']) → right-justify string in field of width */
+    if (arg_count < 1 || !is_int(args[0])) { RT_ERROR("pad_left() expects (width[, char])"); }
+    int32_t width = (int32_t)args[0].as.integer;
+    char pad_ch = ' ';
+    if (arg_count >= 2 && is_string(args[1]) && as_string(args[1])->length > 0)
+        pad_ch = as_string(args[1])->chars[0];
+    int32_t pad = width - str->length;
+    if (pad <= 0) { R[base] = receiver; break; }
+    char *buf = (char *)malloc(width);
+    memset(buf, pad_ch, pad);
+    memcpy(buf + pad, str->chars, str->length);
+    R[base] = val_obj((Obj *)new_string(&gc_, buf, width));
+    free(buf);
+    break;
+}
+case STRING_PAD_RIGHT:
+{
+    /* str.pad_right(width [, char=' ']) → left-justify string in field of width */
+    if (arg_count < 1 || !is_int(args[0])) { RT_ERROR("pad_right() expects (width[, char])"); }
+    int32_t width = (int32_t)args[0].as.integer;
+    char pad_ch = ' ';
+    if (arg_count >= 2 && is_string(args[1]) && as_string(args[1])->length > 0)
+        pad_ch = as_string(args[1])->chars[0];
+    int32_t pad = width - str->length;
+    if (pad <= 0) { R[base] = receiver; break; }
+    char *buf = (char *)malloc(width);
+    memcpy(buf, str->chars, str->length);
+    memset(buf + str->length, pad_ch, pad);
+    R[base] = val_obj((Obj *)new_string(&gc_, buf, width));
+    free(buf);
+    break;
+}
+case STRING_CONTAINS:
+{
+    /* str.contains(needle) → bool */
+    if (arg_count != 1 || !is_string(args[0])) { RT_ERROR("contains() expects a string"); }
+    ObjString *needle = as_string(args[0]);
+    if (needle->length == 0) { R[base] = val_bool(true); break; }
+    const char *f = (const char *)memmem(str->chars, str->length, needle->chars, needle->length);
+    R[base] = val_bool(f != nullptr);
+    break;
+}
+case STRING_REVERSE:
+{
+    /* str.reverse() → reversed string (byte-level, not UTF-8 aware) */
+    char *buf = (char *)malloc(str->length);
+    for (int ri = 0; ri < str->length; ri++)
+        buf[ri] = str->chars[str->length - 1 - ri];
+    R[base] = val_obj((Obj *)new_string(&gc_, buf, str->length));
+    free(buf);
+    break;
+}
 default:
 {
     RT_ERROR("string has no method '%s'", mname);

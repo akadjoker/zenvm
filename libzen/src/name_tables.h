@@ -67,6 +67,7 @@ namespace zen
         ARRAY_JOIN,
         ARRAY_SORT,
         ARRAY_INDEX_OF,
+        ARRAY_DUMP,
     };
 
     static const NameEntry kArrayMethods[] = {
@@ -82,6 +83,7 @@ namespace zen
         {"join", 4, ARRAY_JOIN},
         {"sort", 4, ARRAY_SORT},
         {"index_of", 8, ARRAY_INDEX_OF},
+        {"dump", 4, ARRAY_DUMP},
     };
 
     enum BufferMethodId
@@ -107,6 +109,7 @@ namespace zen
         MAP_VALUES,
         MAP_SIZE,
         MAP_CLEAR,
+        MAP_DUMP,
     };
 
     static const NameEntry kMapMethods[] = {
@@ -118,6 +121,7 @@ namespace zen
         {"values", 6, MAP_VALUES},
         {"size", 4, MAP_SIZE},
         {"clear", 5, MAP_CLEAR},
+        {"dump", 4, MAP_DUMP},
     };
 
     enum SetMethodId
@@ -128,6 +132,7 @@ namespace zen
         SET_SIZE,
         SET_CLEAR,
         SET_VALUES,
+        SET_DUMP,
     };
 
     static const NameEntry kSetMethods[] = {
@@ -137,6 +142,7 @@ namespace zen
         {"size", 4, SET_SIZE},
         {"clear", 5, SET_CLEAR},
         {"values", 6, SET_VALUES},
+        {"dump", 4, SET_DUMP},
     };
 
     enum StringMethodId
@@ -153,6 +159,12 @@ namespace zen
         STRING_ENDS_WITH,
         STRING_CHAR_AT,
         STRING_BYTE_AT,
+        STRING_REPEAT,
+        STRING_COUNT,
+        STRING_PAD_LEFT,
+        STRING_PAD_RIGHT,
+        STRING_CONTAINS,
+        STRING_REVERSE,
     };
 
     static const NameEntry kStringMethods[] = {
@@ -168,6 +180,12 @@ namespace zen
         {"ends_with", 9, STRING_ENDS_WITH},
         {"char_at", 7, STRING_CHAR_AT},
         {"byte_at", 7, STRING_BYTE_AT},
+        {"repeat", 6, STRING_REPEAT},
+        {"count", 5, STRING_COUNT},
+        {"pad_left", 8, STRING_PAD_LEFT},
+        {"pad_right", 9, STRING_PAD_RIGHT},
+        {"contains", 8, STRING_CONTAINS},
+        {"reverse", 7, STRING_REVERSE},
     };
 }
 

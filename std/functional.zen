@@ -1,0 +1,102 @@
+// std/functional.zen — funções de ordem superior para arrays
+//
+// Uso:
+//   include "std/functional.zen";
+//
+//   var nums = [1, 2, 3, 4, 5];
+//   var pares   = filter(nums, def(x) { return x % 2 == 0; });
+//   var dobrados = map(nums, def(x) { return x * 2; });
+//   var soma     = reduce(nums, def(acc, x) { return acc + x; }, 0);
+//   var todos    = all(nums, def(x) { return x > 0; });
+//   var algum    = any(nums, def(x) { return x > 4; });
+//   var n        = count_if(nums, def(x) { return x % 2 == 0; });
+//   var flat     = flatten([[1,2],[3,4]]);
+//   var zipped   = zip([1,2,3], ["a","b","c"]);  // [[1,"a"],[2,"b"],[3,"c"]]
+//   var uniq     = unique([1,2,2,3,3]);           // [1,2,3]
+
+// filter(arr, fn) → novo array com elementos onde fn(x) == true
+def filter(arr, fn) {
+    var result = [];
+    foreach (x in arr) {
+        if (fn(x)) { result.push(x); }
+    }
+    return result;
+}
+
+// map(arr, fn) → novo array com fn(x) aplicado a cada elemento
+def map(arr, fn) {
+    var result = [];
+    foreach (x in arr) {
+        result.push(fn(x));
+    }
+    return result;
+}
+
+// reduce(arr, fn, init) → valor acumulado: fn(acc, x) para cada x
+def reduce(arr, fn, init) {
+    var acc = init;
+    foreach (x in arr) {
+        acc = fn(acc, x);
+    }
+    return acc;
+}
+
+// all(arr, fn) → true se fn(x) for true para todos
+def all(arr, fn) {
+    foreach (x in arr) {
+        if (!fn(x)) { return false; }
+    }
+    return true;
+}
+
+// any(arr, fn) → true se fn(x) for true para pelo menos um
+def any(arr, fn) {
+    foreach (x in arr) {
+        if (fn(x)) { return true; }
+    }
+    return false;
+}
+
+// count_if(arr, fn) → número de elementos onde fn(x) == true
+def count_if(arr, fn) {
+    var n = 0;
+    foreach (x in arr) {
+        if (fn(x)) { n = n + 1; }
+    }
+    return n;
+}
+
+// flatten(arr) → achata um array de arrays num único array
+def flatten(arr) {
+    var result = [];
+    foreach (sub in arr) {
+        foreach (x in sub) {
+            result.push(x);
+        }
+    }
+    return result;
+}
+
+// zip(a, b) → array de pares [a[i], b[i]], até ao menor
+def zip(a, b) {
+    var result = [];
+    var n = a.len();
+    if (b.len() < n) { n = b.len(); }
+    var i = 0;
+    while (i < n) {
+        result.push([a[i], b[i]]);
+        i = i + 1;
+    }
+    return result;
+}
+
+// unique(arr) → remove duplicados mantendo a primeira ocorrência
+def unique(arr) {
+    var result = [];
+    foreach (x in arr) {
+        if (!result.contains(x)) {
+            result.push(x);
+        }
+    }
+    return result;
+}

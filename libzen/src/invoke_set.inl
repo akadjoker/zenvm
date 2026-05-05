@@ -55,6 +55,14 @@ case SET_VALUES:
     R[base] = val_obj((Obj *)result);
     break;
 }
+case SET_DUMP:
+{
+    /* set.dump() → pretty-print contents recursively */
+    dump_value_rec(receiver, 0);
+    putchar('\n');
+    R[base] = val_nil();
+    break;
+}
 default:
 {
     RT_ERROR("set has no method '%s'", mname);
