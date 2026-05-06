@@ -358,9 +358,6 @@ namespace zen
             &&lbl_OP_INVOKE,
             &&lbl_OP_INVOKE_VT,
             &&lbl_OP_SUPER_INVOKE,
-            &&lbl_OP_NEWCLASS,
-            &&lbl_OP_NEWINSTANCE,
-            &&lbl_OP_GETMETHOD,
             &&lbl_OP_CONCAT,
             &&lbl_OP_STRADD,
             &&lbl_OP_TOSTRING,
@@ -2223,20 +2220,6 @@ namespace zen
             }
             ip += 2; /* skip word2+word3 */
             NEXT();
-        }
-
-        /* --- Classes (stubs) --- */
-        CASE(OP_NEWCLASS)
-        {
-            RT_ERROR("classes not yet implemented");
-        }
-        CASE(OP_NEWINSTANCE)
-        {
-            RT_ERROR("classes not yet implemented");
-        }
-        CASE(OP_GETMETHOD)
-        {
-            RT_ERROR("method access not yet implemented");
         }
 
         /* --- Misc --- */

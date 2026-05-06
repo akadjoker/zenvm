@@ -113,11 +113,6 @@ namespace zen
         OP_INVOKE_VT, /* R[A].vtable[C](R[A+1]..R[A+B]) → R[A]; single-word, O(1) */
         OP_SUPER_INVOKE, /* like OP_INVOKE but dispatches on parent class vtable (2-word) */
 
-        /* --- Classes --- */
-        OP_NEWCLASS,    /* R[A] = new class (nome em constants[B]) */
-        OP_NEWINSTANCE, /* R[A] = klass.new()                      */
-        OP_GETMETHOD,   /* R[A] = R[B]:method(constants[C])        */
-
         /* --- Misc --- */
         OP_CONCAT,   /* R[A] = R[B] .. R[C]  (string concat)   */
         OP_STRADD,   /* R[A] = R[A] + R[B]  (in-place append)  */

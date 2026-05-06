@@ -237,7 +237,6 @@ namespace zen
         case OP_GETGLOBAL:
         case OP_SETGLOBAL:
         case OP_CLOSURE:
-        case OP_NEWCLASS:
             return FMT_ABX;
         case OP_JMP:
         case OP_JMPIF:
