@@ -19,6 +19,10 @@ namespace zen
         switch (type)
         {
         /* Assignment operators are NOT infix — handled directly in variable/dot/index */
+        case TOK_STAR_STAR:
+            return PREC_POWER;
+        case TOK_QUESTION_DOT:
+            return PREC_CALL;
         case TOK_QUESTION:
             return PREC_TERNARY;
         case TOK_OR:
@@ -53,6 +57,7 @@ namespace zen
         case TOK_STAR:
         case TOK_SLASH:
         case TOK_PERCENT:
+        case TOK_INTDIV:
             return PREC_FACTOR;
         case TOK_LPAREN:
         case TOK_LBRACKET:
@@ -339,6 +344,7 @@ namespace zen
         case TOK_STAR:
         case TOK_SLASH:
         case TOK_PERCENT:
+        case TOK_INTDIV:
         case TOK_EQ_EQ:
         case TOK_BANG_EQ:
         case TOK_LT:
@@ -352,6 +358,14 @@ namespace zen
         case TOK_CARET:
         case TOK_XOR:
             return binary(op, left, dest);
+
+        /* Power: ** right-associative */
+        case TOK_STAR_STAR:
+            return pow_expr(left, dest);
+
+        /* Null-safe field access: obj?.field */
+        case TOK_QUESTION_DOT:
+            return safe_dot_expr(left, dest, canAssign);
 
         /* Containment */
         case TOK_IN:
@@ -676,7 +690,9 @@ namespace zen
                 /* Assignment: x = expr, x += expr, etc. */
                 if (canAssign && (check(TOK_EQ) || check(TOK_PLUS_EQ) ||
                                   check(TOK_MINUS_EQ) || check(TOK_STAR_EQ) ||
-                                  check(TOK_SLASH_EQ)))
+                                  check(TOK_SLASH_EQ) || check(TOK_AMP_EQ) ||
+                                  check(TOK_PIPE_EQ) || check(TOK_CARET_EQ) ||
+                                  check(TOK_STAR_STAR_EQ)))
                 {
                     TokenType assign_op = current_.type;
                     advance();
@@ -695,11 +711,15 @@ namespace zen
                         expression(rhs);
                         OpCode op;
                         switch (assign_op) {
-                            case TOK_PLUS_EQ:  op = OP_ADD; break;
-                            case TOK_MINUS_EQ: op = OP_SUB; break;
-                            case TOK_STAR_EQ:  op = OP_MUL; break;
-                            case TOK_SLASH_EQ: op = OP_DIV; break;
-                            default:           op = OP_ADD; break;
+                            case TOK_PLUS_EQ:      op = OP_ADD;  break;
+                            case TOK_MINUS_EQ:     op = OP_SUB;  break;
+                            case TOK_STAR_EQ:      op = OP_MUL;  break;
+                            case TOK_SLASH_EQ:     op = OP_DIV;  break;
+                            case TOK_AMP_EQ:       op = OP_BAND; break;
+                            case TOK_PIPE_EQ:      op = OP_BOR;  break;
+                            case TOK_CARET_EQ:     op = OP_BXOR; break;
+                            case TOK_STAR_STAR_EQ: op = OP_POW;  break;
+                            default:               op = OP_ADD;  break;
                         }
                         state_->emitter.emit_abc(op, reg, reg, rhs, token.line);
                         free_reg(rhs);
@@ -757,7 +777,9 @@ namespace zen
         /* --- Assignment: = += -= *= /= --- */
         if (canAssign && (check(TOK_EQ) || check(TOK_PLUS_EQ) ||
                           check(TOK_MINUS_EQ) || check(TOK_STAR_EQ) ||
-                          check(TOK_SLASH_EQ)))
+                          check(TOK_SLASH_EQ) || check(TOK_AMP_EQ) ||
+                          check(TOK_PIPE_EQ) || check(TOK_CARET_EQ) ||
+                          check(TOK_STAR_STAR_EQ)))
         {
             TokenType assign_op = current_.type;
             advance(); /* consume the assignment operator */
@@ -844,6 +866,18 @@ namespace zen
                     break;
                 case TOK_SLASH_EQ:
                     op = OP_DIV;
+                    break;
+                case TOK_AMP_EQ:
+                    op = OP_BAND;
+                    break;
+                case TOK_PIPE_EQ:
+                    op = OP_BOR;
+                    break;
+                case TOK_CARET_EQ:
+                    op = OP_BXOR;
+                    break;
+                case TOK_STAR_STAR_EQ:
+                    op = OP_POW;
                     break;
                 default:
                     op = OP_ADD;
@@ -1157,6 +1191,9 @@ namespace zen
         case TOK_PERCENT:
             opcode = use_obj_op ? OP_MOD_OBJ : OP_MOD;
             break;
+        case TOK_INTDIV:
+            opcode = OP_IDIV;
+            break;
         case TOK_EQ_EQ:
             opcode = use_obj_op ? OP_EQ_OBJ : OP_EQ;
             break;
@@ -1291,6 +1328,50 @@ namespace zen
         state_->emitter.emit_abc(OP_NOT, reg, reg, 0, previous_.line);
         if (right != reg) free_reg(right);
         if (left != reg) free_reg(left);
+        return reg;
+    }
+
+    /* =========================================================
+    ** Power: left ** right  (right-associative)
+    ** ========================================================= */
+
+    int Compiler::pow_expr(int left, int dest)
+    {
+        int right = parse_precedence(PREC_POWER, -1); /* same level = right-assoc */
+        int reg = dest >= 0 ? dest : alloc_reg();
+        state_->emitter.emit_abc(OP_POW, reg, left, right, previous_.line);
+        if (right != reg) free_reg(right);
+        if (left != reg) free_reg(left);
+        return reg;
+    }
+
+    /* =========================================================
+    ** Null-safe field access: obj?.field → nil if obj is nil
+    ** ========================================================= */
+
+    int Compiler::safe_dot_expr(int obj, int dest, bool canAssign)
+    {
+        (void)canAssign; /* ?.field is always read-only */
+        int line = previous_.line;
+        int reg = dest >= 0 ? dest : alloc_reg();
+        if (obj != reg) emit_move(reg, obj);
+
+        /* If obj is nil/falsy, skip field access — result stays nil */
+        int jump = state_->emitter.emit_jump(OP_JMPIFNOT, reg, line);
+
+        /* Parse field name — same rules as dot_expr */
+        if (current_.type == TOK_IDENTIFIER ||
+            (current_.type >= TOK_VAR && current_.type <= TOK_CLOCK))
+            advance();
+        else
+            error_at_current("Expected field name after '?.'.");
+        Token field_tok = previous_;
+        int name_ki = state_->emitter.add_string_constant(field_tok.start, field_tok.length);
+
+        state_->emitter.emit_abc(OP_GETFIELD, reg, reg, name_ki, line);
+        state_->emitter.patch_jump(jump);
+
+        if (obj != reg) free_reg(obj);
         return reg;
     }
 
@@ -1592,7 +1673,9 @@ namespace zen
         /* Check for assignment: a[i] = expr or a[i] += expr */
         if (canAssign && (check(TOK_EQ) || check(TOK_PLUS_EQ) ||
                           check(TOK_MINUS_EQ) || check(TOK_STAR_EQ) ||
-                          check(TOK_SLASH_EQ)))
+                          check(TOK_SLASH_EQ) || check(TOK_AMP_EQ) ||
+                          check(TOK_PIPE_EQ) || check(TOK_CARET_EQ) ||
+                          check(TOK_STAR_STAR_EQ)))
         {
             TokenType assign_op = current_.type;
             advance();
@@ -1626,6 +1709,18 @@ namespace zen
                     break;
                 case TOK_SLASH_EQ:
                     op = OP_DIV;
+                    break;
+                case TOK_AMP_EQ:
+                    op = OP_BAND;
+                    break;
+                case TOK_PIPE_EQ:
+                    op = OP_BOR;
+                    break;
+                case TOK_CARET_EQ:
+                    op = OP_BXOR;
+                    break;
+                case TOK_STAR_STAR_EQ:
+                    op = OP_POW;
                     break;
                 default:
                     op = OP_ADD;
@@ -1731,7 +1826,9 @@ namespace zen
         /* Check for assignment: a.b = expr or a.b += expr */
         if (canAssign && (check(TOK_EQ) || check(TOK_PLUS_EQ) ||
                           check(TOK_MINUS_EQ) || check(TOK_STAR_EQ) ||
-                          check(TOK_SLASH_EQ)))
+                          check(TOK_SLASH_EQ) || check(TOK_AMP_EQ) ||
+                          check(TOK_PIPE_EQ) || check(TOK_CARET_EQ) ||
+                          check(TOK_STAR_STAR_EQ)))
         {
             TokenType assign_op = current_.type;
             advance();
@@ -1775,6 +1872,18 @@ namespace zen
                     break;
                 case TOK_SLASH_EQ:
                     op = use_obj ? OP_DIV_OBJ : OP_DIV;
+                    break;
+                case TOK_AMP_EQ:
+                    op = OP_BAND;
+                    break;
+                case TOK_PIPE_EQ:
+                    op = OP_BOR;
+                    break;
+                case TOK_CARET_EQ:
+                    op = OP_BXOR;
+                    break;
+                case TOK_STAR_STAR_EQ:
+                    op = OP_POW;
                     break;
                 default:
                     op = use_obj ? OP_ADD_OBJ : OP_ADD;

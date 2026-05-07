@@ -39,6 +39,7 @@ namespace zen
         PREC_SHIFT,       /* << >>          */
         PREC_TERM,        /* + -            */
         PREC_FACTOR,      /* * / %          */
+        PREC_POWER,       /* **             */
         PREC_UNARY,       /* - ! ~ not      */
         PREC_CALL,        /* . () []        */
         PREC_PRIMARY,
@@ -177,6 +178,8 @@ namespace zen
         int binary(Token op, int left, int dest);
         int in_expr(int left, int dest);
         int not_in_expr(int left, int dest);
+        int pow_expr(int left, int dest);
+        int safe_dot_expr(int obj, int dest, bool canAssign);
         int ternary_expr(int cond, int dest);
         int slice_expr(int obj, int dest, int start_reg);
         int call_expr(int func_reg, int dest);

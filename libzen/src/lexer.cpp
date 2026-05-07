@@ -360,6 +360,8 @@ TokenType Lexer::identifier_type() {
                         if (current_ - start_ > 3 && start_[2] == 'f')
                             return check_keyword(3, 4, "ault", TOK_DEFAULT);
                         break;
+                    case 'i': if (current_ - start_ == 3 && start_[2] == 'v') return TOK_INTDIV;
+                              break;
                     case 'o': if (current_ - start_ == 2) return TOK_DO;
                               break;
                 }
@@ -551,14 +553,14 @@ Token Lexer::next_token() {
         case '.': return match('.') ? make_token(TOK_DOT_DOT) : make_token(TOK_DOT);
         case ';': return make_token(TOK_SEMICOLON);
         case ':': return make_token(TOK_COLON);
-        case '?': return make_token(TOK_QUESTION);
+        case '?': return match('.') ? make_token(TOK_QUESTION_DOT) : make_token(TOK_QUESTION);
         case '~': return make_token(TOK_TILDE);
-        case '^': return make_token(TOK_CARET);
+        case '^': return match('=') ? make_token(TOK_CARET_EQ) : make_token(TOK_CARET);
         case '%': return make_token(TOK_PERCENT);
 
         case '+': return match('=') ? make_token(TOK_PLUS_EQ) : make_token(TOK_PLUS);
         case '-': return match('=') ? make_token(TOK_MINUS_EQ) : make_token(TOK_MINUS);
-        case '*': return match('=') ? make_token(TOK_STAR_EQ) : make_token(TOK_STAR);
+        case '*': return match('*') ? (match('=') ? make_token(TOK_STAR_STAR_EQ) : make_token(TOK_STAR_STAR)) : (match('=') ? make_token(TOK_STAR_EQ) : make_token(TOK_STAR));
         case '/': return match('=') ? make_token(TOK_SLASH_EQ) : make_token(TOK_SLASH);
 
         case '!': return match('=') ? make_token(TOK_BANG_EQ) : make_token(TOK_BANG);
@@ -573,8 +575,8 @@ Token Lexer::next_token() {
             if (match('=')) return make_token(TOK_GT_EQ);
             return make_token(TOK_GT);
 
-        case '&': return match('&') ? make_token(TOK_AMP_AMP) : make_token(TOK_AMP);
-        case '|': return match('|') ? make_token(TOK_PIPE_PIPE) : make_token(TOK_PIPE);
+        case '&': return match('&') ? make_token(TOK_AMP_AMP) : (match('=') ? make_token(TOK_AMP_EQ) : make_token(TOK_AMP));
+        case '|': return match('|') ? make_token(TOK_PIPE_PIPE) : (match('=') ? make_token(TOK_PIPE_EQ) : make_token(TOK_PIPE));
 
         case '"': case '\'': return string_token();
 

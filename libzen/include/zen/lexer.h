@@ -20,6 +20,13 @@ namespace zen
         TOK_SEMICOLON,
         TOK_COLON,
         TOK_QUESTION,
+        TOK_QUESTION_DOT, /* ?.    */
+        TOK_STAR_STAR,    /* **    */
+        TOK_STAR_STAR_EQ, /* **=   */
+        TOK_AMP_EQ,       /* &=    */
+        TOK_PIPE_EQ,      /* |=    */
+        TOK_CARET_EQ,     /* ^=    */
+        TOK_INTDIV,       /* div   */
         TOK_PLUS,
         TOK_MINUS,
         TOK_STAR,

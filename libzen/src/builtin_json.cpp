@@ -29,7 +29,7 @@ namespace zen
 {
 
     /* =========================================================
-    ** String buffer — growable char buffer (no STL)
+    ** String buffer — growable char buffer 
     ** ========================================================= */
 
     struct StrBuf

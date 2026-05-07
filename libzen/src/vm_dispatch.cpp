@@ -303,6 +303,7 @@ namespace zen
             &&lbl_OP_MUL,
             &&lbl_OP_DIV,
             &&lbl_OP_MOD,
+            &&lbl_OP_IDIV,
             &&lbl_OP_NEG,
             &&lbl_OP_ADD_OBJ,
             &&lbl_OP_SUB_OBJ,
@@ -706,6 +707,28 @@ namespace zen
                     R[ZEN_A(i)] = val_float(__builtin_nan(""));
                 else
                     R[ZEN_A(i)] = val_float(a - (int64_t)(a / b) * b);
+            }
+            NEXT();
+        }
+        CASE(OP_IDIV)
+        {
+            uint32_t i = *ip;
+            Value vb = R[ZEN_B(i)], vc = R[ZEN_C(i)];
+            if (vb.type == VAL_INT && vc.type == VAL_INT)
+            {
+                int64_t divisor = vc.as.integer;
+                if (divisor == 0)
+                    R[ZEN_A(i)] = val_int(0);
+                else
+                    R[ZEN_A(i)] = val_int(vb.as.integer / divisor);
+            }
+            else
+            {
+                double a = to_number(vb), b = to_number(vc);
+                if (b == 0.0)
+                    R[ZEN_A(i)] = val_int(0);
+                else
+                    R[ZEN_A(i)] = val_int((int64_t)(a / b));
             }
             NEXT();
         }

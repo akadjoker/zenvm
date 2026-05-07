@@ -37,6 +37,7 @@ namespace zen
         OP_MUL, /* R[A] = R[B] * R[C]                      */
         OP_DIV, /* R[A] = R[B] / R[C]                      */
         OP_MOD, /* R[A] = R[B] % R[C]                      */
+        OP_IDIV, /* R[A] = (int64_t)(R[B] / R[C])  integer div */
         OP_NEG, /* R[A] = -R[B]                            */
 
         /* --- Object operator overloads (compiler-selected cold path) --- */
