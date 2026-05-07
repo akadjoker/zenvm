@@ -19,6 +19,8 @@ namespace zen
         switch (type)
         {
         /* Assignment operators are NOT infix — handled directly in variable/dot/index */
+        case TOK_QUESTION:
+            return PREC_TERNARY;
         case TOK_OR:
         case TOK_PIPE_PIPE:
             return PREC_OR;
@@ -39,6 +41,8 @@ namespace zen
         case TOK_GT:
         case TOK_LT_EQ:
         case TOK_GT_EQ:
+            return PREC_COMPARISON;
+        case TOK_IN:
             return PREC_COMPARISON;
         case TOK_LT_LT:
         case TOK_GT_GT:
@@ -197,6 +201,23 @@ namespace zen
         /* Infix: keep consuming operators at this precedence or higher */
         for (;;)
         {
+            /* 'not in' compound operator */
+            if (current_.type == TOK_NOT && prec <= PREC_COMPARISON)
+            {
+                LexerState ls = lexer_.save_state();
+                Token saved_cur = current_;
+                advance(); /* consume 'not' tentatively */
+                if (current_.type == TOK_IN)
+                {
+                    reg = not_in_expr(reg, dest);
+                    if (had_error_) return reg;
+                    continue;
+                }
+                /* Not 'not in' — restore */
+                lexer_.restore_state(ls);
+                current_ = saved_cur;
+            }
+
             Precedence op_prec = get_precedence(current_.type);
             bool is_generic_call = current_.type == TOK_LT && looks_like_generic_call();
             if (is_generic_call)
@@ -331,6 +352,14 @@ namespace zen
         case TOK_CARET:
         case TOK_XOR:
             return binary(op, left, dest);
+
+        /* Containment */
+        case TOK_IN:
+            return in_expr(left, dest);
+
+        /* Ternary: cond ? then : else */
+        case TOK_QUESTION:
+            return ternary_expr(left, dest);
 
         /* Short-circuit logical */
         case TOK_AND:
@@ -1234,6 +1263,130 @@ namespace zen
     }
 
     /* =========================================================
+    ** in / not in — containment operators
+    ** ========================================================= */
+
+    int Compiler::in_expr(int left, int dest)
+    {
+        /* 'in' is already consumed as infix op */
+        int right = parse_precedence((Precedence)(PREC_COMPARISON + 1), -1);
+        int reg = dest >= 0 ? dest : alloc_reg();
+        state_->emitter.emit_abc(OP_CONTAINS, reg, left, right, previous_.line);
+        if (right != reg) free_reg(right);
+        if (left != reg) free_reg(left);
+        return reg;
+    }
+
+    int Compiler::not_in_expr(int left, int dest)
+    {
+        /* 'not' consumed in parse_precedence, 'in' still pending */
+        if (!match(TOK_IN))
+        {
+            error("Expected 'in' after 'not'.");
+            return left;
+        }
+        int right = parse_precedence((Precedence)(PREC_COMPARISON + 1), -1);
+        int reg = dest >= 0 ? dest : alloc_reg();
+        state_->emitter.emit_abc(OP_CONTAINS, reg, left, right, previous_.line);
+        state_->emitter.emit_abc(OP_NOT, reg, reg, 0, previous_.line);
+        if (right != reg) free_reg(right);
+        if (left != reg) free_reg(left);
+        return reg;
+    }
+
+    /* =========================================================
+    ** Ternary: cond ? then_expr : else_expr
+    ** ========================================================= */
+
+    int Compiler::ternary_expr(int cond, int dest)
+    {
+        int reg = dest >= 0 ? dest : alloc_reg();
+        if (cond != reg) emit_move(reg, cond);
+
+        int line = previous_.line;
+
+        /* Jump over then-branch if falsy */
+        int jump_else = state_->emitter.emit_jump(OP_JMPIFNOT, reg, line);
+
+        /* Then-branch — parse at PREC_TERNARY+1 so nested ternaries associate right */
+        int then_v = parse_precedence((Precedence)(PREC_TERNARY + 1), reg);
+        if (then_v != reg) { emit_move(reg, then_v); free_reg(then_v); }
+
+        /* Jump over else-branch */
+        int jump_end = state_->emitter.emit_jump(OP_JMP, 0, line);
+
+        /* Patch jump_else to here (start of else-branch) */
+        state_->emitter.patch_jump(jump_else);
+
+        consume(TOK_COLON, "Expected ':' in ternary expression.");
+
+        /* Else-branch */
+        int else_v = parse_precedence((Precedence)(PREC_TERNARY + 1), reg);
+        if (else_v != reg) { emit_move(reg, else_v); free_reg(else_v); }
+
+        /* Patch jump_end to here */
+        state_->emitter.patch_jump(jump_end);
+
+        if (cond != reg) free_reg(cond);
+        return reg;
+    }
+
+    /* =========================================================
+    ** slice_expr — a[start:stop:step]
+    ** ========================================================= */
+
+    int Compiler::slice_expr(int obj, int dest, int start_reg)
+    {
+        int line = previous_.line;
+        int base = alloc_reg(); /* start — must be consecutive */
+
+        if (start_reg >= 0)
+        {
+            if (start_reg != base) emit_move(base, start_reg);
+            free_reg(start_reg);
+        }
+        else
+        {
+            state_->emitter.emit_abc(OP_LOADNIL, base, 0, 0, line);
+        }
+
+        /* consume ':' already matched by caller */
+        int stop_reg = alloc_reg(); /* base+1 */
+        if (check(TOK_RBRACKET) || check(TOK_COLON))
+            state_->emitter.emit_abc(OP_LOADNIL, stop_reg, 0, 0, line);
+        else
+        {
+            int v = expression(stop_reg);
+            if (v != stop_reg) emit_move(stop_reg, v);
+        }
+
+        int step_reg = alloc_reg(); /* base+2 */
+        if (match(TOK_COLON))
+        {
+            if (check(TOK_RBRACKET))
+                state_->emitter.emit_abc(OP_LOADNIL, step_reg, 0, 0, line);
+            else
+            {
+                int v = expression(step_reg);
+                if (v != step_reg) emit_move(step_reg, v);
+            }
+        }
+        else
+        {
+            state_->emitter.emit_abc(OP_LOADNIL, step_reg, 0, 0, line);
+        }
+
+        consume(TOK_RBRACKET, "Expected ']' after slice.");
+        int reg = dest >= 0 ? dest : alloc_reg();
+        state_->emitter.emit_abc(OP_GETSLICE, reg, obj, base, line);
+        free_reg(step_reg);
+        free_reg(stop_reg);
+        free_reg(base);
+        if (obj != reg) free_reg(obj);
+        return reg;
+    }
+
+    /* =========================================================
     ** Infix handlers — Short-circuit: and / or
     ** ========================================================= */
 
@@ -1420,7 +1573,20 @@ namespace zen
 
     int Compiler::index_expr(int obj_reg, int dest, bool canAssign)
     {
+        /* Detect slice: a[start:stop:step] or a[:stop] or a[::step] etc. */
+        if (check(TOK_COLON))
+        {
+            /* a[:...] — start is omitted */
+            advance(); /* consume ':' */
+            return slice_expr(obj_reg, dest, -1);
+        }
+
         int idx_reg = expression(-1);
+
+        /* a[start:...] — start was parsed, check for ':' */
+        if (match(TOK_COLON))
+            return slice_expr(obj_reg, dest, idx_reg);
+
         consume(TOK_RBRACKET, "Expected ']' after index.");
 
         /* Check for assignment: a[i] = expr or a[i] += expr */

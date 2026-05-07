@@ -356,6 +356,7 @@ TokenType Lexer::identifier_type() {
                     case 'e':
                         if (current_ - start_ == 3 && start_[2] == 'f') return TOK_DEF;
                         if (current_ - start_ == 3 && start_[2] == 'g') return TOK_DEG;
+                        if (current_ - start_ == 3 && start_[2] == 'l') return TOK_DEL;
                         if (current_ - start_ > 3 && start_[2] == 'f')
                             return check_keyword(3, 4, "ault", TOK_DEFAULT);
                         break;
@@ -550,6 +551,7 @@ Token Lexer::next_token() {
         case '.': return match('.') ? make_token(TOK_DOT_DOT) : make_token(TOK_DOT);
         case ';': return make_token(TOK_SEMICOLON);
         case ':': return make_token(TOK_COLON);
+        case '?': return make_token(TOK_QUESTION);
         case '~': return make_token(TOK_TILDE);
         case '^': return make_token(TOK_CARET);
         case '%': return make_token(TOK_PERCENT);

@@ -1,6 +1,7 @@
 #include "memory.h"
 #include "name_tables.h"
 #include "vm.h"
+#include "zen_arena.h"
 #include <cmath>
 
 namespace zen
@@ -19,26 +20,22 @@ namespace zen
         if (gc->pause_depth == 0 && gc->vm && gc->bytes_allocated > gc->next_gc)
             gc_collect((VM *)gc->vm);
         gc->bytes_allocated += size;
-        return malloc(size);
+        return arena_alloc(&gc->arena, size);
     }
 
     void *zen_realloc(GC *gc, void *ptr, size_t old_size, size_t new_size)
     {
         if (gc->pause_depth == 0 && gc->vm && gc->bytes_allocated > gc->next_gc)
             gc_collect((VM *)gc->vm);
-        gc->bytes_allocated += new_size - old_size;
-        if (new_size == 0)
-        {
-            free(ptr);
-            return nullptr;
-        }
-        return realloc(ptr, new_size);
+        gc->bytes_allocated += (new_size > old_size) ? (new_size - old_size) : 0;
+        gc->bytes_allocated -= (old_size > new_size) ? (old_size - new_size) : 0;
+        return arena_realloc(&gc->arena, ptr, old_size, new_size);
     }
 
     void zen_free(GC *gc, void *ptr, size_t size)
     {
         gc->bytes_allocated -= size;
-        free(ptr);
+        arena_free(&gc->arena, ptr, size);
     }
 
     /* =========================================================
@@ -56,6 +53,8 @@ namespace zen
         gc->pause_saved_next_gc = kGCInitThreshold;
         gc->pause_depth = 0;
         gc->vm = nullptr;
+
+        arena_init(&gc->arena);
 
         /* String interning table — começa com 64 slots */
         gc->string_capacity = 64;

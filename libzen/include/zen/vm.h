@@ -8,6 +8,69 @@
 namespace zen
 {
 
+    /* Forward declarations */
+    struct NativeStructDef;
+
+    /* =========================================================
+    ** ZenIO — platform-abstracted file I/O (like SDL_RWops).
+    **
+    ** Override to redirect all file I/O for embedded/SDL/WASM.
+    ** Default implementations use standard C stdio.
+    **
+    ** Usage from C++ embedding:
+    **   ZenCallbacks cb = zen_default_callbacks();
+    **   cb.io.open    = my_sdl_open;   // e.g. SDL_RWFromFile wrapper
+    **   cb.io.read    = my_sdl_read;
+    **   cb.userdata   = my_ctx;
+    **   vm.set_callbacks(cb);
+    ** ========================================================= */
+
+    /* Opaque file handle returned by open(). */
+    typedef void *ZenFile;
+
+    struct ZenIO
+    {
+        /* Open a file. mode: "r", "rb", "w", "wb", "a", "ab".
+        ** Returns opaque handle, or nullptr on failure. */
+        ZenFile (*open)(const char *path, const char *mode, void *userdata);
+
+        /* Read up to `size` bytes into `buf`. Returns bytes actually read. */
+        long    (*read)(ZenFile file, void *buf, long size, void *userdata);
+
+        /* Write `size` bytes from `buf`. Returns bytes actually written. */
+        long    (*write)(ZenFile file, const void *buf, long size, void *userdata);
+
+        /* Seek to offset. whence: 0=SET, 1=CUR, 2=END. Returns new position or -1. */
+        long    (*seek)(ZenFile file, long offset, int whence, void *userdata);
+
+        /* Close handle. Returns 0 on success. */
+        int     (*close)(ZenFile file, void *userdata);
+
+        /* Check if file exists (without opening). Returns non-zero if it does. */
+        int     (*exists)(const char *path, void *userdata);
+    };
+
+    /* =========================================================
+    ** ZenCallbacks — all platform hooks in one struct.
+    ** ========================================================= */
+    struct ZenCallbacks
+    {
+        /* Granular file I/O (open/read/write/seek/close) */
+        ZenIO io;
+
+        /* Print output (used by the print statement). */
+        void (*print)(const char *str, int len, void *userdata);
+
+        /* Error output (used by runtime errors). */
+        void (*print_err)(const char *str, int len, void *userdata);
+
+        /* Opaque user pointer passed to all callbacks. */
+        void *userdata;
+    };
+
+    /* Returns default callbacks using stdio (fopen/fread/fwrite/fclose). */
+    ZenCallbacks zen_default_callbacks();
+
     /*
     ** CallFrame — estado de uma chamada activa.
     ** Igual ao conceito do toy_vm mas com multi-return.
@@ -252,6 +315,10 @@ namespace zen
         char *read_file(const char *path, const char *relative_to, long *out_size,
                         char *resolved_path = nullptr, int resolved_max = 0);
 
+        /* --- Callbacks (platform I/O hooks) --- */
+        void set_callbacks(const ZenCallbacks &cb) { callbacks_ = cb; }
+        const ZenCallbacks &get_callbacks() const   { return callbacks_; }
+
         /* --- Strings (para embedding — internadas) --- */
         ObjString *make_string(const char *str, int length = -1);
 
@@ -287,6 +354,8 @@ namespace zen
         bool call_value(ObjFiber *fiber, Value callee, int nargs, int nresults);
         bool call_closure(ObjFiber *fiber, ObjClosure *closure, int nargs, int nresults);
 
+        char *try_read_cb(const char *path, long *out_size);
+
         /* find_global moved to public */
 
         /* --- Estado --- */
@@ -313,6 +382,9 @@ namespace zen
         static const int MAX_SEARCH_PATHS = 16;
         char *search_paths_[MAX_SEARCH_PATHS];
         int num_search_paths_;
+
+        /* Platform I/O callbacks */
+        ZenCallbacks callbacks_;
 
         /* Module registry */
         static const int MAX_LIBS = 32;

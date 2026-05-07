@@ -1155,6 +1155,10 @@ namespace zen
         {
             print_statement();
         }
+        else if (match(TOK_DEL))
+        {
+            del_statement();
+        }
         else if (match(TOK_LBRACE))
         {
             begin_scope();
@@ -1965,9 +1969,9 @@ namespace zen
         consume(TOK_SEMICOLON, "Expected ';' after 'break'.");
 
         LoopCtx &loop = state_->loops[state_->loop_depth - 1];
-        if (loop.break_count >= 64)
+        if (loop.break_count >= 256)
         {
-            error("Too many 'break' statements in loop.");
+            error("Too many 'break' statements in loop (max 256).");
             return;
         }
         loop.breaks[loop.break_count++] = state_->emitter.emit_jump(OP_JMP, 0, previous_.line);
@@ -1992,6 +1996,11 @@ namespace zen
         else
         {
             /* Target not yet known (do-while) — emit forward jump, patch later */
+            if (loop.continue_count >= 256)
+            {
+                error("Too many 'continue' statements in loop (max 256).");
+                return;
+            }
             loop.continues[loop.continue_count++] =
                 state_->emitter.emit_jump(OP_JMP, 0, previous_.line);
         }
@@ -2054,6 +2063,19 @@ namespace zen
 
         consume(TOK_RPAREN, "Expected ')' after print arguments.");
         consume(TOK_SEMICOLON, "Expected ';' after print.");
+    }
+
+    void Compiler::del_statement()
+    {
+        /* del container[index]; */
+        int container = parse_precedence((Precedence)(PREC_CALL + 1), -1);
+        consume(TOK_LBRACKET, "Expected '[' after 'del' target.");
+        int key = expression(-1);
+        consume(TOK_RBRACKET, "Expected ']' after index.");
+        consume(TOK_SEMICOLON, "Expected ';' after 'del'.");
+        state_->emitter.emit_abc(OP_DELINDEX, container, key, 0, previous_.line);
+        free_reg(key);
+        free_reg(container);
     }
 
 } /* namespace zen */

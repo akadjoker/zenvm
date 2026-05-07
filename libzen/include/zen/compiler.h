@@ -28,6 +28,7 @@ namespace zen
     {
         PREC_NONE,
         PREC_ASSIGNMENT,  /* =              */
+        PREC_TERNARY,     /* ?:             */
         PREC_OR,          /* or ||          */
         PREC_AND,         /* and &&         */
         PREC_BITWISE_OR,  /* |              */
@@ -67,9 +68,9 @@ namespace zen
         int start;            /* offset of loop start (for back-jump) */
         int continue_target;  /* where continue jumps (-1 = patch later) */
         int scope_depth;      /* scope depth at loop start */
-        int breaks[64];       /* break jump offsets to patch */
+        int breaks[256];      /* break jump offsets to patch */
         int break_count;
-        int continues[64];    /* continue jump offsets to patch (do-while) */
+        int continues[256];   /* continue jump offsets to patch (do-while) */
         int continue_count;
     };
 
@@ -148,6 +149,7 @@ namespace zen
         void import_statement();
         void using_statement();
         void include_statement();
+        void del_statement();
 
         /* --- Expressions (Pratt parser) --- */
         int expression(int dest = -1); /* returns register with result */
@@ -173,6 +175,10 @@ namespace zen
 
         /* Infix handlers */
         int binary(Token op, int left, int dest);
+        int in_expr(int left, int dest);
+        int not_in_expr(int left, int dest);
+        int ternary_expr(int cond, int dest);
+        int slice_expr(int obj, int dest, int start_reg);
         int call_expr(int func_reg, int dest);
         int generic_call_expr(int func_reg, int dest);
         int index_expr(int obj_reg, int dest, bool canAssign);

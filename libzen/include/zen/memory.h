@@ -2,6 +2,7 @@
 #define ZEN_MEMORY_H
 
 #include "object.h"
+#include "zen_arena.h"
 
 namespace zen
 {
@@ -47,6 +48,9 @@ namespace zen
 
         /* Back-pointer to VM (for GC trigger from zen_alloc) */
         void *vm;
+
+        /* Pool allocator — O(1) alloc/free for small objects */
+        Arena arena;
     };
 
     /* API de memória — substitui new/delete/malloc/free */

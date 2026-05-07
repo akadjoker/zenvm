@@ -155,6 +155,11 @@ namespace zen
         /* --- Iteration (foreach) --- */
         OP_ITER_ELEM, /* R[A] = iter_elem(R[B], R[C]) — ordinal access for foreach */
 
+        /* --- Containment / deletion / slices --- */
+        OP_CONTAINS,  /* R[A] = (R[B] in R[C])                           */
+        OP_DELINDEX,  /* del R[A][R[B]]                                   */
+        OP_GETSLICE,  /* R[A] = R[B][R[C] : R[C+1] : R[C+2]]             */
+
         OP_HALT,
     };
 

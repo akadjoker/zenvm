@@ -388,6 +388,9 @@ namespace zen
             &&lbl_OP_GETFIELD_MUL,
             &&lbl_OP_GETFIELD_SUB,
             &&lbl_OP_ITER_ELEM,
+            &&lbl_OP_CONTAINS,
+            &&lbl_OP_DELINDEX,
+            &&lbl_OP_GETSLICE,
             &&lbl_OP_HALT,
         };
 
@@ -2387,35 +2390,38 @@ namespace zen
         CASE(OP_PRINT)
         {
             uint32_t i = *ip;
+            void *_ud = callbacks_.userdata;
+#define ZP(s, l) callbacks_.print((s), (int)(l), _ud)
+#define ZPS(s)   callbacks_.print((s), (int)sizeof(s) - 1, _ud)
             if (!ZEN_C(i))
             { /* C=0: normal print value */
                 Value v = R[ZEN_A(i)];
                 switch (v.type)
                 {
                 case VAL_NIL:
-                    zen_writes("nil");
+                    ZPS("nil");
                     break;
                 case VAL_BOOL:
-                    zen_writes(v.as.boolean ? "true" : "false");
+                    if (v.as.boolean) { ZPS("true"); } else { ZPS("false"); }
                     break;
                 case VAL_INT:
                 {
                     char ibuf[21];
                     int ilen = int_to_cstr(v.as.integer, ibuf);
-                    zen_write(ibuf, (size_t)ilen);
+                    ZP(ibuf, ilen);
                     break;
                 }
                 case VAL_FLOAT:
                 {
                     char fbuf[32];
                     int flen = snprintf(fbuf, sizeof(fbuf), "%g", v.as.number);
-                    zen_write(fbuf, (size_t)flen);
+                    ZP(fbuf, flen);
                     break;
                 }
                 case VAL_OBJ:
                     if (v.as.obj->type == OBJ_STRING)
                     {
-                        zen_write(((ObjString *)v.as.obj)->chars, (size_t)((ObjString *)v.as.obj)->length);
+                        ZP(((ObjString *)v.as.obj)->chars, ((ObjString *)v.as.obj)->length);
                     }
                     else if (is_instance(v) && instance_has_method_slot(v, SLOT_STR))
                     {
@@ -2434,7 +2440,7 @@ namespace zen
                             RT_ERROR("__str__ must return a string");
                         }
                         ObjString *s = as_string(result);
-                        zen_write(s->chars, (size_t)s->length);
+                        ZP(s->chars, s->length);
                     }
                     else
                     {
@@ -2445,15 +2451,17 @@ namespace zen
                 {
                     char pbuf[32];
                     int plen = snprintf(pbuf, sizeof(pbuf), "<ptr %p>", v.as.pointer);
-                    zen_write(pbuf, (size_t)plen);
+                    ZP(pbuf, plen);
                     break;
                 }
                 }
             }
             if (ZEN_B(i))
-                zen_writeln();
+                ZP("\n", 1);
             else
-                zen_writes(" ");
+                ZPS(" ");
+#undef ZP
+#undef ZPS
             NEXT();
         }
 
@@ -2524,7 +2532,7 @@ namespace zen
             Value v = R[ZEN_B(i)];
             if (v.type == VAL_INT)
                 R[ZEN_A(i)] = val_int(v.as.integer < 0
-                    ? (int32_t)(-(uint32_t)v.as.integer)
+                    ? (int64_t)(-(uint64_t)v.as.integer)
                     : v.as.integer);
             else
                 R[ZEN_A(i)] = val_float(fabs(to_number(v)));
@@ -2655,6 +2663,99 @@ namespace zen
                 R[ZEN_A(i2)] = val_int(vb.as.integer - vc.as.integer);
             else
                 R[ZEN_A(i2)] = val_float(to_number(vb) - to_number(vc));
+            NEXT();
+        }
+
+        CASE(OP_CONTAINS)
+        {
+            uint32_t i = *ip;
+            Value needle    = R[ZEN_B(i)];
+            Value haystack  = R[ZEN_C(i)];
+            bool found = false;
+            if (is_array(haystack)) {
+                ObjArray *arr = as_array(haystack);
+                int32_t cnt = arr_count(arr);
+                for (int32_t k = 0; k < cnt; k++)
+                    if (values_equal(arr->data[k], needle)) { found = true; break; }
+            } else if (is_map(haystack)) {
+                map_get(as_map(haystack), needle, &found);
+            } else if (is_set(haystack)) {
+                found = set_contains(as_set(haystack), needle);
+            } else if (is_string(haystack) && is_string(needle)) {
+                found = strstr(as_cstring(haystack), as_cstring(needle)) != nullptr;
+            } else {
+                RT_ERROR("'in' operator not supported for this type");
+            }
+            R[ZEN_A(i)] = val_bool(found);
+            NEXT();
+        }
+
+        CASE(OP_DELINDEX)
+        {
+            uint32_t i = *ip;
+            Value container = R[ZEN_A(i)];
+            Value key       = R[ZEN_B(i)];
+            if (is_array(container)) {
+                ObjArray *arr = as_array(container);
+                int32_t idx = (int32_t)key.as.integer;
+                if (idx < 0) idx += arr_count(arr);
+                if (idx < 0 || idx >= arr_count(arr)) RT_ERROR("del index out of range");
+                array_remove(arr, idx);
+            } else if (is_map(container)) {
+                map_delete(as_map(container), key);
+            } else {
+                RT_ERROR("'del' not supported for this type");
+            }
+            NEXT();
+        }
+
+        CASE(OP_GETSLICE)
+        {
+            uint32_t i  = *ip;
+            Value obj   = R[ZEN_B(i)];
+            int   base  = ZEN_C(i);          /* R[base]=start, R[base+1]=stop, R[base+2]=step */
+            Value vstart = R[base];
+            Value vstop  = R[base + 1];
+            Value vstep  = R[base + 2];
+
+            if (is_array(obj)) {
+                ObjArray *src = as_array(obj);
+                int32_t  len  = arr_count(src);
+                int32_t  step  = is_nil(vstep)  ? 1 : (int32_t)vstep.as.integer;
+                if (step == 0) RT_ERROR("slice step cannot be zero");
+                int32_t  start = is_nil(vstart) ? (step > 0 ? 0 : len - 1) : (int32_t)vstart.as.integer;
+                int32_t  stop  = is_nil(vstop)  ? (step > 0 ? len : -len - 1) : (int32_t)vstop.as.integer;
+                if (start < 0) start += len;
+                if (stop  < 0) stop  += len;
+                ObjArray *dst = new_array(&gc_);
+                if (step > 0)
+                    for (int32_t k = start; k < stop && k < len; k += step) array_push(&gc_, dst, src->data[k]);
+                else
+                    for (int32_t k = start; k > stop && k >= 0; k += step) array_push(&gc_, dst, src->data[k]);
+                R[ZEN_A(i)] = val_obj((Obj *)dst);
+            } else if (is_string(obj)) {
+                ObjString *src = as_string(obj);
+                int32_t   len  = src->length;
+                int32_t   step  = is_nil(vstep)  ? 1 : (int32_t)vstep.as.integer;
+                if (step == 0) RT_ERROR("slice step cannot be zero");
+                int32_t   start = is_nil(vstart) ? (step > 0 ? 0 : len - 1) : (int32_t)vstart.as.integer;
+                int32_t   stop  = is_nil(vstop)  ? (step > 0 ? len : -len - 1) : (int32_t)vstop.as.integer;
+                if (start < 0) start += len;
+                if (stop  < 0) stop  += len;
+                /* Build result string */
+                int32_t cap = len + 1;
+                char *buf = (char *)malloc(cap);
+                if (!buf) RT_ERROR("out of memory for slice");
+                int32_t n = 0;
+                if (step > 0)
+                    for (int32_t k = start; k < stop && k < len; k += step) buf[n++] = src->chars[k];
+                else
+                    for (int32_t k = start; k > stop && k >= 0; k += step) buf[n++] = src->chars[k];
+                R[ZEN_A(i)] = val_obj((Obj *)new_string(&gc_, buf, n));
+                free(buf);
+            } else {
+                RT_ERROR("slice not supported for this type");
+            }
             NEXT();
         }
 

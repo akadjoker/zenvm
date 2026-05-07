@@ -1,6 +1,7 @@
 #include "vm.h"
 #include "debug.h"
 #include "name_tables.h"
+#include "zenconf.h"
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -16,6 +17,70 @@
 namespace zen
 {
     /* =========================================================
+    ** Default callbacks — standard C stdio
+    ** ========================================================= */
+
+    static ZenFile default_io_open(const char *path, const char *mode, void * /*ud*/)
+    {
+        return (ZenFile)fopen(path, mode);
+    }
+
+    static long default_io_read(ZenFile file, void *buf, long size, void * /*ud*/)
+    {
+        return (long)fread(buf, 1, (size_t)size, (FILE *)file);
+    }
+
+    static long default_io_write(ZenFile file, const void *buf, long size, void * /*ud*/)
+    {
+        return (long)fwrite(buf, 1, (size_t)size, (FILE *)file);
+    }
+
+    static long default_io_seek(ZenFile file, long offset, int whence, void * /*ud*/)
+    {
+        if (fseek((FILE *)file, offset, whence) != 0)
+            return -1;
+        return ftell((FILE *)file);
+    }
+
+    static int default_io_close(ZenFile file, void * /*ud*/)
+    {
+        return fclose((FILE *)file);
+    }
+
+    static int default_io_exists(const char *path, void * /*ud*/)
+    {
+        FILE *f = fopen(path, "rb");
+        if (!f) return 0;
+        fclose(f);
+        return 1;
+    }
+
+    static void default_print(const char *str, int len, void * /*ud*/)
+    {
+        zen_write(str, (size_t)len);
+    }
+
+    static void default_print_err(const char *str, int len, void * /*ud*/)
+    {
+        zen_writeerr(str, (size_t)len);
+    }
+
+    ZenCallbacks zen_default_callbacks()
+    {
+        ZenCallbacks cb;
+        cb.io.open      = default_io_open;
+        cb.io.read      = default_io_read;
+        cb.io.write     = default_io_write;
+        cb.io.seek      = default_io_seek;
+        cb.io.close     = default_io_close;
+        cb.io.exists    = default_io_exists;
+        cb.print        = default_print;
+        cb.print_err    = default_print_err;
+        cb.userdata     = nullptr;
+        return cb;
+    }
+
+    /* =========================================================
     ** Construtor / Destrutor
     ** ========================================================= */
 
@@ -23,6 +88,8 @@ namespace zen
     {
         gc_init(&gc_);
         gc_.vm = this;
+
+        callbacks_ = zen_default_callbacks();
 
         /* Globals: dynamic, grow on demand via def_global. */
         globals_capacity_ = kInitGlobalCapacity;
@@ -85,9 +152,12 @@ namespace zen
         /* Free gray list */
         if (gc_.gray_list)
             free(gc_.gray_list);
-        /* Free intern table */
+        /* Free intern table — use plain free (calloc'd, not arena) */
         if (gc_.strings)
-            zen_free(&gc_, gc_.strings, gc_.string_capacity * sizeof(ObjString *));
+            free(gc_.strings);
+        gc_.strings = nullptr;
+        /* Destroy pool allocator (frees all arena chunks) */
+        arena_destroy(&gc_.arena);
     }
 
     /* =========================================================
@@ -417,6 +487,14 @@ namespace zen
         if (lib->init_fn)
             lib->init_fn(this);
         int base = num_globals_;
+
+        /* Non-base modules store qualified names ("libname.funcname") so that
+           def_global deduplication doesn't confuse same-named functions from
+           different modules (e.g. base64.encode vs utf8.encode). The "base"
+           module keeps unqualified names because the compiler looks them up
+           bare (find_global("print"), etc.). */
+        const bool qualify = lib->name && strcmp(lib->name, "base") != 0;
+
         for (int i = 0; i < lib->num_functions; i++)
         {
             /* Always force-allocate a new slot, even if a global with this name
@@ -429,9 +507,22 @@ namespace zen
             if (!grow_globals(num_globals_ + 1))
                 return base;
             int idx = num_globals_++;
-            const char *name = lib->functions[i].name;
-            int nlen = (int)strlen(name);
-            ObjString *s = intern_string(&gc_, name, nlen, hash_string(name, nlen));
+            const char *fname = lib->functions[i].name;
+            char qbuf[256];
+            const char *stored_name;
+            int stored_len;
+            if (qualify)
+            {
+                stored_len = snprintf(qbuf, sizeof(qbuf), "%s.%s", lib->name, fname);
+                stored_name = qbuf;
+            }
+            else
+            {
+                stored_name = fname;
+                stored_len = (int)strlen(fname);
+            }
+            ObjString *s = intern_string(&gc_, stored_name, stored_len,
+                                         hash_string(stored_name, stored_len));
             ObjNative *nat = new_native(&gc_, lib->functions[i].fn, lib->functions[i].arity, s);
             global_names_[idx] = s;
             globals_[idx] = val_obj((Obj *)nat);
@@ -452,7 +543,13 @@ namespace zen
         /* For each global that is nil, try to find a matching native function
            or constant in the registered libraries and install it.
            This is needed after loading bytecode: imports are resolved at compile
-           time (open_lib_globals), but bytecode doesn't serialize native values. */
+           time (open_lib_globals), but bytecode doesn't serialize native values.
+
+           Global names for module functions are stored as "libname.funcname"
+           (qualified) so we can route to the correct lib even when multiple
+           libs have functions with the same short name (e.g. base64.encode vs
+           utf8.encode). Unqualified names (base lib) fall back to searching
+           all registered libs. */
         for (int i = 0; i < num_globals_; i++)
         {
             if (!is_nil(globals_[i]))
@@ -462,40 +559,72 @@ namespace zen
             const char *name = global_names_[i]->chars;
             int name_len = global_names_[i]->length;
 
-            /* Search all registered libs for a function or constant with this name */
-            for (int li = 0; li < num_libs_; li++)
+            /* Check for qualified name "libname.funcname" */
+            const char *dot = strchr(name, '.');
+            if (dot)
             {
-                const NativeLib *lib = libs_[li];
-                bool found = false;
+                int lib_name_len = (int)(dot - name);
+                const char *func_name = dot + 1;
 
-                for (int fi = 0; fi < lib->num_functions; fi++)
+                for (int li = 0; li < num_libs_; li++)
                 {
-                    if (strcmp(lib->functions[fi].name, name) == 0)
-                    {
-                        ObjString *s = intern_string(&gc_, name, name_len,
-                                                     hash_string(name, name_len));
-                        ObjNative *nat = new_native(&gc_, lib->functions[fi].fn,
-                                                    lib->functions[fi].arity, s);
-                        globals_[i] = val_obj((Obj *)nat);
-                        found = true;
-                        break;
-                    }
-                }
-                if (found) break;
+                    const NativeLib *lib = libs_[li];
+                    if (!lib->name || strncmp(lib->name, name, (size_t)lib_name_len) != 0
+                        || lib->name[lib_name_len] != '\0')
+                        continue;
 
-                if (lib->constants)
-                {
-                    for (int ci = 0; ci < lib->num_constants; ci++)
+                    for (int fi = 0; fi < lib->num_functions; fi++)
                     {
-                        if (strcmp(lib->constants[ci].name, name) == 0)
+                        if (strcmp(lib->functions[fi].name, func_name) == 0)
                         {
-                            globals_[i] = lib->constants[ci].value;
+                            ObjString *s = intern_string(&gc_, name, name_len,
+                                                         hash_string(name, name_len));
+                            ObjNative *nat = new_native(&gc_, lib->functions[fi].fn,
+                                                        lib->functions[fi].arity, s);
+                            globals_[i] = val_obj((Obj *)nat);
+                            break;
+                        }
+                    }
+                    break; /* lib found (whether function matched or not) */
+                }
+            }
+            else
+            {
+                /* Unqualified name — base lib or legacy. Search all libs. */
+                for (int li = 0; li < num_libs_; li++)
+                {
+                    const NativeLib *lib = libs_[li];
+                    bool found = false;
+
+                    for (int fi = 0; fi < lib->num_functions; fi++)
+                    {
+                        if (strcmp(lib->functions[fi].name, name) == 0)
+                        {
+                            ObjString *s = intern_string(&gc_, name, name_len,
+                                                         hash_string(name, name_len));
+                            ObjNative *nat = new_native(&gc_, lib->functions[fi].fn,
+                                                        lib->functions[fi].arity, s);
+                            globals_[i] = val_obj((Obj *)nat);
                             found = true;
                             break;
                         }
                     }
+                    if (found) break;
+
+                    if (lib->constants)
+                    {
+                        for (int ci = 0; ci < lib->num_constants; ci++)
+                        {
+                            if (strcmp(lib->constants[ci].name, name) == 0)
+                            {
+                                globals_[i] = lib->constants[ci].value;
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (found) break;
                 }
-                if (found) break;
             }
         }
     }
@@ -826,12 +955,16 @@ namespace zen
     void VM::runtime_error(const char *fmt, ...)
     {
         had_error_ = true;
+        char msg[512];
         va_list args;
         va_start(args, fmt);
-        fprintf(stderr, "[zen runtime error] ");
-        vfprintf(stderr, fmt, args);
-        fprintf(stderr, "\n");
+        vsnprintf(msg, sizeof(msg), fmt, args);
         va_end(args);
+
+        void *ud = callbacks_.userdata;
+        callbacks_.print_err("[zen runtime error] ", 20, ud);
+        callbacks_.print_err(msg, (int)strlen(msg), ud);
+        callbacks_.print_err("\n", 1, ud);
 
         /* Stack trace */
         if (current_fiber_)
@@ -844,8 +977,10 @@ namespace zen
                 int line = (offset >= 0 && offset < func->code_count) ? func->lines[offset] : 0;
                 const char *fname = func->name ? func->name->chars : "<script>";
                 const char *src = func->source ? func->source->chars : "?";
-                fprintf(stderr, "  File \"%s\", line %d, in %s\n",
-                        src, line, fname);
+                char traceline[512];
+                int tlen = snprintf(traceline, sizeof(traceline),
+                                    "  File \"%s\", line %d, in %s\n", src, line, fname);
+                callbacks_.print_err(traceline, tlen > 0 ? tlen : 0, ud);
             }
         }
 
@@ -1325,26 +1460,31 @@ namespace zen
         search_paths_[num_search_paths_++] = copy;
     }
 
-    /* Try to open and read a file. Returns malloc'd buffer or nullptr. */
-    static char *try_read(const char *path, long *out_size)
+    /* Try to open and read a file via I/O callbacks. Returns malloc'd buffer or nullptr. */
+    char *VM::try_read_cb(const char *path, long *out_size)
     {
-        FILE *f = fopen(path, "rb");
+        void *ud = callbacks_.userdata;
+        ZenFile f = callbacks_.io.open(path, "rb", ud);
         if (!f)
             return nullptr;
-        fseek(f, 0, SEEK_END);
-        long size = ftell(f);
-        fseek(f, 0, SEEK_SET);
+
+        /* Get file size via seek */
+        callbacks_.io.seek(f, 0, 2 /*SEEK_END*/, ud);
+        long size = callbacks_.io.seek(f, 0, 1 /*SEEK_CUR*/, ud);
+        callbacks_.io.seek(f, 0, 0 /*SEEK_SET*/, ud);
+
         char *buf = (char *)malloc((size_t)size + 1);
         if (!buf)
         {
-            fclose(f);
+            callbacks_.io.close(f, ud);
             return nullptr;
         }
-        fread(buf, 1, (size_t)size, f);
-        buf[size] = '\0';
-        fclose(f);
+        long actual = callbacks_.io.read(f, buf, size, ud);
+        buf[actual] = '\0';
+        callbacks_.io.close(f, ud);
+
         if (out_size)
-            *out_size = size;
+            *out_size = actual;
         return buf;
     }
 
@@ -1371,7 +1511,7 @@ namespace zen
         /* 1. If absolute path, try directly */
         if (path[0] == '/')
         {
-            char *result = try_read(path, out_size);
+            char *result = try_read_cb(path, out_size);
             if (result)
                 store_resolved(path);
             return result;
@@ -1379,7 +1519,7 @@ namespace zen
 
         /* 1b. Try relative path from current working directory */
         {
-            char *result = try_read(path, out_size);
+            char *result = try_read_cb(path, out_size);
             if (result)
             {
                 store_resolved(path);
@@ -1402,7 +1542,7 @@ namespace zen
                 memcpy(fullpath, relative_to, (size_t)dir_len);
                 memcpy(fullpath + dir_len, path, (size_t)path_len);
                 fullpath[dir_len + path_len] = '\0';
-                char *result = try_read(fullpath, out_size);
+                char *result = try_read_cb(fullpath, out_size);
                 if (result)
                 {
                     store_resolved(fullpath);
@@ -1426,7 +1566,7 @@ namespace zen
                 fullpath[dlen] = '/';
                 memcpy(fullpath + dlen + 1, path, (size_t)plen);
                 fullpath[dlen + 1 + plen] = '\0';
-                char *result = try_read(fullpath, out_size);
+                char *result = try_read_cb(fullpath, out_size);
                 if (result)
                 {
                     store_resolved(fullpath);
