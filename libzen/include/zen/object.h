@@ -83,12 +83,6 @@ namespace zen
         Obj obj;
         int32_t length;
         int32_t capacity; /* allocated size of chars[] (0 = tight, length+1) */
-        int16_t array_method_id;
-        int16_t buffer_method_id;
-        int16_t map_method_id;
-        int16_t set_method_id;
-        int16_t string_method_id;
-        int16_t operator_slot_id;
         char chars[];     /* flexible array member — C99/C++11 */
     };
 

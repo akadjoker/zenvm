@@ -22,6 +22,11 @@ namespace zen
         gc->bytes_allocated += size;
         return arena_alloc(&gc->arena, size);
     }
+    void *zen_alloc_now(GC *gc, size_t size)
+    {
+        gc->bytes_allocated += size;
+        return arena_alloc(&gc->arena, size);
+    }
 
     void *zen_realloc(GC *gc, void *ptr, size_t old_size, size_t new_size)
     {
@@ -36,6 +41,19 @@ namespace zen
     {
         gc->bytes_allocated -= size;
         arena_free(&gc->arena, ptr, size);
+    }
+
+    bool objects_equal(Obj *a, Obj *b)
+    {
+        if (a == b) return true;
+        if (!a || !b || a->type != b->type) return false;
+        if (a->type == OBJ_STRING) {
+            ObjString *sa = (ObjString *)a;
+            ObjString *sb = (ObjString *)b;
+            return sa->length == sb->length &&
+                   memcmp(sa->chars, sb->chars, (size_t)sa->length) == 0;
+        }
+        return false;
     }
 
     /* =========================================================
@@ -97,6 +115,17 @@ namespace zen
         gc->objects = obj;
         return obj;
     }
+    static Obj *alloc_obj_now(GC *gc, size_t size, ObjType type)
+    {
+        Obj *obj = (Obj *)zen_alloc_now(gc, size);
+        obj->type = type;
+        obj->color = GC_BLACK;
+        obj->interned = 0;
+        obj->hash = 0;
+        obj->gc_next = gc->objects;
+        gc->objects = obj;
+        return obj;
+    }
 
     /* =========================================================
     ** Strings — interned, hash pré-calculado, buffer inline.
@@ -148,6 +177,18 @@ namespace zen
         gc->string_capacity = new_cap;
     }
 
+    static ObjString *alloc_string_raw(GC *gc, const char *chars, int length, uint32_t hash)
+    {
+        size_t total = sizeof(ObjString) + length + 1;
+        ObjString *str = (ObjString *)alloc_obj(gc, total, OBJ_STRING);
+        str->length = length;
+        str->capacity = 0; /* tight allocation: obj_size uses length + 1 */
+        memcpy(str->chars, chars, length);
+        str->chars[length] = '\0';
+        str->obj.hash = hash;
+        return str;
+    }
+
     ObjString *intern_string(GC *gc, const char *chars, int length, uint32_t hash)
     {
         /* Já existe? */
@@ -161,20 +202,7 @@ namespace zen
             intern_table_grow(gc);
         }
 
-        /* Aloca: header + length bytes + '\0' */
-        size_t total = sizeof(ObjString) + length + 1;
-        ObjString *str = (ObjString *)alloc_obj(gc, total, OBJ_STRING);
-        str->length = length;
-        str->capacity = 0; /* tight — no extra space */
-        str->array_method_id = (int16_t)lookup_name(kArrayMethods, chars, length);
-        str->buffer_method_id = (int16_t)lookup_name(kBufferMethods, chars, length);
-        str->map_method_id = (int16_t)lookup_name(kMapMethods, chars, length);
-        str->set_method_id = (int16_t)lookup_name(kSetMethods, chars, length);
-        str->string_method_id = (int16_t)lookup_name(kStringMethods, chars, length);
-        str->operator_slot_id = (int16_t)operator_slot_for_name(chars, length);
-        memcpy(str->chars, chars, length);
-        str->chars[length] = '\0';
-        str->obj.hash = hash;
+        ObjString *str = alloc_string_raw(gc, chars, length, hash);
         str->obj.interned = 1;
 
         /* Insere na tabela */
@@ -187,47 +215,65 @@ namespace zen
         return str;
     }
 
+    ObjString *new_string_uninit(GC *gc, int length)
+    {
+        size_t total = sizeof(ObjString) + length + 1;
+        ObjString *str = (ObjString *)alloc_obj(gc, total, OBJ_STRING);
+        str->length = length;
+        str->capacity = 0;
+        str->chars[length] = '\0';
+        str->obj.hash = 0; /* caller defines later */
+        return str;
+    }
+
     ObjString *new_string(GC *gc, const char *chars, int length)
     {
         uint32_t hash = hash_string(chars, length);
         return intern_string(gc, chars, length, hash);
     }
 
+    ObjString *create_string(GC *gc, const char *chars, int length)
+    {
+        uint32_t hash = hash_string(chars, length);
+        return alloc_string_raw(gc, chars, length, hash);
+    }
+
     ObjString *new_string_concat(GC *gc, ObjString *a, ObjString *b)
     {
-        /* Empty string optimization — zero alloc */
         if (a->length == 0) return b;
         if (b->length == 0) return a;
 
         int length = a->length + b->length;
 
-        if (length <= 40) {
-            /* Short path: stack buffer → intern (dedup, like Lua MAXSHORTLEN) */
-            char buf[40];
+        if (length <= 128) {
+            /* Short path: intern the result so == (pointer comparison) works */
+            char buf[129];
             memcpy(buf, a->chars, a->length);
             memcpy(buf + a->length, b->chars, b->length);
+            buf[length] = '\0';
             uint32_t hash = hash_string(buf, length);
             ObjString *existing = find_interned(gc, buf, length, hash);
             if (existing) return existing;
             return intern_string(gc, buf, length, hash);
         }
 
-        /* Long path: allocate final ObjString directly, skip interning
-           (like Lua's long strings — hash table lookup not worth the cost) */
-        size_t total = sizeof(ObjString) + length + 1;
-        ObjString *str = (ObjString *)alloc_obj(gc, total, OBJ_STRING);
+        /* Long path: generous capacity for future appends, skip interning */
+        int new_cap = (length + 1) * 2;
+        new_cap = (new_cap + 7) & ~7;
+
+        size_t total = sizeof(ObjString) + new_cap;
+        ObjString *str = (ObjString *)alloc_obj_now(gc, total, OBJ_STRING);
         str->length = length;
-        str->capacity = length + 1; /* tight alloc */
+        str->capacity = new_cap;
         memcpy(str->chars, a->chars, a->length);
         memcpy(str->chars + a->length, b->chars, b->length);
         str->chars[length] = '\0';
-        str->obj.hash = 0; /* lazy — computed on demand */
+        str->obj.hash = hash_string(str->chars, length);
         return str;
     }
 
     ObjString *string_append_inplace(GC *gc, ObjString *a, ObjString *b)
     {
-        /* Can we realloc in-place? Only if NOT interned */
         if (a->obj.interned || a->length == 0)
             return new_string_concat(gc, a, b);
         if (b->length == 0)
@@ -238,45 +284,29 @@ namespace zen
 
         if (a->capacity >= needed)
         {
-            /* Enough room — just append */
+            /* Fast path — espaço suficiente, zero alloc */
             memcpy(a->chars + a->length, b->chars, b->length);
             a->length = new_len;
             a->chars[new_len] = '\0';
-            a->obj.hash = 0; /* invalidate hash */
+            a->obj.hash = 0;
             return a;
         }
 
-        /* Grow with geometric strategy (1.5x or needed, whichever is larger) */
-        int new_cap = a->capacity + (a->capacity >> 1);
-        if (new_cap < needed) new_cap = needed;
-        /* Round up to 8-byte boundary */
+        /* Sem realloc — aloca nova string com capacidade generosa (2x needed) */
+        /* Evita o patch O(n) da GC list completamente */
+        int new_cap = needed * 2;
         new_cap = (new_cap + 7) & ~7;
 
-        size_t old_size = sizeof(ObjString) + a->capacity;
-        size_t new_size = sizeof(ObjString) + new_cap;
-
-        /* Must fix gc_next linked list if realloc moves the pointer */
-        ObjString *result = (ObjString *)zen_realloc(gc, a, old_size, new_size);
-        if (result != a)
-        {
-            /* Pointer moved — patch GC linked list */
-            Obj **pp = &gc->objects;
-            while (*pp)
-            {
-                if (*pp == (Obj *)a)
-                {
-                    *pp = (Obj *)result;
-                    break;
-                }
-                pp = &(*pp)->gc_next;
-            }
-        }
-        memcpy(result->chars + result->length, b->chars, b->length);
+        size_t total = sizeof(ObjString) + new_cap;
+        ObjString *result = (ObjString *)alloc_obj(gc, total, OBJ_STRING);
         result->length = new_len;
         result->capacity = new_cap;
+        memcpy(result->chars, a->chars, a->length);
+        memcpy(result->chars + a->length, b->chars, b->length);
         result->chars[new_len] = '\0';
         result->obj.hash = 0;
         return result;
+        /* 'a' fica orphan — GC trata dela no próximo sweep */
     }
 
     /* =========================================================
@@ -1786,12 +1816,13 @@ namespace zen
         /* Sweep dead objects */
         gc_sweep(gc);
 
-        /* Adjust next threshold */
+        /* Adjust next threshold — ensure next_gc is always above bytes_allocated
+        ** so GC never thrashes when the live set is large. */
         gc->next_gc = (size_t)(gc->bytes_allocated * kGCGrowFactor);
         if (gc->next_gc < kGCMinThreshold)
             gc->next_gc = kGCMinThreshold;
-        if (gc->next_gc > kGCMaxThreshold)
-            gc->next_gc = kGCMaxThreshold;
+        while (gc->next_gc <= gc->bytes_allocated)
+            gc->next_gc *= 2;
 
 #ifdef ZEN_DEBUG_GC
         fprintf(stderr, "[GC] collected %zu bytes (%zu -> %zu), next at %zu\n",

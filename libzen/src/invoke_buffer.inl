@@ -5,14 +5,16 @@
 
 ObjBuffer *buf = as_buffer(receiver);
 
-switch (method->buffer_method_id)
+#define BUFFER_METHOD(lit) (method->length == (int)(sizeof(lit) - 1) && memcmp(mname, lit, sizeof(lit) - 1) == 0)
+
+do
 {
-case BUFFER_LEN:
+if (BUFFER_METHOD("len"))
 {
     R[base] = val_int(buf->count);
     break;
 }
-case BUFFER_FILL:
+if (BUFFER_METHOD("fill"))
 {
     if (arg_count != 1)
     {
@@ -31,13 +33,14 @@ case BUFFER_FILL:
     R[base] = receiver;
     break;
 }
-case BUFFER_BYTE_LEN:
+if (BUFFER_METHOD("byte_len"))
 {
     R[base] = val_int(buf->count * buffer_elem_size[buf->btype]);
     break;
 }
-default:
 {
     RT_ERROR("buffer has no method '%s'", mname);
 }
-}
+} while (0);
+
+#undef BUFFER_METHOD

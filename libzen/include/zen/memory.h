@@ -55,11 +55,15 @@ namespace zen
 
     /* API de memória — substitui new/delete/malloc/free */
     void *zen_alloc(GC *gc, size_t size);
+    void *zen_alloc_now(GC *gc, size_t size); /* alloc sem trigger GC */
     void *zen_realloc(GC *gc, void *ptr, size_t old_size, size_t new_size);
     void zen_free(GC *gc, void *ptr, size_t size);
 
     /* Criação de objectos (aloca + regista no GC) */
     ObjString *new_string(GC *gc, const char *chars, int length);
+    ObjString *new_string_uninit(GC *gc, int length);
+    ObjString *create_string(GC *gc, const char *chars, int length); /* non-interned */
+    ObjString *intern_string(GC *gc, const char *chars, int length, uint32_t hash);
     ObjString *new_string_concat(GC *gc, ObjString *a, ObjString *b);
     ObjString *string_append_inplace(GC *gc, ObjString *a, ObjString *b);
     ObjFunc *new_func(GC *gc);
@@ -182,13 +186,27 @@ namespace zen
     }
 
     /* String interning */
-    ObjString *intern_string(GC *gc, const char *chars, int length, uint32_t hash);
     ObjString *find_interned(GC *gc, const char *chars, int length, uint32_t hash);
 
     /* Convenience: auto-hash */
     inline ObjString *intern_string(GC *gc, const char *chars, int length)
     {
         return intern_string(gc, chars, length, hash_string(chars, length));
+    }
+
+    inline const uint8_t *get_ws_table(void)
+    {
+        static uint8_t ws[256] = {0};
+        static int init = 0;
+        if (!init)
+        {
+            ws[(uint8_t)' '] = 1;
+            ws[(uint8_t)'\t'] = 1;
+            ws[(uint8_t)'\n'] = 1;
+            ws[(uint8_t)'\r'] = 1;
+            init = 1;
+        }
+        return ws;
     }
 
 } /* namespace zen */

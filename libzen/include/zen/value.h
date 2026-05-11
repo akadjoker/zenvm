@@ -124,6 +124,9 @@ namespace zen
         return 0;
     }
 
+    /* Content-based equality for objects (strings compared by value) */
+    bool objects_equal(Obj *a, Obj *b);
+
     /* Comparação de igualdade — fast path for int (most common in tables) */
     inline bool values_equal(Value a, Value b)
     {
@@ -141,7 +144,7 @@ namespace zen
             case VAL_FLOAT:
                 return a.as.number == b.as.number;
             case VAL_OBJ:
-                return a.as.obj == b.as.obj;
+                return objects_equal(a.as.obj, b.as.obj);
             case VAL_PTR:
                 return a.as.pointer == b.as.pointer;
             }

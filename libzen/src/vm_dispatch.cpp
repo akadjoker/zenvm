@@ -495,7 +495,8 @@ namespace zen
             }
             else if (is_string(vb) && is_string(vc))
             {
-                R[ZEN_A(i)] = val_obj((Obj *)new_string_concat(&gc_, as_string(vb), as_string(vc)));
+                /* Fix: usa string_append_inplace para aproveitar capacidade extra */
+                R[ZEN_A(i)] = val_obj((Obj *)string_append_inplace(&gc_, as_string(vb), as_string(vc)));
             }
             else if (is_instance(vb) || is_instance(vc))
             {
@@ -532,7 +533,8 @@ namespace zen
                         if (had_error_) return;
                     }
                     LOAD_STATE();
-                    R[ZEN_A(i)] = val_obj((Obj *)new_string_concat(&gc_, as_string(sv), as_string(sc)));
+                    /* Fix: string_append_inplace em vez de new_string_concat */
+                    R[ZEN_A(i)] = val_obj((Obj *)string_append_inplace(&gc_, as_string(sv), as_string(sc)));
                 }
             }
             else if (is_string(vb) || is_string(vc))
@@ -804,7 +806,7 @@ namespace zen
                     if (had_error_) return;
                 }
                 LOAD_STATE();
-                R[dst] = val_obj((Obj *)new_string_concat(&gc_, as_string(sv), as_string(sc)));
+                R[dst] = val_obj((Obj *)string_append_inplace(&gc_, as_string(sv), as_string(sc)));
             }
             else
             {
@@ -2257,7 +2259,7 @@ namespace zen
             /* Fast path: both are strings already */
             if (is_string(vb) && is_string(vc))
             {
-                R[ZEN_A(i)] = val_obj((Obj *)new_string_concat(&gc_, as_string(vb), as_string(vc)));
+                R[ZEN_A(i)] = val_obj((Obj *)string_append_inplace(&gc_, as_string(vb), as_string(vc)));
                 NEXT();
             }
 

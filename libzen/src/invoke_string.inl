@@ -6,15 +6,16 @@
 */
 
 ObjString *str = as_string(receiver);
+#define STR_METHOD(lit) (method->length == (int)(sizeof(lit) - 1) && memcmp(mname, lit, sizeof(lit) - 1) == 0)
 
-switch (method->string_method_id)
+do
 {
-case STRING_LEN:
+if (STR_METHOD("len"))
 {
     R[base] = val_int(str->length);
     break;
 }
-case STRING_SUB:
+if (STR_METHOD("sub"))
 {
     /* str.sub(start, end?) → substring [start, end) */
     int32_t slen = str->length;
@@ -26,12 +27,12 @@ case STRING_SUB:
     if (start < 0) start = 0;
     if (end > slen) end = slen;
     if (start >= end)
-        R[base] = val_obj((Obj *)new_string(&gc_, "", 0));
+        R[base] = val_obj((Obj *)create_string(&gc_, "", 0));
     else
-        R[base] = val_obj((Obj *)new_string(&gc_, str->chars + start, end - start));
+        R[base] = val_obj((Obj *)create_string(&gc_, str->chars + start, end - start));
     break;
 }
-case STRING_FIND:
+if (STR_METHOD("find"))
 {
     /* str.find(needle) → index or -1 */
     if (arg_count != 1 || !is_string(args[0])) { RT_ERROR("find() expects a string argument"); }
@@ -43,53 +44,85 @@ case STRING_FIND:
     }
     break;
 }
-case STRING_UPPER:
+if (STR_METHOD("upper"))
 {
     /* str.upper() → new uppercase string */
     char *buf = (char *)malloc(str->length);
     for (int si = 0; si < str->length; si++)
         buf[si] = (str->chars[si] >= 'a' && str->chars[si] <= 'z') ? str->chars[si] - 32 : str->chars[si];
-    R[base] = val_obj((Obj *)new_string(&gc_, buf, str->length));
+    R[base] = val_obj((Obj *)create_string(&gc_, buf, str->length));
     free(buf);
     break;
 }
-case STRING_LOWER:
+if (STR_METHOD("lower"))
 {
     /* str.lower() → new lowercase string */
     char *buf = (char *)malloc(str->length);
     for (int si = 0; si < str->length; si++)
         buf[si] = (str->chars[si] >= 'A' && str->chars[si] <= 'Z') ? str->chars[si] + 32 : str->chars[si];
-    R[base] = val_obj((Obj *)new_string(&gc_, buf, str->length));
+    R[base] = val_obj((Obj *)create_string(&gc_, buf, str->length));
     free(buf);
     break;
 }
-case STRING_SPLIT:
+if (STR_METHOD("split"))
 {
     /* str.split(sep) → array of strings */
-    if (arg_count != 1 || !is_string(args[0])) { RT_ERROR("split() expects a string argument"); }
-    ObjString *sep = as_string(args[0]);
+    if (arg_count > 1 || (arg_count == 1 && !is_string(args[0])))
+        RT_ERROR("split() expects zero args or a string separator");
+
     ObjArray *result = new_array(&gc_);
-    if (sep->length == 0) {
-        /* Split into individual chars */
-        for (int si = 0; si < str->length; si++)
-            array_push(&gc_, result, val_obj((Obj *)new_string(&gc_, &str->chars[si], 1)));
-    } else {
-        const char *start_ptr = str->chars;
-        const char *end_ptr = str->chars + str->length;
-        while (start_ptr <= end_ptr) {
-            const char *found = (const char *)memmem(start_ptr, end_ptr - start_ptr, sep->chars, sep->length);
-            if (!found) {
-                array_push(&gc_, result, val_obj((Obj *)new_string(&gc_, start_ptr, (int)(end_ptr - start_ptr))));
-                break;
-            }
-            array_push(&gc_, result, val_obj((Obj *)new_string(&gc_, start_ptr, (int)(found - start_ptr))));
-            start_ptr = found + sep->length;
+    R[base] = val_obj((Obj *)result);
+    const uint8_t *ws = get_ws_table();
+
+    if (arg_count == 0)
+    {
+        int i = 0;
+        const char *chars = str->chars;
+        const int len = str->length;
+        while (i < len)
+        {
+            while (i < len && ws[(uint8_t)chars[i]]) i++;
+            if (i >= len) break;
+            int start = i;
+            while (i < len && !ws[(uint8_t)chars[i]]) i++;
+            array_push(&gc_, as_array(R[base]),
+                val_obj((Obj *)create_string(&gc_, chars + start, i - start)));
         }
     }
-    R[base] = val_obj((Obj *)result);
+    else
+    {
+        ObjString *sep = as_string(args[0]);
+        if (sep->length == 0)
+        {
+            for (int si = 0; si < str->length; si++)
+                array_push(&gc_, as_array(R[base]),
+                    val_obj((Obj *)create_string(&gc_, &str->chars[si], 1)));
+        }
+        else
+        {
+            const char *start_ptr = str->chars;
+            const char *end_ptr = str->chars + str->length;
+            while (start_ptr <= end_ptr)
+            {
+                const char *found = (const char *)memmem(
+                    start_ptr, end_ptr - start_ptr, sep->chars, sep->length);
+                if (!found)
+                {
+                    array_push(&gc_, as_array(R[base]),
+                        val_obj((Obj *)create_string(&gc_, start_ptr,
+                            (int)(end_ptr - start_ptr))));
+                    break;
+                }
+                array_push(&gc_, as_array(R[base]),
+                    val_obj((Obj *)create_string(&gc_, start_ptr,
+                        (int)(found - start_ptr))));
+                start_ptr = found + sep->length;
+            }
+        }
+    }
     break;
 }
-case STRING_TRIM:
+if (STR_METHOD("trim") || STR_METHOD("strip"))
 {
     /* str.trim() → strip leading/trailing whitespace */
     int start = 0, end = str->length;
@@ -99,10 +132,10 @@ case STRING_TRIM:
     while (end > start && (str->chars[end-1] == ' ' || str->chars[end-1] == '\t' ||
                            str->chars[end-1] == '\n' || str->chars[end-1] == '\r'))
         end--;
-    R[base] = val_obj((Obj *)new_string(&gc_, str->chars + start, end - start));
+    R[base] = val_obj((Obj *)create_string(&gc_, str->chars + start, end - start));
     break;
 }
-case STRING_REPLACE:
+if (STR_METHOD("replace"))
 {
     /* str.replace(old, new) → new string with all occurrences replaced */
     if (arg_count != 2 || !is_string(args[0]) || !is_string(args[1])) {
@@ -135,13 +168,13 @@ case STRING_REPLACE:
                 memcpy(wp, new_s->chars, new_s->length); wp += new_s->length;
                 sp = f + old_s->length;
             }
-            R[base] = val_obj((Obj *)new_string(&gc_, buf, new_len));
+            R[base] = val_obj((Obj *)create_string(&gc_, buf, new_len));
             free(buf);
         }
     }
     break;
 }
-case STRING_STARTS_WITH:
+if (STR_METHOD("starts_with") || STR_METHOD("startswith"))
 {
     if (arg_count != 1 || !is_string(args[0])) { RT_ERROR("starts_with() expects a string"); }
     ObjString *prefix = as_string(args[0]);
@@ -150,7 +183,7 @@ case STRING_STARTS_WITH:
     R[base] = val_bool(match);
     break;
 }
-case STRING_ENDS_WITH:
+if (STR_METHOD("ends_with") || STR_METHOD("endswith"))
 {
     if (arg_count != 1 || !is_string(args[0])) { RT_ERROR("ends_with() expects a string"); }
     ObjString *suffix = as_string(args[0]);
@@ -159,16 +192,16 @@ case STRING_ENDS_WITH:
     R[base] = val_bool(match);
     break;
 }
-case STRING_CHAR_AT:
+if (STR_METHOD("char_at"))
 {
     /* str.char_at(idx) → single-char string */
     if (arg_count != 1 || !is_int(args[0])) { RT_ERROR("char_at() expects an integer"); }
     int32_t idx = args[0].as.integer;
     if (idx < 0 || idx >= str->length) { R[base] = val_nil(); }
-    else { R[base] = val_obj((Obj *)new_string(&gc_, &str->chars[idx], 1)); }
+    else { R[base] = val_obj((Obj *)create_string(&gc_, &str->chars[idx], 1)); }
     break;
 }
-case STRING_BYTE_AT:
+if (STR_METHOD("byte_at"))
 {
     /* str.byte_at(idx) → integer byte value */
     if (arg_count != 1 || !is_int(args[0])) { RT_ERROR("byte_at() expects an integer"); }
@@ -177,21 +210,21 @@ case STRING_BYTE_AT:
     else { R[base] = val_int((uint8_t)str->chars[idx]); }
     break;
 }
-case STRING_REPEAT:
+if (STR_METHOD("repeat"))
 {
     /* str.repeat(n) → string repeated n times */
     if (arg_count != 1 || !is_int(args[0])) { RT_ERROR("repeat() expects an integer"); }
     int32_t n = (int32_t)args[0].as.integer;
-    if (n <= 0 || str->length == 0) { R[base] = val_obj((Obj *)new_string(&gc_, "", 0)); break; }
+    if (n <= 0 || str->length == 0) { R[base] = val_obj((Obj *)create_string(&gc_, "", 0)); break; }
     int32_t new_len = str->length * n;
     char *buf = (char *)malloc(new_len);
     for (int ri = 0; ri < n; ri++)
         memcpy(buf + ri * str->length, str->chars, str->length);
-    R[base] = val_obj((Obj *)new_string(&gc_, buf, new_len));
+    R[base] = val_obj((Obj *)create_string(&gc_, buf, new_len));
     free(buf);
     break;
 }
-case STRING_COUNT:
+if (STR_METHOD("count"))
 {
     /* str.count(needle) → number of non-overlapping occurrences */
     if (arg_count != 1 || !is_string(args[0])) { RT_ERROR("count() expects a string"); }
@@ -209,7 +242,7 @@ case STRING_COUNT:
     R[base] = val_int(cnt);
     break;
 }
-case STRING_PAD_LEFT:
+if (STR_METHOD("pad_left"))
 {
     /* str.pad_left(width [, char=' ']) → right-justify string in field of width */
     if (arg_count < 1 || !is_int(args[0])) { RT_ERROR("pad_left() expects (width[, char])"); }
@@ -222,11 +255,11 @@ case STRING_PAD_LEFT:
     char *buf = (char *)malloc(width);
     memset(buf, pad_ch, pad);
     memcpy(buf + pad, str->chars, str->length);
-    R[base] = val_obj((Obj *)new_string(&gc_, buf, width));
+    R[base] = val_obj((Obj *)create_string(&gc_, buf, width));
     free(buf);
     break;
 }
-case STRING_PAD_RIGHT:
+if (STR_METHOD("pad_right"))
 {
     /* str.pad_right(width [, char=' ']) → left-justify string in field of width */
     if (arg_count < 1 || !is_int(args[0])) { RT_ERROR("pad_right() expects (width[, char])"); }
@@ -239,11 +272,11 @@ case STRING_PAD_RIGHT:
     char *buf = (char *)malloc(width);
     memcpy(buf, str->chars, str->length);
     memset(buf + str->length, pad_ch, pad);
-    R[base] = val_obj((Obj *)new_string(&gc_, buf, width));
+    R[base] = val_obj((Obj *)create_string(&gc_, buf, width));
     free(buf);
     break;
 }
-case STRING_CONTAINS:
+if (STR_METHOD("contains"))
 {
     /* str.contains(needle) → bool */
     if (arg_count != 1 || !is_string(args[0])) { RT_ERROR("contains() expects a string"); }
@@ -253,18 +286,19 @@ case STRING_CONTAINS:
     R[base] = val_bool(f != nullptr);
     break;
 }
-case STRING_REVERSE:
+if (STR_METHOD("reverse"))
 {
     /* str.reverse() → reversed string (byte-level, not UTF-8 aware) */
     char *buf = (char *)malloc(str->length);
     for (int ri = 0; ri < str->length; ri++)
         buf[ri] = str->chars[str->length - 1 - ri];
-    R[base] = val_obj((Obj *)new_string(&gc_, buf, str->length));
+    R[base] = val_obj((Obj *)create_string(&gc_, buf, str->length));
     free(buf);
     break;
 }
-default:
 {
     RT_ERROR("string has no method '%s'", mname);
 }
-}
+} while (0);
+
+#undef STR_METHOD

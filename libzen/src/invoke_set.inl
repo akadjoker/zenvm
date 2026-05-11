@@ -7,43 +7,45 @@
 
 ObjSet *set = as_set(receiver);
 
-switch (method->set_method_id)
+#define SET_METHOD(lit) (method->length == (int)(sizeof(lit) - 1) && memcmp(mname, lit, sizeof(lit) - 1) == 0)
+
+do
 {
-case SET_ADD:
+if (SET_METHOD("add"))
 {
     /* set.add(val) → returns true if newly added */
     if (arg_count != 1) { RT_ERROR("add() expects 1 argument"); }
     R[base] = val_bool(set_add(&gc_, set, args[0]));
     break;
 }
-case SET_HAS:
+if (SET_METHOD("has"))
 {
     /* set.has(val) → bool */
     if (arg_count != 1) { RT_ERROR("has() expects 1 argument"); }
     R[base] = val_bool(set_contains(set, args[0]));
     break;
 }
-case SET_DELETE:
+if (SET_METHOD("delete"))
 {
     /* set.delete(val) → returns true if was present */
     if (arg_count != 1) { RT_ERROR("delete() expects 1 argument"); }
     R[base] = val_bool(set_remove(set, args[0]));
     break;
 }
-case SET_SIZE:
+if (SET_METHOD("size"))
 {
     /* set.size() → number of elements */
     R[base] = val_int(set->count);
     break;
 }
-case SET_CLEAR:
+if (SET_METHOD("clear"))
 {
     /* set.clear() → remove all elements */
     set_clear(&gc_, set);
     R[base] = val_nil();
     break;
 }
-case SET_VALUES:
+if (SET_METHOD("values"))
 {
     /* set.values() → array of all values */
     ObjArray *result = new_array(&gc_);
@@ -55,7 +57,7 @@ case SET_VALUES:
     R[base] = val_obj((Obj *)result);
     break;
 }
-case SET_DUMP:
+if (SET_METHOD("dump"))
 {
     /* set.dump() → pretty-print contents recursively */
     dump_value_rec(receiver, 0);
@@ -63,8 +65,9 @@ case SET_DUMP:
     R[base] = val_nil();
     break;
 }
-default:
 {
     RT_ERROR("set has no method '%s'", mname);
 }
-}
+} while (0);
+
+#undef SET_METHOD

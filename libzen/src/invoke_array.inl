@@ -15,9 +15,11 @@
 
 ObjArray *arr = as_array(receiver);
 
-switch (method->array_method_id)
+#define ARRAY_METHOD(lit) (method->length == (int)(sizeof(lit) - 1) && memcmp(mname, lit, sizeof(lit) - 1) == 0)
+
+do
 {
-case ARRAY_PUSH:
+if (ARRAY_METHOD("push") || ARRAY_METHOD("append"))
 {
     /* arr.push(val) → append, returns new length */
     if (arg_count < 1)
@@ -29,7 +31,7 @@ case ARRAY_PUSH:
     R[base] = val_int(arr_count(arr));
     break;
 }
-case ARRAY_POP:
+if (ARRAY_METHOD("pop"))
 {
     /* arr.pop() → remove+return last element */
     if (arr_count(arr) == 0)
@@ -39,13 +41,13 @@ case ARRAY_POP:
     R[base] = *--arr->end;
     break;
 }
-case ARRAY_LEN:
+if (ARRAY_METHOD("len"))
 {
     /* arr.len() → length */
     R[base] = val_int(arr_count(arr));
     break;
 }
-case ARRAY_REMOVE:
+if (ARRAY_METHOD("remove"))
 {
     /* arr.remove(idx) → remove at index, return removed value */
     if (arg_count != 1 || !is_int(args[0]))
@@ -64,7 +66,7 @@ case ARRAY_REMOVE:
     R[base] = removed;
     break;
 }
-case ARRAY_INSERT:
+if (ARRAY_METHOD("insert"))
 {
     /* arr.insert(idx, val) → insert at position */
     if (arg_count != 2 || !is_int(args[0]))
@@ -84,7 +86,7 @@ case ARRAY_INSERT:
     R[base] = val_int(arr_count(arr));
     break;
 }
-case ARRAY_SLICE:
+if (ARRAY_METHOD("slice"))
 {
     /* arr.slice(start, end?) → new array [start, end) */
     int32_t count = arr_count(arr);
@@ -112,21 +114,21 @@ case ARRAY_SLICE:
     R[base] = val_obj((Obj *)result);
     break;
 }
-case ARRAY_REVERSE:
+if (ARRAY_METHOD("reverse"))
 {
     /* arr.reverse() → in-place reverse, returns arr */
     array_reverse(arr);
     R[base] = receiver;
     break;
 }
-case ARRAY_CLEAR:
+if (ARRAY_METHOD("clear"))
 {
     /* arr.clear() → empty the array */
     array_clear(arr);
     R[base] = val_nil();
     break;
 }
-case ARRAY_CONTAINS:
+if (ARRAY_METHOD("contains"))
 {
     /* arr.contains(val) → bool */
     if (arg_count != 1)
@@ -136,7 +138,7 @@ case ARRAY_CONTAINS:
     R[base] = val_bool(array_contains(arr, args[0]));
     break;
 }
-case ARRAY_JOIN:
+if (ARRAY_METHOD("join"))
 {
     /* arr.join(sep?) → string */
     const char *sep = "";
@@ -214,11 +216,11 @@ case ARRAY_JOIN:
             p += 3;
         }
     }
-    R[base] = val_obj((Obj *)new_string(&gc_, buf, total_len));
+    R[base] = val_obj((Obj *)create_string(&gc_, buf, total_len));
     free(buf);
     break;
 }
-case ARRAY_SORT:
+if (ARRAY_METHOD("sort"))
 {
     /* arr.sort() or arr.sort("desc") → in-place sort using qsort */
     if (arg_count > 1)
@@ -266,7 +268,7 @@ case ARRAY_SORT:
     R[base] = receiver;
     break;
 }
-case ARRAY_INDEX_OF:
+if (ARRAY_METHOD("index_of") || ARRAY_METHOD("index"))
 {
     /* arr.index_of(val) → index or -1 */
     if (arg_count != 1)
@@ -276,7 +278,7 @@ case ARRAY_INDEX_OF:
     R[base] = val_int(array_find(arr, args[0]));
     break;
 }
-case ARRAY_DUMP:
+if (ARRAY_METHOD("dump"))
 {
     /* arr.dump() → pretty-print contents recursively */
     dump_value_rec(receiver, 0);
@@ -284,8 +286,9 @@ case ARRAY_DUMP:
     R[base] = val_nil();
     break;
 }
-default:
 {
     RT_ERROR("array has no method '%s'", mname);
 }
-}
+} while (0);
+
+#undef ARRAY_METHOD

@@ -6,6 +6,7 @@
 
 #include "compiler.h"
 #include "vm.h"
+#include "name_tables.h"
 
 namespace zen
 {
@@ -800,7 +801,7 @@ namespace zen
                                              hash_string(methods[m].name, mnlen2));
             map_set(gc_, klass->methods, val_obj((Obj *)mname), val_obj((Obj *)cl));
 
-            int op_slot = mname->operator_slot_id;
+            int op_slot = operator_slot_for_name(methods[m].name, mnlen2);
             if (op_slot >= 0)
             {
                 klass->operator_slots[op_slot] = val_obj((Obj *)cl);

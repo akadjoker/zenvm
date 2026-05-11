@@ -1007,7 +1007,7 @@ namespace
                 !read_value(vm, r, minor, &method, err, err_len))
                 return nullptr;
             map_set(gc, klass->methods, val_obj((Obj *)mname), method);
-            int op_slot = mname->operator_slot_id;
+            int op_slot = operator_slot_for_name(mname->chars, mname->length);
             if (op_slot >= 0 && op_slot < kOperatorSlotCount)
                 klass->operator_slots[op_slot] = method;
         }

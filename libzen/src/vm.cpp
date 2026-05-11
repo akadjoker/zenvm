@@ -1037,7 +1037,7 @@ namespace zen
         map_set(&vm_->gc_, klass_->methods, val_obj((Obj *)s), val_obj((Obj *)nat));
 
         int name_len = (int)strlen(name);
-        int op_slot = s->operator_slot_id;
+        int op_slot = operator_slot_for_name(name, name_len);
         if (op_slot >= 0)
         {
             klass_->operator_slots[op_slot] = val_obj((Obj *)nat);
@@ -1128,7 +1128,7 @@ namespace zen
 
     Value VM::make_native_struct(NativeStructDef *def, Value *args, int nargs)
     {
-        gc_pause(&gc_);
+        
         ObjNativeStruct *ns = (ObjNativeStruct *)zen_alloc(&gc_, sizeof(ObjNativeStruct));
         ns->obj.type = OBJ_NATIVE_STRUCT;
         ns->obj.color = GC_BLACK;
@@ -1138,8 +1138,8 @@ namespace zen
         ns->obj.gc_next = gc_.objects;
         gc_.objects = (Obj *)ns;
         ns->def = def;
-        ns->data = zen_alloc(&gc_, def->struct_size);
-        gc_resume(&gc_);
+        ns->data = zen_alloc_now(&gc_, def->struct_size);
+        
         memset(ns->data, 0, def->struct_size);
         if (def->ctor)
             def->ctor(this, ns->data, nargs, args);
