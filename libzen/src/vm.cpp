@@ -106,7 +106,7 @@ namespace zen
         num_selectors_ = 0;
 
         /* Criar main fiber */
-        main_fiber_ = new_fiber(nullptr, kMaxRegs * 4);
+        main_fiber_ = new_fiber(nullptr, kMaxFrames * kMaxRegs);
         current_fiber_ = main_fiber_;
     }
 
@@ -204,8 +204,12 @@ namespace zen
         fiber->stack = (Value *)zen_alloc(&gc_, stack_size * sizeof(Value));
         fiber->stack_top = fiber->stack;
 
-        fiber->frame_capacity = max_frames;
-        fiber->frames = (CallFrame *)zen_alloc(&gc_, max_frames * sizeof(CallFrame));
+        /* Tie frame capacity to stack size — frame_count check alone prevents overflow */
+        int safe_frames = stack_size / kMaxRegs;
+        if (safe_frames < 1) safe_frames = 1;
+        if (safe_frames > max_frames) safe_frames = max_frames;
+        fiber->frame_capacity = safe_frames;
+        fiber->frames = (CallFrame *)zen_alloc(&gc_, safe_frames * sizeof(CallFrame));
 
         gc_resume(&gc_);
 
@@ -890,7 +894,9 @@ namespace zen
         frame->ip = func->code;
         /* Args já estão no stack — base aponta para o início */
         frame->base = fiber->stack_top - nargs;
-        frame->ret_reg = (int)(frame->base - fiber->frames[fiber->frame_count - 2].base);
+        frame->ret_reg = (fiber->frame_count >= 2)
+            ? (int)(frame->base - fiber->frames[fiber->frame_count - 2].base)
+            : 0;
         frame->ret_count = nresults;
 
         /* Expandir stack_top para cobrir registos da nova func */

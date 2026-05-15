@@ -221,7 +221,7 @@ namespace zen
                                                    NativeStructDtor dtor = nullptr);
 
         /* --- Fiber API --- */
-        ObjFiber *new_fiber(ObjClosure *closure, int stack_size = 256, int max_frames = kMaxFrames);
+        ObjFiber *new_fiber(ObjClosure *closure, int stack_size = kMaxRegs * 16, int max_frames = kMaxFrames);
         Value resume_fiber(ObjFiber *fiber, Value val);
 
         /* --- Process system (cooperative multitasking) --- */

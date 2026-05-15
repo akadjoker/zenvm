@@ -97,7 +97,7 @@ namespace zen
             printf("]");
         } else if (is_map(v)) {
             ObjMap *m = as_map(v);
-            if (m->count == 0) { printf("{}"); return; }
+            if (m->count == 0 || !m->nodes) { printf("{}"); return; }
             if (depth >= MAX_DEPTH) { printf("<map[%d]>", m->count); return; }
             printf("{\n");
             for (int32_t i = 0; i < m->capacity; i++) {
@@ -667,7 +667,7 @@ namespace zen
             {
                 if (vb.type == VAL_INT && vc.type == VAL_INT)
                 {
-                    int32_t divisor = vc.as.integer;
+                    int64_t divisor = vc.as.integer;
                     if (divisor == 0)
                         R[ZEN_A(i)] = val_int(0);
                     else
@@ -1486,7 +1486,8 @@ namespace zen
                 RT_ERROR("spawn expects a function");
             }
             ObjClosure *cl = as_closure(R[ZEN_B(i)]);
-            ObjFiber *f = new_fiber(cl, 256);
+            /* Size fiber stack to allow reasonable call depth (16 frames) */
+            ObjFiber *f = new_fiber(cl, kMaxRegs * 16);
             R[ZEN_A(i)] = val_obj((Obj *)f);
             NEXT();
         }
@@ -1717,6 +1718,8 @@ namespace zen
         CASE(OP_APPEND)
         {
             uint32_t i = *ip;
+            if (__builtin_expect(!is_array(R[ZEN_A(i)]), 0))
+                RT_ERROR("append receiver is not an array (got %s)", val_type_str(R[ZEN_A(i)]));
             ObjArray *arr = as_array(R[ZEN_A(i)]);
             array_push(&gc_, arr, R[ZEN_B(i)]);
             NEXT();
@@ -1725,6 +1728,8 @@ namespace zen
         CASE(OP_SETADD)
         {
             uint32_t i = *ip;
+            if (__builtin_expect(!is_set(R[ZEN_A(i)]), 0))
+                RT_ERROR("set-add receiver is not a set (got %s)", val_type_str(R[ZEN_A(i)]));
             ObjSet *set = as_set(R[ZEN_A(i)]);
             set_add(&gc_, set, R[ZEN_B(i)]);
             NEXT();
@@ -2140,6 +2145,8 @@ namespace zen
             uint8_t arg_count = ZEN_B(i);
             uint8_t slot = ZEN_C(i);
 
+            if (!is_instance(R[base]))
+                RT_ERROR("attempt to invoke method on non-instance (got %s)", val_type_str(R[base]));
             ObjInstance *inst = as_instance(R[base]);
             ObjClass *klass = inst->klass;
             Value mval = klass->vtable[slot];
@@ -2246,7 +2253,7 @@ namespace zen
                 const char *mname = as_string(frame->func->constants[name_ki])->chars;
                 RT_ERROR("super.%s is not callable", mname);
             }
-            ip += 2; /* skip word2+word3 */
+            ip += 3; /* skip all 3 words */
             NEXT();
         }
 
@@ -2648,8 +2655,8 @@ namespace zen
             /* R[A] += R[A+2]; if still in range: pc += sBx (back to body) */
             uint32_t i = *ip;
             int a = ZEN_A(i);
-            int32_t counter = R[a].as.integer + R[a + 2].as.integer;
-            int32_t limit = R[a + 1].as.integer;
+            int64_t counter = R[a].as.integer + R[a + 2].as.integer;
+            int64_t limit = R[a + 1].as.integer;
             R[a].as.integer = counter;
             if (counter < limit)
                 ip += ZEN_SBX(i); /* loop back */
@@ -2662,6 +2669,8 @@ namespace zen
             /* word1: GETFIELD_IDX  R[A] = R[B].fields[C]
                word2: MUL           R[A] = R[B] * R[C]    */
             uint32_t i1 = *ip;
+            if (__builtin_expect(!is_instance(R[ZEN_B(i1)]) && !is_struct(R[ZEN_B(i1)]), 0))
+                RT_ERROR("cannot read field of non-instance/struct value");
             ObjInstance *inst = as_instance(R[ZEN_B(i1)]);
             R[ZEN_A(i1)] = inst->fields[ZEN_C(i1)];
             ++ip;
@@ -2679,6 +2688,8 @@ namespace zen
             /* word1: GETFIELD_IDX  R[A] = R[B].fields[C]
                word2: SUB           R[A] = R[B] - R[C]    */
             uint32_t i1 = *ip;
+            if (__builtin_expect(!is_instance(R[ZEN_B(i1)]) && !is_struct(R[ZEN_B(i1)]), 0))
+                RT_ERROR("cannot read field of non-instance/struct value");
             ObjInstance *inst = as_instance(R[ZEN_B(i1)]);
             R[ZEN_A(i1)] = inst->fields[ZEN_C(i1)];
             ++ip;
