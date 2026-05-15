@@ -1218,7 +1218,7 @@ namespace zen
             cls->operator_slots[i] = val_nil();
         cls->native_ctor = nullptr;
         cls->native_dtor = nullptr;
-        cls->persistent = false;
+        cls->persistent = parent ? parent->persistent : false;
         cls->constructable = true;
         return cls;
     }
