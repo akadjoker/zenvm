@@ -1140,10 +1140,14 @@ namespace zen
         buf->btype = btype;
         buf->count = count;
         buf->capacity = count;
+        buf->data = nullptr; /* safe for free_obj if another alloc triggers GC */
         int elem_sz = buffer_elem_size[btype];
         size_t bytes = (size_t)count * elem_sz;
-        buf->data = (uint8_t *)zen_alloc(gc, bytes);
-        memset(buf->data, 0, bytes);
+        /* Use zen_alloc_now: ObjBuffer exists in gc->objects but isn't yet in any
+        ** register, so a GC triggered here would sweep it. Bypass the GC trigger;
+        ** bytes are still accounted in bytes_allocated for the next cycle. */
+        buf->data = (uint8_t *)zen_alloc_now(gc, bytes);
+        if (bytes) memset(buf->data, 0, bytes);
         return buf;
     }
 
@@ -1214,7 +1218,7 @@ namespace zen
             cls->operator_slots[i] = val_nil();
         cls->native_ctor = nullptr;
         cls->native_dtor = nullptr;
-        cls->persistent = false;
+        cls->persistent = parent ? parent->persistent : false;
         cls->constructable = true;
         return cls;
     }
@@ -1448,21 +1452,32 @@ namespace zen
         }
 
         case OBJ_STRUCT_DEF:
-            /* Struct definition — field names are interned strings (no GC refs) */
+        {
+            ObjStructDef *def = (ObjStructDef *)obj;
+            gc_mark_obj(gc, (Obj *)def->name);
+            for (int32_t i = 0; i < def->num_fields; i++)
+                gc_mark_obj(gc, (Obj *)def->field_names[i]);
             break;
+        }
 
         case OBJ_STRUCT:
         {
-            /* Struct instance — mark field values */
+            /* Struct instance — mark def pointer and field values */
             ObjStruct *s = (ObjStruct *)obj;
+            gc_mark_obj(gc, (Obj *)s->def);
             for (int32_t i = 0; i < s->def->num_fields; i++)
                 gc_mark_value(gc, s->fields[i]);
             break;
         }
 
         case OBJ_NATIVE_STRUCT_DEF:
-            /* Native struct def — no GC refs (field defs are static) */
+        {
+            NativeStructDef *def = (NativeStructDef *)obj;
+            gc_mark_obj(gc, (Obj *)def->name);
+            for (int16_t i = 0; i < def->num_fields; i++)
+                gc_mark_obj(gc, (Obj *)def->fields[i].name);
             break;
+        }
 
         case OBJ_NATIVE_STRUCT:
             /* Native struct instance — raw buffer, no Value refs to mark */
@@ -1543,11 +1558,11 @@ namespace zen
         {
             ObjFunc *fn = (ObjFunc *)obj;
             if (fn->code)
-                zen_free(gc, fn->code, sizeof(Instruction) * fn->code_count);
+                zen_free(gc, fn->code, sizeof(Instruction) * fn->code_capacity);
             if (fn->lines)
-                zen_free(gc, fn->lines, sizeof(int32_t) * fn->code_count);
+                zen_free(gc, fn->lines, sizeof(int32_t) * fn->code_capacity);
             if (fn->constants)
-                zen_free(gc, fn->constants, sizeof(Value) * fn->const_count);
+                zen_free(gc, fn->constants, sizeof(Value) * fn->const_capacity);
             if (fn->upval_descs)
                 zen_free(gc, fn->upval_descs, sizeof(UpvalDesc) * fn->upvalue_count);
             break;
