@@ -161,6 +161,11 @@ namespace zen
 
         lexer_.init(source);
 
+        /* Pause GC for the entire compilation.
+        ** The compiler holds raw ObjFunc* pointers on the C stack — they are not
+        ** GC roots. A collection mid-compile would sweep them → use-after-free. */
+        gc_pause(gc);
+
         /* Set up the top-level script function state */
         CompilerState script_state;
         script_state.parent = nullptr;
@@ -190,6 +195,7 @@ namespace zen
         if (had_error_)
         {
             state_ = nullptr;
+            gc_resume(gc);
             return nullptr;
         }
 
@@ -198,6 +204,7 @@ namespace zen
 
         ObjFunc *fn = state_->emitter.end(state_->max_reg);
         state_ = nullptr;
+        gc_resume(gc);
 
         return had_error_ ? nullptr : fn;
     }
