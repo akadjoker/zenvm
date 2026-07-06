@@ -1855,17 +1855,23 @@ namespace zen
             if (has_index)
                 error("foreach over a range 'A..B' takes a single variable.");
 
-            int start_reg = iterable_reg;      /* holds A */
-            int end_expr = expression(-1);     /* holds B */
+            /* A is already in iterable_reg (the first register of this foreach).
+               Parse B, then lay out the loop var + a hidden end bound as the two
+               base locals of this scope with NO dead temps below them (mirrors
+               the numeric for-loop). Dead temps below a persistent counter would
+               let a nested loop's register reuse clobber the counter. */
+            int base = iterable_reg;            /* A lives here */
+            int end_expr = expression(-1);      /* B */
             consume(TOK_RPAREN, "Expected ')' after foreach range.");
 
-            /* Stable copy of the end bound (evaluated once). */
-            int end_reg = alloc_reg();
-            state_->emitter.emit_abc(OP_MOVE, end_reg, end_expr, 0, previous_.line);
+            if (end_expr != base + 1)
+                state_->emitter.emit_abc(OP_MOVE, base + 1, end_expr, 0, previous_.line);
+            set_next_reg(base); /* reclaim all temps; A@base and B@base+1 remain */
 
-            /* Loop variable, initialised to A. */
-            int var_reg = add_local(first_name);
-            state_->emitter.emit_abc(OP_MOVE, var_reg, start_reg, 0, previous_.line);
+            int var_reg = add_local(first_name); /* = base, already holds A */
+            static const char hidden_end[] = "(end)";
+            Token end_tok = {TOK_IDENTIFIER, hidden_end, 5, first_name.line};
+            int end_reg = add_local(end_tok);    /* = base+1, already holds B */
 
             int loop_start = state_->emitter.current_offset();
             LoopCtx &loop = state_->loops[state_->loop_depth++];
@@ -1894,8 +1900,7 @@ namespace zen
                 state_->emitter.patch_jump(loop.breaks[i]);
             state_->loop_depth--;
 
-            free_reg(end_reg);
-            free_reg(iterable_reg);
+            (void)end_reg; /* var_reg and end_reg are locals — end_scope frees them */
             end_scope();
             return;
         }
