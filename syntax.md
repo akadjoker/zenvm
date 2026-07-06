@@ -468,6 +468,29 @@ var b = Boss(10, 20);
 b.damage(50);
 ```
 
+### Static members
+
+Class-level members shared by all instances. Marked with `static`; accessed on
+the class (`ClassName.member`). Static methods have no `self`.
+
+```zen
+class Enemy {
+    static var count = 0;          // shared variable (simple literal init)
+    var hp = 100;                  // per-instance field
+
+    static def create() {          // static method — no self
+        Enemy.count += 1;
+        return Enemy();
+    }
+}
+
+var e = Enemy.create();
+print(Enemy.count);                // 1
+Enemy.count = 0;                   // static write
+```
+
+Static members live on the class object, so instances carry no extra memory.
+
 ### Type checks
 
 ```zen

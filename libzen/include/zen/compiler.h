@@ -129,6 +129,7 @@ namespace zen
         void fun_declaration();
         void process_declaration();
         void class_declaration();
+        Value parse_simple_literal_value(); /* number/bool/nil (optional '-') for field/static defaults */
         void struct_declaration();
         void statement();
         void expression_statement();

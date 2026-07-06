@@ -539,6 +539,7 @@ namespace zen
         ObjString *name;
         ObjClass *parent;        /* NULL ou classe pai (1 nível) */
         ObjMap *methods;         /* nome → ObjFunc/ObjNative */
+        ObjMap *statics;         /* static members: name → closure/value (NULL if none) */
         int32_t num_fields;      /* quantos fields declarados */
         ObjString **field_names; /* nomes dos fields (para init) */
         Value *field_defaults;   /* per-field default (NULL = all nil) */

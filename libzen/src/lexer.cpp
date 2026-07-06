@@ -464,7 +464,10 @@ TokenType Lexer::identifier_type() {
                     case 'p': return check_keyword(2, 3, "awn", TOK_SPAWN);
                     case 'u': return check_keyword(2, 3, "per", TOK_SUPER);
                     case 'q': return check_keyword(2, 2, "rt", TOK_SQRT);
-                    case 't': return check_keyword(2, 4, "ruct", TOK_STRUCT);
+                    case 't':
+                        if (current_ - start_ > 2 && start_[2] == 'a')
+                            return check_keyword(2, 4, "atic", TOK_STATIC);
+                        return check_keyword(2, 4, "ruct", TOK_STRUCT);
                     case 'w': return check_keyword(2, 4, "itch", TOK_SWITCH);
                 }
             }

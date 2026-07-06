@@ -1790,6 +1790,19 @@ namespace zen
                 }
                 RT_ERROR("instance of '%s' has no field '%s'", klass->name->chars, name->chars);
             }
+            /* Static member read: Class.member (only reached for class receivers,
+               never for the hot instance/struct paths above). */
+            if (is_class(receiver))
+            {
+                ObjClass *cls = as_class(receiver);
+                if (cls->statics)
+                {
+                    bool found = false;
+                    Value sv = map_get(cls->statics, val_obj((Obj *)name), &found);
+                    if (found) { R[ZEN_A(i)] = sv; goto getfield_done; }
+                }
+                RT_ERROR("class '%s' has no static member '%s'", cls->name->chars, name->chars);
+            }
             RT_ERROR("cannot access field '%s' on this type", name->chars);
             getfield_done:
             NEXT();
@@ -1856,6 +1869,15 @@ namespace zen
                     }
                 }
                 RT_ERROR("instance of '%s' has no field '%s'", klass->name->chars, name->chars);
+            }
+            /* Static member write: Class.member = val (class receivers only). */
+            if (is_class(receiver))
+            {
+                ObjClass *cls = as_class(receiver);
+                if (!cls->statics)
+                    cls->statics = new_map(&gc_);
+                map_set(&gc_, cls->statics, val_obj((Obj *)name), val);
+                goto setfield_done;
             }
             RT_ERROR("cannot set field '%s' on this type", name->chars);
             setfield_done:
@@ -2124,6 +2146,53 @@ namespace zen
                 else
                 {
                     RT_ERROR("'%s.%s' is not callable", klass->name->chars, mname);
+                }
+            }
+            else if (is_class(receiver))
+            {
+                /* Static method call: Class.method(args) — no self. */
+                ObjClass *cls = as_class(receiver);
+                bool found = false;
+                Value mval = cls->statics ? map_get(cls->statics, val_obj((Obj *)method), &found)
+                                          : val_nil();
+                if (!found || is_nil(mval))
+                {
+                    RT_ERROR("class '%s' has no static method '%s'", cls->name->chars, mname);
+                }
+                if (is_closure(mval))
+                {
+                    ObjClosure *cl = as_closure(mval);
+                    ObjFunc *fn = cl->func;
+                    if (fn->arity >= 0 && arg_count != fn->arity)
+                    {
+                        RT_ERROR("%s.%s() expects %d args but got %d", cls->name->chars, mname, fn->arity, arg_count);
+                    }
+                    if (fiber->frame_count >= kMaxFrames)
+                    {
+                        RT_ERROR("stack overflow");
+                    }
+                    ++ip;
+                    SAVE_IP();
+                    CallFrame *new_frame = &fiber->frames[fiber->frame_count++];
+                    new_frame->closure = cl;
+                    new_frame->func = fn;
+                    new_frame->ip = fn->code;
+                    new_frame->base = &R[base + 1]; /* no self: params start at base+1 */
+                    new_frame->ret_reg = base;      /* result overwrites the class reg */
+                    new_frame->ret_count = 1;
+                    fiber->stack_top = new_frame->base + fn->num_regs;
+                    LOAD_STATE();
+                    DISPATCH();
+                }
+                else if (is_native(mval))
+                {
+                    ObjNative *nat = as_native(mval);
+                    int nret = nat->fn(this, &R[base + 1], arg_count);
+                    R[base] = (nret > 0) ? R[base + 1] : val_nil();
+                }
+                else
+                {
+                    RT_ERROR("'%s.%s' is not callable", cls->name->chars, mname);
                 }
             }
             else

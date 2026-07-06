@@ -1238,6 +1238,7 @@ namespace zen
         cls->name = name;
         cls->parent = parent;
         cls->methods = new_map(gc);
+        cls->statics = nullptr; /* created lazily when a static member is declared */
         cls->num_fields = 0;
         cls->field_names = nullptr;
         cls->field_defaults = nullptr;
@@ -1420,6 +1421,7 @@ namespace zen
             gc_mark_obj(gc, (Obj *)cls->name);
             gc_mark_obj(gc, (Obj *)cls->parent);
             gc_mark_obj(gc, (Obj *)cls->methods);
+            gc_mark_obj(gc, (Obj *)cls->statics);
             /* Mark vtable entries */
             for (int32_t i = 0; i < cls->vtable_size; i++)
                 if (cls->vtable[i].type == VAL_OBJ)

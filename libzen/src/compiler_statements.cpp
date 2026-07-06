@@ -495,6 +495,30 @@ namespace zen
     ** At runtime, ClassName(args) → new_instance + call init
     ** ========================================================= */
 
+    /* Parse a simple literal (number, true/false, nil, optional leading '-')
+       used for class field defaults and static variable initialisers. */
+    Value Compiler::parse_simple_literal_value()
+    {
+        bool neg = match(TOK_MINUS);
+        if (!neg && match(TOK_TRUE))  return val_bool(true);
+        if (!neg && match(TOK_FALSE)) return val_bool(false);
+        if (!neg && match(TOK_NIL))   return val_nil();
+        if (check(TOK_INT))
+        {
+            long long v = strtoll(current_.start, nullptr, 0);
+            advance();
+            return val_int(neg ? -v : v);
+        }
+        if (check(TOK_FLOAT))
+        {
+            double d = strtod(current_.start, nullptr);
+            advance();
+            return val_float(neg ? -d : d);
+        }
+        error_at_current("Expected a simple literal (number, true/false, or nil).");
+        return val_nil();
+    }
+
     void Compiler::class_declaration()
     {
         consume(TOK_IDENTIFIER, "Expected class name.");
@@ -523,6 +547,11 @@ namespace zen
         Value field_defaults[64];       /* simple literal defaults, val_nil() if none */
         bool any_field_default = false; /* true if any local field has a non-nil default */
         int field_count = 0;
+
+        /* Static variables (class-level): name -> literal value. */
+        char static_names[64][64];
+        Value static_vals[64];
+        int static_var_count = 0;
 
         /* Build ClassFieldInfo for compile-time field indexing in methods.
          * Parent fields come first, then local fields are added as parsed. */
@@ -560,6 +589,7 @@ namespace zen
         {
             char name[64];
             ObjFunc *func; /* compiled function */
+            bool is_static; /* static def -> stored on the class, called without self */
         };
         MethodInfo *methods = nullptr;
         int method_count = 0;
@@ -568,7 +598,26 @@ namespace zen
 
         while (!check(TOK_RBRACE) && !check(TOK_EOF))
         {
-            if (match(TOK_VAR))
+            bool member_static = match(TOK_STATIC);
+
+            if (member_static && match(TOK_VAR))
+            {
+                /* Static variable: static var name (= literal)? (, ...)? ; */
+                do
+                {
+                    consume(TOK_IDENTIFIER, "Expected static variable name.");
+                    int slen = previous_.length < 63 ? previous_.length : 63;
+                    memcpy(static_names[static_var_count], previous_.start, slen);
+                    static_names[static_var_count][slen] = '\0';
+                    Value sv = val_nil();
+                    if (match(TOK_EQ))
+                        sv = parse_simple_literal_value();
+                    static_vals[static_var_count] = sv;
+                    static_var_count++;
+                } while (match(TOK_COMMA) && static_var_count < 64);
+                consume(TOK_SEMICOLON, "Expected ';' after static variable.");
+            }
+            else if (match(TOK_VAR))
             {
                 /* Field declaration: var name; or var a, b, c; */
                 do
@@ -587,27 +636,7 @@ namespace zen
                     Value fdef = val_nil();
                     if (match(TOK_EQ))
                     {
-                        bool neg = match(TOK_MINUS);
-                        if (!neg && match(TOK_TRUE))       fdef = val_bool(true);
-                        else if (!neg && match(TOK_FALSE)) fdef = val_bool(false);
-                        else if (!neg && match(TOK_NIL))   fdef = val_nil();
-                        else if (check(TOK_INT))
-                        {
-                            long long v = strtoll(current_.start, nullptr, 0);
-                            advance();
-                            fdef = val_int(neg ? -v : v);
-                        }
-                        else if (check(TOK_FLOAT))
-                        {
-                            double d = strtod(current_.start, nullptr);
-                            advance();
-                            fdef = val_float(neg ? -d : d);
-                        }
-                        else
-                        {
-                            error_at_current("Class field default must be a simple literal "
-                                             "(number, true/false, or nil).");
-                        }
+                        fdef = parse_simple_literal_value();
                         if (fdef.type != VAL_NIL)
                             any_field_default = true;
                     }
@@ -639,10 +668,12 @@ namespace zen
                 int mnlen = method_name.length < 63 ? method_name.length : 63;
                 memcpy(methods[method_count].name, method_name.start, mnlen);
                 methods[method_count].name[mnlen] = '\0';
-                if (mnlen == 4 && memcmp(methods[method_count].name, "init", 4) == 0)
+                methods[method_count].is_static = member_static;
+                if (!member_static && mnlen == 4 && memcmp(methods[method_count].name, "init", 4) == 0)
                     has_init_method = true;
 
-                /* Compile method as a function with implicit 'self' at reg 0 */
+                /* Compile method as a function. Instance methods get an implicit
+                   'self' at reg 0; static methods do not. */
                 CompilerState fn_state;
                 fn_state.parent = state_;
                 fn_state.function = new_func(gc_);
@@ -654,7 +685,7 @@ namespace zen
                 fn_state.max_reg = 0;
                 fn_state.upvalue_count = 0;
                 fn_state.loop_depth = 0;
-                fn_state.is_method = true;
+                fn_state.is_method = !member_static;
                 fn_state.is_process = false;
 
                 char fn_name[192];
@@ -670,13 +701,16 @@ namespace zen
 
                 begin_scope();
 
-                /* Register 0 = self (implicit first parameter) */
-                Token self_tok;
-                self_tok.start = "self";
-                self_tok.length = 4;
-                self_tok.type = TOK_SELF;
-                self_tok.line = method_name.line;
-                add_local(self_tok);
+                /* Register 0 = self (implicit first parameter) — instance only. */
+                if (!member_static)
+                {
+                    Token self_tok;
+                    self_tok.start = "self";
+                    self_tok.length = 4;
+                    self_tok.type = TOK_SELF;
+                    self_tok.line = method_name.line;
+                    add_local(self_tok);
+                }
 
                 /* Parse explicit parameters */
                 consume(TOK_LPAREN, "Expected '(' after method name.");
@@ -783,9 +817,11 @@ namespace zen
                 klass->vtable[vi] = val_nil();
             for (int oi = 0; oi < VM::SLOT_OPERATOR_COUNT; oi++)
                 klass->operator_slots[oi] = val_nil();
-            /* Clear methods map */
+            /* Clear methods + statics maps */
             if (klass->methods)
                 map_clear(gc_, klass->methods);
+            if (klass->statics)
+                map_clear(gc_, klass->statics);
         }
         else
         {
@@ -829,6 +865,17 @@ namespace zen
                 klass->field_defaults[parent_fields + i] = field_defaults[i];
         }
 
+        /* Store static variables on the class. */
+        for (int s = 0; s < static_var_count; s++)
+        {
+            if (!klass->statics)
+                klass->statics = new_map(gc_);
+            int snlen = (int)strlen(static_names[s]);
+            ObjString *sname = intern_string(gc_, static_names[s], snlen,
+                                             hash_string(static_names[s], snlen));
+            map_set(gc_, klass->statics, val_obj((Obj *)sname), static_vals[s]);
+        }
+
         /* Store methods — compile closures and put in klass->methods */
         for (int m = 0; m < method_count; m++)
         {
@@ -849,6 +896,17 @@ namespace zen
             int mnlen2 = (int)strlen(methods[m].name);
             ObjString *mname = intern_string(gc_, methods[m].name, mnlen2,
                                              hash_string(methods[m].name, mnlen2));
+
+            /* Static method: store on the class (called without self), not in
+               the instance method map / vtable. */
+            if (methods[m].is_static)
+            {
+                if (!klass->statics)
+                    klass->statics = new_map(gc_);
+                map_set(gc_, klass->statics, val_obj((Obj *)mname), val_obj((Obj *)cl));
+                continue;
+            }
+
             map_set(gc_, klass->methods, val_obj((Obj *)mname), val_obj((Obj *)cl));
 
             int op_slot = operator_slot_for_name(methods[m].name, mnlen2);
