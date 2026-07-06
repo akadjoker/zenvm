@@ -97,6 +97,12 @@ s.split(sep)         // returns array
 var a = [1, "two", 3.0, nil];  // mixed types
 a[0] = 99;                     // index set (0-based)
 print(a[1]);                   // index get
+
+// array comprehension: [ EXPR for VAR in ITER (if COND)? ]
+var squares = [x * x for x in range(0, 5)];        // [0,1,4,9,16]
+var alive   = [e for e in entities if e.alive()];  // filter
+var hps     = [e.hp for e in entities];            // map a field
+var grid    = [[0 for x in 0..w] for y in 0..h];   // nested
 ```
 
 ### Array Methods

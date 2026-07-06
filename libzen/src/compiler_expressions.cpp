@@ -1065,19 +1065,173 @@ namespace zen
 
         if (!check(TOK_RBRACKET))
         {
-            do
+            if (looks_like_comprehension())
             {
-                int val_reg = expression(-1);
-                state_->emitter.emit_abc(OP_APPEND, reg, val_reg, 0, previous_.line);
-                free_reg(val_reg);
-            } while (match(TOK_COMMA));
+                array_comprehension(reg); /* parses through the closing ']' */
+            }
+            else
+            {
+                do
+                {
+                    int val_reg = expression(-1);
+                    state_->emitter.emit_abc(OP_APPEND, reg, val_reg, 0, previous_.line);
+                    free_reg(val_reg);
+                } while (match(TOK_COMMA));
+                consume(TOK_RBRACKET, "Expected ']' after array literal.");
+            }
         }
-        consume(TOK_RBRACKET, "Expected ']' after array literal.");
+        else
+        {
+            consume(TOK_RBRACKET, "Expected ']' after array literal.");
+        }
         last_call_struct_def_ = nullptr;
         last_call_class_def_ = nullptr;
         if (reg >= 0 && reg < 256)
             state_->reg_class_hints[reg] = nullptr;
         return reg;
+    }
+
+    /* '[' has already been consumed; current_ is the first token inside.
+       Returns true if a top-level 'for' appears before the closing ']' or a
+       top-level ',' (i.e. this is a comprehension, not a plain array literal). */
+    bool Compiler::looks_like_comprehension()
+    {
+        LexerState saved = lexer_.save_state();
+        Token t = current_;
+        int depth = 0;
+        bool found = false;
+        while (t.type != TOK_EOF)
+        {
+            if (t.type == TOK_LBRACKET || t.type == TOK_LPAREN ||
+                t.type == TOK_LBRACE || t.type == TOK_SET_LBRACE)
+                depth++;
+            else if (t.type == TOK_RBRACKET || t.type == TOK_RPAREN || t.type == TOK_RBRACE)
+            {
+                if (depth == 0) break; /* our closing ']' — plain array */
+                depth--;
+            }
+            else if (depth == 0 && t.type == TOK_COMMA)
+                break; /* multiple elements — plain array */
+            else if (depth == 0 && t.type == TOK_FOR)
+            {
+                found = true;
+                break;
+            }
+            t = lexer_.next_token();
+        }
+        lexer_.restore_state(saved);
+        return found;
+    }
+
+    /* Array comprehension:  [ EXPR for VAR in ITER (if COND)? ]
+       Desugars to:  result = []; foreach (VAR in ITER) { if (COND) result.push(EXPR); }
+       Single-pass, so we snapshot the EXPR position, parse the header first
+       (ITER must be emitted before the loop), then replay EXPR inside the body.
+       result_reg already holds a fresh array (OP_NEWARRAY emitted by caller). */
+    void Compiler::array_comprehension(int result_reg)
+    {
+        /* All temps/locals below are allocated above result_reg; restore the
+           register stack to here at the end so result_reg stays live for any
+           following infix op (e.g. [..][0]). */
+        int saved_next = state_->next_reg;
+
+        /* Snapshot the EXPR position (current_ is its first token). */
+        LexerState ls_expr = lexer_.save_state();
+        Token cur_expr = current_, prev_expr = previous_;
+
+        /* Skip over EXPR to reach the top-level 'for'. */
+        int depth = 0;
+        while (!(depth == 0 && check(TOK_FOR)) && !check(TOK_EOF))
+        {
+            if (check(TOK_LBRACKET) || check(TOK_LPAREN) ||
+                check(TOK_LBRACE) || check(TOK_SET_LBRACE))
+                depth++;
+            else if (check(TOK_RBRACKET) || check(TOK_RPAREN) || check(TOK_RBRACE))
+                depth--;
+            advance();
+        }
+
+        consume(TOK_FOR, "Expected 'for' in comprehension.");
+        begin_scope();
+        consume(TOK_IDENTIFIER, "Expected loop variable in comprehension.");
+        Token var_name = previous_;
+        consume(TOK_IN, "Expected 'in' after comprehension variable.");
+
+        /* ITER — evaluated once, before the loop. Either a collection, or the
+           start of a numeric range 'A..B'. */
+        int iter_reg = expression(-1);
+        bool is_range = match(TOK_DOT_DOT);
+
+        int idx_reg = -1, len_reg = -1, end_reg = -1, elem_reg = -1;
+        int loop_start, exit_jump;
+
+        if (is_range)
+        {
+            /* Counting range: elem = A; while (elem < B) { ... elem += 1 } */
+            int end_expr = expression(-1);
+            end_reg = alloc_reg();
+            state_->emitter.emit_abc(OP_MOVE, end_reg, end_expr, 0, previous_.line);
+            elem_reg = add_local(var_name);
+            state_->emitter.emit_abc(OP_MOVE, elem_reg, iter_reg, 0, previous_.line);
+
+            loop_start = state_->emitter.current_offset();
+            int cond_reg = alloc_reg();
+            state_->emitter.emit_abc(OP_LT, cond_reg, elem_reg, end_reg, previous_.line);
+            exit_jump = state_->emitter.emit_jump(OP_JMPIFNOT, cond_reg, previous_.line);
+            free_reg(cond_reg);
+        }
+        else
+        {
+            /* Counting iteration over a collection (idx < len; elem = iter[idx]). */
+            idx_reg = alloc_reg();
+            state_->emitter.emit_asbx(OP_LOADI, idx_reg, 0, previous_.line);
+            len_reg = alloc_reg();
+            state_->emitter.emit_abc(OP_LEN, len_reg, iter_reg, 0, previous_.line);
+            elem_reg = add_local(var_name);
+
+            loop_start = state_->emitter.current_offset();
+            int cond_reg = alloc_reg();
+            state_->emitter.emit_abc(OP_LT, cond_reg, idx_reg, len_reg, previous_.line);
+            exit_jump = state_->emitter.emit_jump(OP_JMPIFNOT, cond_reg, previous_.line);
+            free_reg(cond_reg);
+            state_->emitter.emit_abc(OP_ITER_ELEM, elem_reg, iter_reg, idx_reg, previous_.line);
+        }
+
+        /* Optional filter: if COND (parsed in place, right after the header). */
+        int filter_jump = -1;
+        if (check(TOK_IF))
+        {
+            advance(); /* 'if' */
+            int fcond = expression(-1);
+            filter_jump = state_->emitter.emit_jump(OP_JMPIFNOT, fcond, previous_.line);
+            free_reg(fcond);
+        }
+
+        /* Re-lex EXPR inside the body, append it, then return to the ']' position. */
+        LexerState ls_end = lexer_.save_state();
+        Token cur_end = current_, prev_end = previous_;
+        lexer_.restore_state(ls_expr);
+        current_ = cur_expr;
+        previous_ = prev_expr;
+        int val_reg = expression(-1);
+        state_->emitter.emit_abc(OP_APPEND, result_reg, val_reg, 0, previous_.line);
+        free_reg(val_reg);
+        lexer_.restore_state(ls_end);
+        current_ = cur_end;
+        previous_ = prev_end;
+
+        if (filter_jump >= 0)
+            state_->emitter.patch_jump(filter_jump);
+
+        state_->emitter.emit_abc(OP_ADDI, is_range ? elem_reg : idx_reg,
+                                 is_range ? elem_reg : idx_reg, 1, previous_.line);
+        state_->emitter.emit_loop(loop_start, 0, previous_.line);
+        state_->emitter.patch_jump(exit_jump);
+
+        end_scope();
+        set_next_reg(saved_next); /* free all comprehension temps; keep result_reg */
+
+        consume(TOK_RBRACKET, "Expected ']' after comprehension.");
     }
 
     /* =========================================================

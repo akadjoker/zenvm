@@ -204,6 +204,8 @@ namespace zen
         bool is_prefix(TokenType type);
         bool looks_like_generic_call();
         bool looks_like_lambda_params(); /* '(' already consumed: peek for  params ) => */
+        bool looks_like_comprehension(); /* '[' consumed: peek for a top-level 'for' */
+        void array_comprehension(int result_reg); /* [expr for x in it if cond] */
         int generic_type_arg(int dest);
         int require_global_slot(const char *name, Token *token);
 
