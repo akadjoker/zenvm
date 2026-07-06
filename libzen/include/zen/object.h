@@ -541,6 +541,7 @@ namespace zen
         ObjMap *methods;         /* nome → ObjFunc/ObjNative */
         int32_t num_fields;      /* quantos fields declarados */
         ObjString **field_names; /* nomes dos fields (para init) */
+        Value *field_defaults;   /* per-field default (NULL = all nil) */
         Value *vtable;           /* flat array indexed by selector slot */
         int32_t vtable_size;     /* allocated slots in vtable */
         Value operator_slots[kOperatorSlotCount]; /* fixed slots for __add__, __str__, ... */

@@ -520,6 +520,8 @@ namespace zen
 
         /* Collect fields and methods */
         char fields[64][64];
+        Value field_defaults[64];       /* simple literal defaults, val_nil() if none */
+        bool any_field_default = false; /* true if any local field has a non-nil default */
         int field_count = 0;
 
         /* Build ClassFieldInfo for compile-time field indexing in methods.
@@ -575,12 +577,43 @@ namespace zen
                     int flen = previous_.length < 63 ? previous_.length : 63;
                     memcpy(fields[field_count], previous_.start, flen);
                     fields[field_count][flen] = '\0';
-                    field_count++;
-                    /* Also add to cfi for indexing */
+                    /* Add to cfi for indexing now, before parsing any default
+                       (default parsing advances previous_ past the field name). */
                     memcpy(cfi.fields[cfi.count], previous_.start, flen);
                     cfi.fields[cfi.count][flen] = '\0';
                     cfi.count++;
-                } while (match(TOK_COMMA));
+
+                    /* Optional default value — a simple literal only. */
+                    Value fdef = val_nil();
+                    if (match(TOK_EQ))
+                    {
+                        bool neg = match(TOK_MINUS);
+                        if (!neg && match(TOK_TRUE))       fdef = val_bool(true);
+                        else if (!neg && match(TOK_FALSE)) fdef = val_bool(false);
+                        else if (!neg && match(TOK_NIL))   fdef = val_nil();
+                        else if (check(TOK_INT))
+                        {
+                            long long v = strtoll(current_.start, nullptr, 0);
+                            advance();
+                            fdef = val_int(neg ? -v : v);
+                        }
+                        else if (check(TOK_FLOAT))
+                        {
+                            double d = strtod(current_.start, nullptr);
+                            advance();
+                            fdef = val_float(neg ? -d : d);
+                        }
+                        else
+                        {
+                            error_at_current("Class field default must be a simple literal "
+                                             "(number, true/false, or nil).");
+                        }
+                        if (fdef.type != VAL_NIL)
+                            any_field_default = true;
+                    }
+                    field_defaults[field_count] = fdef;
+                    field_count++;
+                } while (match(TOK_COMMA) && field_count < 64);
                 consume(TOK_SEMICOLON, "Expected ';' after field declaration.");
             }
             else if (match(TOK_DEF))
@@ -731,10 +764,9 @@ namespace zen
             }
         }
         consume(TOK_RBRACE, "Expected '}' after class body.");
-        if (field_count > 0 && !has_init_method)
-        {
-            error("Class with fields must define init().");
-        }
+        /* Fields no longer require an init(): unset fields take their declared
+           default (or nil). A data class can omit init() entirely. */
+        (void)has_init_method;
 
         /* Build ObjClass now (compile-time, like structs) */
         ObjString *cls_name = intern_string(gc_, name_buf, nlen,
@@ -763,11 +795,14 @@ namespace zen
         /* Set up field_names — parent fields first, then local */
         int parent_fields = parent_class ? parent_class->num_fields : 0;
         int total_fields = parent_fields + field_count;
-        /* Free old field_names on hot reload */
+        /* Free old field_names / field_defaults on hot reload */
         if (klass->field_names && klass->num_fields > 0)
             zen_free(gc_, klass->field_names, sizeof(ObjString *) * klass->num_fields);
+        if (klass->field_defaults && klass->num_fields > 0)
+            zen_free(gc_, klass->field_defaults, sizeof(Value) * klass->num_fields);
         klass->num_fields = total_fields;
         klass->field_names = nullptr;
+        klass->field_defaults = nullptr;
         if (total_fields > 0)
         {
             klass->field_names = (ObjString **)zen_alloc(gc_, sizeof(ObjString *) * total_fields);
@@ -781,6 +816,17 @@ namespace zen
                 klass->field_names[parent_fields + i] = intern_string(gc_, fields[i], flen,
                                                                       hash_string(fields[i], flen));
             }
+        }
+
+        /* Build field_defaults if any local field or the parent has one. */
+        bool parent_has_def = parent_class && parent_class->field_defaults;
+        if (total_fields > 0 && (any_field_default || parent_has_def))
+        {
+            klass->field_defaults = (Value *)zen_alloc(gc_, sizeof(Value) * total_fields);
+            for (int i = 0; i < parent_fields; i++)
+                klass->field_defaults[i] = parent_has_def ? parent_class->field_defaults[i] : val_nil();
+            for (int i = 0; i < field_count; i++)
+                klass->field_defaults[parent_fields + i] = field_defaults[i];
         }
 
         /* Store methods — compile closures and put in klass->methods */

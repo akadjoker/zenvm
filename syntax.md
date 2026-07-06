@@ -418,11 +418,25 @@ def foo() { return 1; }         // no ; after }
 
 ## Classes
 
+Fields may declare a simple default value (number, `true`/`false`, or `nil`).
+A field without a default is `nil`. With defaults, `init()` is optional — a
+pure data class needs no constructor.
+
+```zen
+class Bullet {
+    var x = 0;
+    var y = 0;
+    var speed = 8.0;
+    var alive = true;
+}
+var b = Bullet();          // x=0, y=0, speed=8.0, alive=true  (no init needed)
+```
+
 ```zen
 class Entity {
     var x;
     var y;
-    var hp;
+    var hp = 100;          // default; init may override
 
     def init(x, y, hp) {
         self.x = x;

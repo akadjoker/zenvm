@@ -1240,6 +1240,7 @@ namespace zen
         cls->methods = new_map(gc);
         cls->num_fields = 0;
         cls->field_names = nullptr;
+        cls->field_defaults = nullptr;
         cls->vtable = nullptr;
         cls->vtable_size = 0;
         for (int i = 0; i < kOperatorSlotCount; i++)
@@ -1280,8 +1281,12 @@ namespace zen
         if (nf > 0)
         {
             inst->fields = (Value *)zen_alloc(gc, sizeof(Value) * nf);
-            for (int i = 0; i < nf; i++)
-                inst->fields[i] = val_nil();
+            if (klass->field_defaults)
+                for (int i = 0; i < nf; i++)
+                    inst->fields[i] = klass->field_defaults[i];
+            else
+                for (int i = 0; i < nf; i++)
+                    inst->fields[i] = val_nil();
         }
         else
         {
@@ -1635,6 +1640,8 @@ namespace zen
             ObjClass *cls = (ObjClass *)obj;
             if (cls->field_names)
                 zen_free(gc, cls->field_names, sizeof(ObjString *) * cls->num_fields);
+            if (cls->field_defaults)
+                zen_free(gc, cls->field_defaults, sizeof(Value) * cls->num_fields);
             if (cls->vtable)
                 zen_free(gc, cls->vtable, sizeof(Value) * cls->vtable_size);
             break;
