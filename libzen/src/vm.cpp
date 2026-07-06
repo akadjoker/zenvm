@@ -84,7 +84,7 @@ namespace zen
     ** Construtor / Destrutor
     ** ========================================================= */
 
-    VM::VM() : on_process_start(nullptr), on_process_update(nullptr), on_process_end(nullptr), globals_(nullptr), global_names_(nullptr), num_globals_(0), globals_capacity_(0), main_fiber_(nullptr), current_fiber_(nullptr), fiber_depth_(0), external_call_stop_depth_(-1), had_error_(false), num_search_paths_(0), num_libs_(0), num_plugins_(0), selectors_(nullptr), num_selectors_(0), selectors_capacity_(0), pool_(nullptr), num_alive_(0), pool_capacity_(0), next_process_id_(1), current_process_id_(-1), current_slot_idx_(-1)
+    VM::VM() : on_process_start(nullptr), on_process_update(nullptr), on_process_end(nullptr), globals_(nullptr), global_names_(nullptr), num_globals_(0), globals_capacity_(0), main_fiber_(nullptr), current_fiber_(nullptr), fiber_depth_(0), external_call_stop_depth_(-1), had_error_(false), protected_depth_(0), num_search_paths_(0), num_libs_(0), num_plugins_(0), selectors_(nullptr), num_selectors_(0), selectors_capacity_(0), pool_(nullptr), num_alive_(0), pool_capacity_(0), next_process_id_(1), current_process_id_(-1), current_slot_idx_(-1)
     {
         gc_init(&gc_);
         gc_.vm = this;
@@ -307,6 +307,89 @@ namespace zen
         }
         runtime_error("global %d is not callable", idx);
         return val_nil();
+    }
+
+    Value VM::call_protected(Value fn, Value *args, int nargs, bool *out_ok)
+    {
+        ObjFiber *fiber = current_fiber_;
+
+        /* Native callee: it signals errors cooperatively via had_error_. */
+        if (is_native(fn))
+        {
+            Value call_args[17];
+            int n = nargs < 16 ? nargs : 16;
+            for (int i = 0; i < n; i++)
+                call_args[i] = args[i];
+            protected_depth_++;
+            int nret = as_native(fn)->fn(this, call_args, n);
+            protected_depth_--;
+            if (had_error_)
+            {
+                had_error_ = false;
+                *out_ok = false;
+                return val_obj((Obj *)make_string(error_msg_));
+            }
+            *out_ok = true;
+            return nret > 0 ? call_args[0] : val_nil();
+        }
+
+        if (!is_closure(fn))
+        {
+            *out_ok = false;
+            return val_obj((Obj *)make_string("pcall: first argument is not callable"));
+        }
+
+        ObjClosure *cl = as_closure(fn);
+        if (cl->func->arity >= 0 && nargs != cl->func->arity)
+        {
+            *out_ok = false;
+            char buf[128];
+            snprintf(buf, sizeof(buf), "pcall: expected %d args but got %d",
+                     cl->func->arity, nargs);
+            return val_obj((Obj *)make_string(buf));
+        }
+
+        /* Save the state we must roll back to if the call errors. */
+        int saved_frame_count = fiber->frame_count;
+        Value *saved_stack_top = fiber->stack_top;
+        int saved_stop_depth = external_call_stop_depth_;
+
+        /* Set up a nested frame above the current registers (like invoke()). */
+        Value *base = fiber->stack_top;
+        for (int i = 0; i < nargs; i++)
+            base[i] = args[i];
+        fiber->stack_top = base + cl->func->num_regs;
+
+        CallFrame *frame = &fiber->frames[fiber->frame_count++];
+        frame->closure = cl;
+        frame->func = cl->func;
+        frame->ip = cl->func->code;
+        frame->base = base;
+        frame->ret_reg = (int)(base - fiber->frames[fiber->frame_count - 2].base);
+        frame->ret_count = 1;
+
+        external_call_stop_depth_ = fiber->frame_count - 1;
+        protected_depth_++;
+        execute(fiber);
+        protected_depth_--;
+        external_call_stop_depth_ = saved_stop_depth;
+
+        if (had_error_)
+        {
+            /* Unwind everything the failed call left behind, then continue. */
+            had_error_ = false;
+            fiber->frame_count = saved_frame_count;
+            fiber->stack_top = saved_stack_top;
+            fiber->state = FIBER_RUNNING;
+            *out_ok = false;
+            return val_obj((Obj *)make_string(error_msg_));
+        }
+
+        Value result = base[0];
+        fiber->stack_top = saved_stack_top;
+        fiber->state = FIBER_RUNNING;
+        *out_ok = true;
+        return result;
     }
 
     Value VM::call_global(const char *name, Value *args, int nargs)
@@ -960,6 +1043,14 @@ namespace zen
         va_start(args, fmt);
         vsnprintf(msg, sizeof(msg), fmt, args);
         va_end(args);
+
+        /* Always remember the message so pcall() can hand it back. */
+        snprintf(error_msg_, sizeof(error_msg_), "%s", msg);
+
+        /* Inside pcall(): trap silently — no print, no traceback. call_protected
+           will unwind and turn this into a (false, message) result. */
+        if (protected_depth_ > 0)
+            return;
 
         void *ud = callbacks_.userdata;
         callbacks_.print_err("[zen runtime error] ", 20, ud);

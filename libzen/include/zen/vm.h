@@ -109,6 +109,11 @@ namespace zen
         void run(ObjClosure *closure);
         Value call_global(int idx, Value *args, int nargs);
         Value call_global(const char *name, Value *args, int nargs);
+        /* Call a function value in protected mode (used by pcall). Runs fn(args);
+           on success *out_ok=true and returns fn's result; on a runtime error
+           *out_ok=false and returns an error-message string, with the VM state
+           unwound back to the call site so execution can continue. */
+        Value call_protected(Value fn, Value *args, int nargs, bool *out_ok);
 
         /* --- Globals (by index — O(1), used at runtime) --- */
         int def_global(const char *name, Value val); /* returns index */
@@ -377,6 +382,8 @@ namespace zen
         int fiber_depth_;         /* current nested execute() depth */
         int external_call_stop_depth_; /* return to C++ when nested script call unwinds here */
         bool had_error_;          /* runtime error occurred */
+        int protected_depth_;     /* >0 while inside pcall(): suppress abort/print, trap the error */
+        char error_msg_[256];     /* text of the last runtime_error, for pcall() to return */
 
         /* Search paths for include/import */
         static const int MAX_SEARCH_PATHS = 16;

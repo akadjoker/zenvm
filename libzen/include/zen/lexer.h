@@ -26,6 +26,7 @@ namespace zen
         TOK_AMP_EQ,       /* &=    */
         TOK_PIPE_EQ,      /* |=    */
         TOK_CARET_EQ,     /* ^=    */
+        TOK_PERCENT_EQ,   /* %=    */
         TOK_INTDIV,       /* div   */
         TOK_PLUS,
         TOK_MINUS,

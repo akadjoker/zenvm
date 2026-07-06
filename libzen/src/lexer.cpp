@@ -556,7 +556,7 @@ Token Lexer::next_token() {
         case '?': return match('.') ? make_token(TOK_QUESTION_DOT) : make_token(TOK_QUESTION);
         case '~': return make_token(TOK_TILDE);
         case '^': return match('=') ? make_token(TOK_CARET_EQ) : make_token(TOK_CARET);
-        case '%': return make_token(TOK_PERCENT);
+        case '%': return match('=') ? make_token(TOK_PERCENT_EQ) : make_token(TOK_PERCENT);
 
         case '+': return match('=') ? make_token(TOK_PLUS_EQ) : make_token(TOK_PLUS);
         case '-': return match('=') ? make_token(TOK_MINUS_EQ) : make_token(TOK_MINUS);

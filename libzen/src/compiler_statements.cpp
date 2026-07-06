@@ -157,6 +157,7 @@ namespace zen
                     int gidx = require_global_slot(buf, &names[i]);
                     if (gidx < 0)
                         continue;
+                    mark_global_defined(gidx);
                     state_->emitter.emit_abx(OP_SETGLOBAL, base + i, gidx, names[i].line);
                     if (ensure_global_class_hint(gidx))
                         global_class_hints_[gidx] = state_->reg_class_hints[base + i];
@@ -186,7 +187,7 @@ namespace zen
             }
             /* Now register it as a local (becomes visible to subsequent code) */
             declare_local(name);
-            Local &local = state_->locals[state_->local_count++];
+            Local &local = next_local();
             local.name = name;
             local.depth = state_->scope_depth;
             local.reg = reg;
@@ -205,6 +206,7 @@ namespace zen
             memcpy(buf, name.start, len);
             buf[len] = '\0';
             int gidx = require_global_slot(buf, &name);
+            mark_global_defined(gidx);
 
             if (match(TOK_EQ))
             {
@@ -349,6 +351,7 @@ namespace zen
         {
             /* Global function */
             int gidx = require_global_slot(name_buf, &name);
+            mark_global_defined(gidx);
             if (gidx >= 0)
             {
                 int reg = alloc_reg();
@@ -469,6 +472,7 @@ namespace zen
         else
         {
             int gidx = require_global_slot(name_buf, &name);
+            mark_global_defined(gidx);
             if (gidx >= 0)
             {
                 int reg = alloc_reg();
@@ -863,6 +867,7 @@ namespace zen
 
         /* Register class as global */
         int gidx = require_global_slot(name_buf, &name_tok);
+        mark_global_defined(gidx);
         if (gidx >= 0)
             vm_->set_global(gidx, val_obj((Obj *)klass));
 
@@ -1108,6 +1113,16 @@ namespace zen
 
     void Compiler::statement()
     {
+        /* Depth guard: deeply-nested statements (if/while/blocks) recurse in C;
+           bail with an error instead of exhausting the stack. */
+        struct DepthGuard { int &d; DepthGuard(int &x) : d(x) { ++d; } ~DepthGuard() { --d; } } _dg(recursion_depth_);
+        if (recursion_depth_ > kMaxParseDepth)
+        {
+            if (!panic_mode_)
+                error("statement too deeply nested");
+            return;
+        }
+
         if (match(TOK_IF))
         {
             if_statement();
@@ -1426,7 +1441,7 @@ namespace zen
 
         /* Declare loop var as local at base_reg */
         declare_local(loop_var);
-        Local &local_i = state_->locals[state_->local_count++];
+        Local &local_i = next_local();
         local_i.name = loop_var;
         local_i.depth = state_->scope_depth;
         local_i.reg = base_reg;
@@ -1440,7 +1455,7 @@ namespace zen
         Token step_tok = {TOK_IDENTIFIER, hidden_step, 6, loop_var.line};
 
         int limit_reg = state_->next_reg;
-        Local &local_lim = state_->locals[state_->local_count++];
+        Local &local_lim = next_local();
         local_lim.name = limit_tok;
         local_lim.depth = state_->scope_depth;
         local_lim.reg = limit_reg;
@@ -1448,7 +1463,7 @@ namespace zen
         state_->next_reg++;
 
         int step_reg = state_->next_reg;
-        Local &local_stp = state_->locals[state_->local_count++];
+        Local &local_stp = next_local();
         local_stp.name = step_tok;
         local_stp.depth = state_->scope_depth;
         local_stp.reg = step_reg;

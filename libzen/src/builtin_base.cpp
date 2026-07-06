@@ -867,10 +867,31 @@ namespace zen
 
 
     /* =========================================================
+    ** pcall(fn, args...) — protected call.
+    ** Returns (true, result) if fn runs, or (false, message) on a runtime error.
+    ** ========================================================= */
+    static int nat_pcall(VM *vm, Value *args, int nargs)
+    {
+        if (nargs < 1)
+        {
+            args[0] = val_bool(false);
+            args[1] = val_obj((Obj *)vm->make_string("pcall: missing function argument"));
+            return 2;
+        }
+        Value fn = args[0];
+        bool ok = false;
+        Value res = vm->call_protected(fn, args + 1, nargs - 1, &ok);
+        args[0] = val_bool(ok);
+        args[1] = res;
+        return 2;
+    }
+
+    /* =========================================================
     ** Registration table
     ** ========================================================= */
 
     static const NativeReg base_functions[] = {
+        {"pcall", nat_pcall, -1},
         {"str", nat_str, 1},
         {"int", nat_int, 1},
         {"float", nat_float, 1},
@@ -911,7 +932,7 @@ namespace zen
     const NativeLib zen_lib_base = {
         "base",
         base_functions,
-        28,   /* num_functions */
+        29,   /* num_functions */
         base_constants,
         4,    /* num_constants */
     };

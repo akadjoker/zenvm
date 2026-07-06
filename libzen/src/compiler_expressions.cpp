@@ -189,6 +189,17 @@ namespace zen
 
     int Compiler::parse_precedence(Precedence prec, int dest)
     {
+        /* Depth guard: RAII bumps the counter on entry and restores it on every
+           exit, so deeply-nested expressions error out instead of blowing the
+           C stack. */
+        struct DepthGuard { int &d; DepthGuard(int &x) : d(x) { ++d; } ~DepthGuard() { --d; } } _dg(recursion_depth_);
+        if (recursion_depth_ > kMaxParseDepth)
+        {
+            if (!panic_mode_)
+                error("expression too deeply nested");
+            return dest >= 0 ? dest : alloc_reg();
+        }
+
         Token token = current_;
         advance();
 
@@ -410,16 +421,16 @@ namespace zen
 
         if (token.type == TOK_INT)
         {
-            /* Try small int (fits in sBx = -32768..32767) */
-            long long val;
-            if (token.length > 2 && token.start[0] == '0' && (token.start[1] == 'x' || token.start[1] == 'X'))
-            {
-                val = strtoll(token.start, nullptr, 16);
-            }
-            else
-            {
-                val = strtoll(token.start, nullptr, 10);
-            }
+            /* Parse the magnitude as unsigned so the full 64-bit range is
+               reachable: hex is a raw bit pattern (0xFFFFFFFFFFFFFFFF == -1)
+               and decimal 9223372036854775808 becomes INT64_MIN, which lets
+               -9223372036854775808 be written (unary minus over 2^63). */
+            bool is_hex = token.length > 2 && token.start[0] == '0' &&
+                          (token.start[1] == 'x' || token.start[1] == 'X');
+            unsigned long long uval = strtoull(token.start, nullptr, is_hex ? 16 : 10);
+            if (!is_hex && uval > 9223372036854775808ULL)
+                error_at(&token, "integer literal out of range for 64-bit int");
+            long long val = (long long)uval;
             if (val >= -32768 && val <= 32767)
             {
                 state_->emitter.emit_asbx(OP_LOADI, reg, (int)val, token.line);
@@ -692,7 +703,7 @@ namespace zen
                                   check(TOK_MINUS_EQ) || check(TOK_STAR_EQ) ||
                                   check(TOK_SLASH_EQ) || check(TOK_AMP_EQ) ||
                                   check(TOK_PIPE_EQ) || check(TOK_CARET_EQ) ||
-                                  check(TOK_STAR_STAR_EQ)))
+                                  check(TOK_STAR_STAR_EQ) || check(TOK_PERCENT_EQ)))
                 {
                     TokenType assign_op = current_.type;
                     advance();
@@ -719,6 +730,7 @@ namespace zen
                             case TOK_PIPE_EQ:      op = OP_BOR;  break;
                             case TOK_CARET_EQ:     op = OP_BXOR; break;
                             case TOK_STAR_STAR_EQ: op = OP_POW;  break;
+                            case TOK_PERCENT_EQ:   op = OP_MOD;  break;
                             default:               op = OP_ADD;  break;
                         }
                         state_->emitter.emit_abc(op, reg, reg, rhs, token.line);
@@ -779,7 +791,7 @@ namespace zen
                           check(TOK_MINUS_EQ) || check(TOK_STAR_EQ) ||
                           check(TOK_SLASH_EQ) || check(TOK_AMP_EQ) ||
                           check(TOK_PIPE_EQ) || check(TOK_CARET_EQ) ||
-                          check(TOK_STAR_STAR_EQ)))
+                          check(TOK_STAR_STAR_EQ) || check(TOK_PERCENT_EQ)))
         {
             TokenType assign_op = current_.type;
             advance(); /* consume the assignment operator */
@@ -813,6 +825,7 @@ namespace zen
                 else if (gidx >= 0)
                 {
                     state_->emitter.emit_abx(OP_SETGLOBAL, val_reg, gidx, token.line);
+                    mark_global_defined(gidx);
                     if (ensure_global_class_hint(gidx))
                         global_class_hints_[gidx] = last_call_class_def_ ? last_call_class_def_ : state_->reg_class_hints[val_reg];
                     if (ensure_global_struct_hint(gidx))
@@ -879,6 +892,9 @@ namespace zen
                 case TOK_STAR_STAR_EQ:
                     op = OP_POW;
                     break;
+                case TOK_PERCENT_EQ:
+                    op = OP_MOD;
+                    break;
                 default:
                     op = OP_ADD;
                     break;
@@ -902,7 +918,10 @@ namespace zen
                     if (upval != -1)
                         state_->emitter.emit_abc(OP_SETUPVAL, cur_reg, upval, 0, token.line);
                     else if (gidx >= 0)
+                    {
                         state_->emitter.emit_abx(OP_SETGLOBAL, cur_reg, gidx, token.line);
+                        mark_global_defined(gidx);
+                    }
                     free_reg(cur_reg);
                 }
                 return dest >= 0 ? dest : (local_reg != -1 ? local_reg : alloc_reg());
@@ -954,6 +973,7 @@ namespace zen
             return reg;
         }
         state_->emitter.emit_abx(OP_GETGLOBAL, reg, gidx, token.line);
+        mark_global_read(gidx, token);
         if (gidx >= 0 && gidx < global_class_hints_capacity_ && global_class_hints_[gidx])
             state_->reg_class_hints[reg] = global_class_hints_[gidx];
 
@@ -987,8 +1007,9 @@ namespace zen
     {
         int reg = dest >= 0 ? dest : alloc_reg();
 
-        /* Parse operand at unary precedence */
-        int operand = parse_precedence(PREC_UNARY, -1);
+        /* Parse operand at power precedence so that ** binds tighter than a
+           prefix unary, matching math/Python: -2 ** 2 == -(2 ** 2) == -4. */
+        int operand = parse_precedence(PREC_POWER, -1);
 
         switch (token.type)
         {
@@ -1675,7 +1696,7 @@ namespace zen
                           check(TOK_MINUS_EQ) || check(TOK_STAR_EQ) ||
                           check(TOK_SLASH_EQ) || check(TOK_AMP_EQ) ||
                           check(TOK_PIPE_EQ) || check(TOK_CARET_EQ) ||
-                          check(TOK_STAR_STAR_EQ)))
+                          check(TOK_STAR_STAR_EQ) || check(TOK_PERCENT_EQ)))
         {
             TokenType assign_op = current_.type;
             advance();
@@ -1721,6 +1742,9 @@ namespace zen
                     break;
                 case TOK_STAR_STAR_EQ:
                     op = OP_POW;
+                    break;
+                case TOK_PERCENT_EQ:
+                    op = OP_MOD;
                     break;
                 default:
                     op = OP_ADD;
@@ -1828,7 +1852,7 @@ namespace zen
                           check(TOK_MINUS_EQ) || check(TOK_STAR_EQ) ||
                           check(TOK_SLASH_EQ) || check(TOK_AMP_EQ) ||
                           check(TOK_PIPE_EQ) || check(TOK_CARET_EQ) ||
-                          check(TOK_STAR_STAR_EQ)))
+                          check(TOK_STAR_STAR_EQ) || check(TOK_PERCENT_EQ)))
         {
             TokenType assign_op = current_.type;
             advance();
@@ -1884,6 +1908,9 @@ namespace zen
                     break;
                 case TOK_STAR_STAR_EQ:
                     op = OP_POW;
+                    break;
+                case TOK_PERCENT_EQ:
+                    op = use_obj ? OP_MOD_OBJ : OP_MOD;
                     break;
                 default:
                     op = use_obj ? OP_ADD_OBJ : OP_ADD;

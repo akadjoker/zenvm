@@ -41,6 +41,12 @@ struct Arena
 
     ArenaBlock *free_lists[kArenaNumBuckets];
 
+    /* Intrusive doubly-linked list of live large allocations (> kArenaMaxBlockSize)
+       that bypass the bucket pools and go straight to malloc. Each carries a
+       LargeHeader prefix so register/unregister/update are all O(1). Tracked so
+       arena_destroy frees them instead of leaking. */
+    struct LargeHeader *large_head;
+
     size_t bytes_allocated;
     size_t bytes_reserved;
 

@@ -3,6 +3,7 @@
 #include "vm.h"
 #include "zen_arena.h"
 #include <cmath>
+#include <cstdlib>
 
 namespace zen
 {
@@ -14,6 +15,36 @@ namespace zen
     ** Contabiliza bytes para trigger do GC.
     ** ========================================================= */
 
+    /* Build with -DZEN_ARENA_BYPASS to route every GC allocation straight to
+       the system allocator instead of the pool arena. Used to A/B the arena's
+       value vs plain malloc. The GC-trigger accounting is identical either way. */
+#ifdef ZEN_ARENA_BYPASS
+    void *zen_alloc(GC *gc, size_t size)
+    {
+        if (gc->pause_depth == 0 && gc->vm && gc->bytes_allocated > gc->next_gc)
+            gc_collect((VM *)gc->vm);
+        gc->bytes_allocated += size;
+        return malloc(size);
+    }
+    void *zen_alloc_now(GC *gc, size_t size)
+    {
+        gc->bytes_allocated += size;
+        return malloc(size);
+    }
+    void *zen_realloc(GC *gc, void *ptr, size_t old_size, size_t new_size)
+    {
+        if (gc->pause_depth == 0 && gc->vm && gc->bytes_allocated > gc->next_gc)
+            gc_collect((VM *)gc->vm);
+        gc->bytes_allocated += (new_size > old_size) ? (new_size - old_size) : 0;
+        gc->bytes_allocated -= (old_size > new_size) ? (old_size - new_size) : 0;
+        return realloc(ptr, new_size);
+    }
+    void zen_free(GC *gc, void *ptr, size_t size)
+    {
+        gc->bytes_allocated -= size;
+        free(ptr);
+    }
+#else
     void *zen_alloc(GC *gc, size_t size)
     {
         /* Trigger GC BEFORE allocation (so new objects won't be swept) */
@@ -42,6 +73,7 @@ namespace zen
         gc->bytes_allocated -= size;
         arena_free(&gc->arena, ptr, size);
     }
+#endif
 
     bool objects_equal(Obj *a, Obj *b)
     {

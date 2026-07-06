@@ -1,4 +1,7 @@
 /build
+/build/
+/build-rel
+/build-malloc
 /test_collections
 /zen
 /zen_bench

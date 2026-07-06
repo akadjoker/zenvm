@@ -211,6 +211,7 @@ namespace zen
         int add_upvalue(CompilerState *state, int index, bool is_local);
         void declare_local(Token name);
         int add_local(Token name);
+        Local &next_local(); /* reserve a local slot with bounds protection (never OOB) */
         void try_parse_type_hint(); /* parse optional ': TypeName' and set local type */
         void begin_scope();
         void end_scope();
@@ -277,6 +278,26 @@ namespace zen
         ObjClass **global_return_class_;
         int global_return_hints_capacity_;
         void set_global_return_hint(int gidx, ObjStructDef *s, ObjClass *c);
+
+        /* Undefined-global detection (compile-time). A global that is read but
+           never defined (var/def/class/assignment/builtin/import) is a typo. */
+        struct GlobalUse
+        {
+            uint8_t defined;  /* declared via var/def/class/assignment */
+            uint8_t has_read; /* a GETGLOBAL was emitted for it as a value */
+            Token read_tok;   /* location of the first such read (for the error) */
+        };
+        GlobalUse *global_uses_;
+        int global_uses_capacity_;
+        int initial_global_count_; /* globals that already existed at compile start */
+
+        /* Recursion-depth guard for the recursive-descent parser (prevents a
+           deeply-nested source from exhausting the C stack and segfaulting). */
+        int recursion_depth_;
+        void ensure_global_use(int gidx);
+        void mark_global_defined(int gidx);
+        void mark_global_read(int gidx, Token tok);
+        void check_undefined_globals();
 
         /* Class field indexing: set during method compilation */
         struct ClassFieldInfo

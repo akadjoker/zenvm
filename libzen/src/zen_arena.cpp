@@ -23,6 +23,8 @@ void arena_init(Arena *a)
     for (int i = 0; i < kArenaNumBuckets; i++)
         a->free_lists[i] = nullptr;
 
+    a->large_head = nullptr;
+
     a->bytes_allocated = 0;
     a->bytes_reserved = 0;
 
@@ -44,6 +46,59 @@ void arena_init(Arena *a)
     }
 }
 
+/* --- Large-allocation registry (allocations > kArenaMaxBlockSize) ---
+   Each large block is malloc'd with a LargeHeader prefix and threaded onto an
+   intrusive doubly-linked list, so register/unregister/update are all O(1).
+   The pointer handed back to callers is (header + 1). */
+
+struct LargeHeader
+{
+    LargeHeader *prev;
+    LargeHeader *next;
+};
+
+/* Allocate a large block, link it, and return the user payload pointer. */
+static void *large_alloc(Arena *a, size_t size)
+{
+    LargeHeader *h = (LargeHeader *)malloc(sizeof(LargeHeader) + size);
+    h->prev = nullptr;
+    h->next = a->large_head;
+    if (a->large_head)
+        a->large_head->prev = h;
+    a->large_head = h;
+    return (void *)(h + 1);
+}
+
+/* Unlink and free a large block given its user payload pointer. */
+static void large_free(Arena *a, void *p)
+{
+    LargeHeader *h = (LargeHeader *)p - 1;
+    if (h->prev)
+        h->prev->next = h->next;
+    else
+        a->large_head = h->next;
+    if (h->next)
+        h->next->prev = h->prev;
+    free(h);
+}
+
+/* Resize a large block in place; relink if realloc moved it. */
+static void *large_realloc(Arena *a, void *p, size_t new_size)
+{
+    LargeHeader *old = (LargeHeader *)p - 1;
+    LargeHeader *h = (LargeHeader *)realloc(old, sizeof(LargeHeader) + new_size);
+    if (h == old)
+        return (void *)(h + 1);
+    /* Moved: fix neighbours' links to point at the new header. */
+    if (h->prev)
+        h->prev->next = h;
+    else
+        a->large_head = h;
+    if (h->next)
+        h->next->prev = h;
+    return (void *)(h + 1);
+}
+
 void arena_destroy(Arena *a)
 {
     for (int i = 0; i < a->chunk_count; i++)
@@ -52,6 +107,16 @@ void arena_destroy(Arena *a)
     a->chunks = nullptr;
     a->chunk_count = 0;
     a->chunk_capacity = 0;
+
+    /* Free any large allocations still live at teardown (previously leaked). */
+    LargeHeader *h = a->large_head;
+    while (h)
+    {
+        LargeHeader *next = h->next;
+        free(h);
+        h = next;
+    }
+    a->large_head = nullptr;
 }
 
 void *arena_alloc(Arena *a, size_t size)
@@ -62,7 +127,7 @@ void *arena_alloc(Arena *a, size_t size)
     if (size > (size_t)kArenaMaxBlockSize)
     {
         a->bytes_allocated += size;
-        return malloc(size);
+        return large_alloc(a, size);
     }
 
     int index = Arena::s_size_to_bucket[size];
@@ -122,7 +187,7 @@ void arena_free(Arena *a, void *p, size_t size)
     if (size > (size_t)kArenaMaxBlockSize)
     {
         a->bytes_allocated -= size;
-        free(p);
+        large_free(a, p);
         return;
     }
 
@@ -164,9 +229,9 @@ void *arena_realloc(Arena *a, void *p, size_t old_size, size_t new_size)
     /* Transitioning between arena and malloc, or both large */
     if (old_size > (size_t)kArenaMaxBlockSize && new_size > (size_t)kArenaMaxBlockSize)
     {
-        /* Both large — use realloc directly */
+        /* Both large — resize the intrusive block in place */
         a->bytes_allocated += new_size - old_size;
-        return realloc(p, new_size);
+        return large_realloc(a, p, new_size);
     }
 
     /* Mixed: one in arena, one in malloc */

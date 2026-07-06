@@ -40,7 +40,7 @@ x += 1;   x -= 1;   x *= 2;   x /= 2;
 
 | Prec | Operators | Assoc |
 |------|-----------|-------|
-| 1 | `=` `+=` `-=` `*=` `/=` | Right |
+| 1 | `=` `+=` `-=` `*=` `/=` `%=` `**=` `&=` `\|=` `^=` | Right |
 | 2 | `or` `\|\|` | Left |
 | 3 | `and` `&&` | Left |
 | 4 | `\|` (bitwise OR) | Left |
@@ -50,9 +50,12 @@ x += 1;   x -= 1;   x *= 2;   x /= 2;
 | 8 | `<` `>` `<=` `>=` | Left |
 | 9 | `<<` `>>` | Left |
 | 10 | `+` `-` | Left |
-| 11 | `*` `/` `%` | Left |
+| 11 | `*` `/` `%` `div` | Left |
 | 12 | `-x` `!x` `~x` `not x` | Right (prefix) |
-| 13 | `.` `()` `[]` | Left |
+| 13 | `**` (power) | Right |
+| 14 | `.` `()` `[]` | Left |
+
+`**` binds tighter than a prefix unary: `-2 ** 2` == `-(2 ** 2)` == `-4` (math/Python convention).
 
 ### Notes
 - Division `/` always returns float: `10 / 3` → `3.33333`
@@ -309,6 +312,31 @@ sqrt(x)  pow(b, e)  log(x)  exp(x)
 abs(x)   floor(x)  ceil(x)
 deg(x)   rad(x)    // radians↔degrees
 ```
+
+---
+
+## Error Handling
+
+Zen uses a Lua-style protected call rather than `try`/`catch`. A runtime error
+normally aborts the program; wrap risky work in `pcall` to catch it and continue.
+
+```zen
+// pcall(fn, args...) runs fn in protected mode.
+//   success -> (true, result)
+//   error   -> (false, message)
+var (ok, res) = pcall(risky, arg1, arg2);
+if (!ok) {
+    print("caught: " + res);
+} else {
+    print("result: " + res);
+}
+
+// raise an error explicitly
+error("something went wrong");   // caught by an enclosing pcall, else aborts
+```
+
+`pcall` catches errors from anywhere in the called function (including native
+module functions and nested calls) and restores VM state so execution continues.
 
 ---
 

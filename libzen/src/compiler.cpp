@@ -25,6 +25,8 @@ namespace zen
           global_class_hints_(nullptr), global_class_hints_capacity_(0),
           global_struct_hints_(nullptr), global_struct_hints_capacity_(0),
           global_return_struct_(nullptr), global_return_class_(nullptr), global_return_hints_capacity_(0),
+          global_uses_(nullptr), global_uses_capacity_(0), initial_global_count_(0),
+          recursion_depth_(0),
           current_class_fields_(nullptr)
     {
         current_.type = TOK_EOF;
@@ -39,6 +41,7 @@ namespace zen
         free(global_struct_hints_);
         free(global_return_struct_);
         free(global_return_class_);
+        free(global_uses_);
         for (int i = 0; i < include_count_; i++)
         {
             free(include_sources_[i]);
@@ -148,6 +151,68 @@ namespace zen
     }
 
     /* =========================================================
+    ** Undefined-global detection (compile-time)
+    ** ========================================================= */
+
+    void Compiler::ensure_global_use(int gidx)
+    {
+        if (gidx < 0)
+            return;
+        if (gidx < global_uses_capacity_)
+            return;
+        int new_cap = global_uses_capacity_ ? global_uses_capacity_ * 2 : 64;
+        while (new_cap <= gidx)
+            new_cap *= 2;
+        global_uses_ = (GlobalUse *)realloc(global_uses_, new_cap * sizeof(GlobalUse));
+        for (int i = global_uses_capacity_; i < new_cap; i++)
+        {
+            /* Globals that already existed when compilation started (builtins,
+               native libs, prior REPL definitions) count as defined. */
+            global_uses_[i].defined = (i < initial_global_count_) ? 1 : 0;
+            global_uses_[i].has_read = 0;
+            global_uses_[i].read_tok = Token{};
+        }
+        global_uses_capacity_ = new_cap;
+    }
+
+    void Compiler::mark_global_defined(int gidx)
+    {
+        ensure_global_use(gidx);
+        if (gidx >= 0)
+            global_uses_[gidx].defined = 1;
+    }
+
+    void Compiler::mark_global_read(int gidx, Token tok)
+    {
+        ensure_global_use(gidx);
+        if (gidx < 0)
+            return;
+        if (!global_uses_[gidx].defined && !global_uses_[gidx].has_read)
+        {
+            global_uses_[gidx].has_read = 1;
+            global_uses_[gidx].read_tok = tok;
+        }
+    }
+
+    void Compiler::check_undefined_globals()
+    {
+        for (int gidx = 0; gidx < global_uses_capacity_; gidx++)
+        {
+            if (!global_uses_[gidx].has_read || global_uses_[gidx].defined)
+                continue;
+            /* Double-guard: a slot that holds a non-nil value at compile end was
+               defined by some mechanism we didn't track (native fn, module
+               constant, struct/class def). Only a genuinely undefined name is
+               still nil here. Forward-referenced script defs are nil now but are
+               flagged 'defined' by their def/class/var statement. */
+            if (!is_nil(vm_->get_global(gidx)))
+                continue;
+            Token t = global_uses_[gidx].read_tok;
+            error_at(&t, "undefined variable (never declared with var/def/class)");
+        }
+    }
+
+    /* =========================================================
     ** Top-level compile entry point
     ** ========================================================= */
 
@@ -159,7 +224,20 @@ namespace zen
         panic_mode_ = false;
         current_file_ = filename;
 
+        /* Snapshot pre-existing globals (builtins, native libs, prior REPL
+           definitions) and reset the undefined-global tracker for this compile. */
+        initial_global_count_ = vm->num_globals();
+        global_uses_capacity_ = 0;
+        recursion_depth_ = 0;
+
         lexer_.init(source);
+
+        /* Pause the GC for the whole compile. The half-built ObjFunc / constant
+           strings are referenced only from the C++ compiler stack, not from GC
+           roots, so a collection triggered mid-emit (by the allocation
+           threshold, e.g. on a very large function) would free the code buffer
+           out from under grow_code(). Resume on every exit path. */
+        gc_pause(gc);
 
         /* Set up the top-level script function state */
         CompilerState script_state;
@@ -187,9 +265,15 @@ namespace zen
         }
         consume(TOK_EOF, "Expected end of file.");
 
+        /* Now that the whole program is parsed, forward references are resolved:
+           any global still read-but-never-defined is a typo. */
+        if (!had_error_)
+            check_undefined_globals();
+
         if (had_error_)
         {
             state_ = nullptr;
+            gc_resume(gc);
             return nullptr;
         }
 
@@ -199,6 +283,7 @@ namespace zen
         ObjFunc *fn = state_->emitter.end(state_->max_reg);
         state_ = nullptr;
 
+        gc_resume(gc);
         return had_error_ ? nullptr : fn;
     }
 
@@ -435,11 +520,25 @@ namespace zen
         }
     }
 
+    /* Reserve the next local slot. If the function already has the maximum
+       number of locals, report the error once and return the last slot as a
+       throw-away scratch — compilation is already doomed (had_error), so it
+       is never executed, and we never index past the fixed-size array. */
+    Local &Compiler::next_local()
+    {
+        if (state_->local_count >= 256)
+        {
+            error("Too many local variables in function.");
+            return state_->locals[255];
+        }
+        return state_->locals[state_->local_count++];
+    }
+
     int Compiler::add_local(Token name)
     {
         declare_local(name);
         int reg = alloc_reg();
-        Local &local = state_->locals[state_->local_count++];
+        Local &local = next_local();
         local.name = name;
         local.depth = state_->scope_depth;
         local.reg = reg;
@@ -486,14 +585,19 @@ namespace zen
     int Compiler::alloc_reg()
     {
         int reg = state_->next_reg++;
+        if (reg >= kMaxRegs)
+        {
+            error("Too many registers needed (expression too complex).");
+            /* Clamp so callers that index reg_class_hints[reg] / emit on this
+               register never write out of bounds. Compilation already failed
+               (had_error), so the clamped register is never executed. */
+            state_->next_reg = kMaxRegs;
+            reg = kMaxRegs - 1;
+        }
         if (reg >= 0 && reg < 256)
             state_->reg_class_hints[reg] = nullptr;
         if (state_->next_reg > state_->max_reg)
             state_->max_reg = state_->next_reg;
-        if (reg >= kMaxRegs)
-        {
-            error("Too many registers needed (expression too complex).");
-        }
         return reg;
     }
 
