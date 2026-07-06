@@ -1738,8 +1738,64 @@ namespace zen
 
         consume(TOK_IN, "Expected 'in' after variable name.");
 
-        /* Evaluate iterable */
+        /* Evaluate the start / iterable expression */
         int iterable_reg = expression(-1);
+
+        /* ------------------------------------------------------------------
+        ** Range form (syntactic sugar): foreach (i in A..B) { ... }
+        ** Desugars to a counting loop  i = A; while (i < B) { body; i += 1; }
+        ** with no array allocation. B is evaluated once.
+        ** ------------------------------------------------------------------ */
+        if (match(TOK_DOT_DOT))
+        {
+            if (has_index)
+                error("foreach over a range 'A..B' takes a single variable.");
+
+            int start_reg = iterable_reg;      /* holds A */
+            int end_expr = expression(-1);     /* holds B */
+            consume(TOK_RPAREN, "Expected ')' after foreach range.");
+
+            /* Stable copy of the end bound (evaluated once). */
+            int end_reg = alloc_reg();
+            state_->emitter.emit_abc(OP_MOVE, end_reg, end_expr, 0, previous_.line);
+
+            /* Loop variable, initialised to A. */
+            int var_reg = add_local(first_name);
+            state_->emitter.emit_abc(OP_MOVE, var_reg, start_reg, 0, previous_.line);
+
+            int loop_start = state_->emitter.current_offset();
+            LoopCtx &loop = state_->loops[state_->loop_depth++];
+            loop.start = loop_start;
+            loop.continue_target = -1; /* continue jumps forward to the increment */
+            loop.scope_depth = state_->scope_depth;
+            loop.break_count = 0;
+            loop.continue_count = 0;
+
+            /* Condition: i < end */
+            int cond_reg = alloc_reg();
+            state_->emitter.emit_abc(OP_LT, cond_reg, var_reg, end_reg, previous_.line);
+            int exit_jump = state_->emitter.emit_jump(OP_JMPIFNOT, cond_reg, previous_.line);
+            free_reg(cond_reg);
+
+            scoped_body();
+
+            /* Increment point — continue lands here, then i += 1, then loop back. */
+            for (int i = 0; i < loop.continue_count; i++)
+                state_->emitter.patch_jump(loop.continues[i]);
+            state_->emitter.emit_abc(OP_ADDI, var_reg, var_reg, 1, previous_.line);
+            state_->emitter.emit_loop(loop_start, 0, previous_.line);
+            state_->emitter.patch_jump(exit_jump);
+
+            for (int i = 0; i < loop.break_count; i++)
+                state_->emitter.patch_jump(loop.breaks[i]);
+            state_->loop_depth--;
+
+            free_reg(end_reg);
+            free_reg(iterable_reg);
+            end_scope();
+            return;
+        }
+
         consume(TOK_RPAREN, "Expected ')' after foreach expression.");
 
         /* Internal index counter */
@@ -1762,7 +1818,7 @@ namespace zen
 
         LoopCtx &loop = state_->loops[state_->loop_depth++];
         loop.start = loop_start;
-        loop.continue_target = loop_start;
+        loop.continue_target = -1; /* continue jumps forward to the increment (below) */
         loop.scope_depth = state_->scope_depth;
         loop.break_count = 0;
         loop.continue_count = 0;
@@ -1783,6 +1839,10 @@ namespace zen
 
         /* Body */
         scoped_body();
+
+        /* Increment point — continue lands here so the index always advances. */
+        for (int i = 0; i < loop.continue_count; i++)
+            state_->emitter.patch_jump(loop.continues[i]);
 
         /* idx = idx + 1 */
         state_->emitter.emit_abc(OP_ADDI, idx_reg, idx_reg, 1, previous_.line);

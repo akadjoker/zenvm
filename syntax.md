@@ -212,6 +212,11 @@ for (var i = 0; i < 10; i += 1) { print(i); }
 // foreach
 foreach (item in array) { print(item); }
 
+// foreach over a numeric range A..B (B exclusive) — compiles to a counting
+// loop with no array allocation. B is evaluated once.
+foreach (i in 0..10) { print(i); }     // 0,1,2,...,9
+foreach (i in lo..hi) { print(i); }
+
 // loop (infinite)
 loop { if (done) { break; } }
 
