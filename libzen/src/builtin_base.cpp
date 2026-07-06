@@ -41,6 +41,21 @@ namespace zen
             args[0] = v;
             return 1;
         }
+        /* Instance with a __str__ overload — use it (like print / concat / interp). */
+        if (is_instance(v))
+        {
+            ObjClass *k = ((ObjInstance *)v.as.obj)->klass;
+            if ((int)VM::SLOT_STR < kOperatorSlotCount &&
+                !is_nil(k->operator_slots[VM::SLOT_STR]))
+            {
+                Value r = vm->invoke_operator(v, VM::SLOT_STR, nullptr, 0);
+                if (is_string(r))
+                {
+                    args[0] = r;
+                    return 1;
+                }
+            }
+        }
         char buf[64];
         int len = 0;
         if (is_nil(v))
