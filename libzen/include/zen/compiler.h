@@ -197,11 +197,13 @@ namespace zen
         int process_field_expr(Token token, int dest);
         int super_invoke(int dest);
         int anonymous_function(int dest);
+        int lambda(int dest, Token *single_param); /* x => e  or  (a,b) => e */
 
         /* --- Helpers --- */
         Precedence get_precedence(TokenType type);
         bool is_prefix(TokenType type);
         bool looks_like_generic_call();
+        bool looks_like_lambda_params(); /* '(' already consumed: peek for  params ) => */
         int generic_type_arg(int dest);
         int require_global_slot(const char *name, Token *token);
 

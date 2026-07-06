@@ -564,7 +564,7 @@ Token Lexer::next_token() {
         case '/': return match('=') ? make_token(TOK_SLASH_EQ) : make_token(TOK_SLASH);
 
         case '!': return match('=') ? make_token(TOK_BANG_EQ) : make_token(TOK_BANG);
-        case '=': return match('=') ? make_token(TOK_EQ_EQ) : make_token(TOK_EQ);
+        case '=': return match('=') ? make_token(TOK_EQ_EQ) : match('>') ? make_token(TOK_ARROW) : make_token(TOK_EQ);
 
         case '<':
             if (match('<')) return make_token(TOK_LT_LT);

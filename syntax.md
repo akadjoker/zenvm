@@ -250,6 +250,12 @@ def add(a, b) {
 // anonymous function (closure)
 var double = def(x) { return x * 2; };
 
+// lambda shorthand (=>) — sugar for an anonymous function
+var double2 = x => x * 2;          // single param, expression body (implicit return)
+var add     = (a, b) => a + b;     // multiple params
+var greet   = () => "hi";          // no params
+var sum     = (n) => { var s = 0; foreach (i in 0..n) { s += i; } return s; }; // block body
+
 // closures capture enclosing variables
 def counter(start) {
     var n = start;

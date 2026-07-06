@@ -43,6 +43,7 @@ namespace zen
         TOK_BANG_EQ, /* ! != */
         TOK_EQ,
         TOK_EQ_EQ, /* = == */
+        TOK_ARROW, /* => (lambda) */
         TOK_LT,
         TOK_LT_EQ,
         TOK_LT_LT, /* < <= << */

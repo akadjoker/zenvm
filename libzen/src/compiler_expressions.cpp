@@ -281,6 +281,10 @@ namespace zen
         case TOK_NIL:
             return literal(token, dest);
         case TOK_IDENTIFIER:
+            /* Single-parameter lambda:  x => expr  */
+            if (check(TOK_ARROW))
+                return lambda(dest, &token);
+            return variable(token, dest, canAssign);
         case TOK_SELF:
             return variable(token, dest, canAssign);
         case TOK_SUPER:
@@ -291,6 +295,9 @@ namespace zen
         case TOK_NOT:
             return unary(token, dest);
         case TOK_LPAREN:
+            /* Parenthesised lambda:  () => e  or  (a, b) => e  */
+            if (looks_like_lambda_params())
+                return lambda(dest, nullptr);
             return grouping(dest);
         case TOK_LBRACKET:
             return array_literal(dest);
@@ -2392,6 +2399,121 @@ namespace zen
         fn->arity = arity;
 
         /* Copy upvalue descriptors */
+        int nuv = state_->upvalue_count;
+        fn->upvalue_count = nuv;
+        if (nuv > 0)
+        {
+            fn->upval_descs = (UpvalDesc *)zen_alloc(gc_, nuv * sizeof(UpvalDesc));
+            for (int i = 0; i < nuv; i++)
+            {
+                fn->upval_descs[i].index = (uint8_t)state_->upvalues[i].index;
+                fn->upval_descs[i].is_local = state_->upvalues[i].is_local ? 1 : 0;
+            }
+        }
+
+        state_ = enclosing;
+
+        int ki = state_->emitter.add_constant(val_obj((Obj *)fn));
+        state_->emitter.emit_abx(OP_CLOSURE, reg, ki, previous_.line);
+        return reg;
+    }
+
+    /* '(' has already been consumed; current_ is the first token inside.
+       Returns true if what follows is a lambda parameter list:  ) =>  or
+       IDENT (',' IDENT)* ) =>   (never consumes tokens — lexer state restored). */
+    bool Compiler::looks_like_lambda_params()
+    {
+        LexerState saved = lexer_.save_state();
+        Token t = current_;
+        bool ok = false;
+        if (t.type == TOK_RPAREN)
+        {
+            ok = (lexer_.next_token().type == TOK_ARROW);
+        }
+        else if (t.type == TOK_IDENTIFIER)
+        {
+            Token nx = lexer_.next_token();
+            ok = true;
+            while (nx.type == TOK_COMMA)
+            {
+                if (lexer_.next_token().type != TOK_IDENTIFIER) { ok = false; break; }
+                nx = lexer_.next_token();
+            }
+            if (ok)
+                ok = (nx.type == TOK_RPAREN) && (lexer_.next_token().type == TOK_ARROW);
+        }
+        lexer_.restore_state(saved);
+        return ok;
+    }
+
+    /* =========================================================
+    ** Lambda shorthand:  x => expr   or   (a, b) => expr   or   () => { ... }
+    ** Desugars to an anonymous function with an implicit return for the
+    ** expression body form.
+    ** single_param != null  -> the one bare-identifier parameter (already read,
+    **                          current_ is '=>'); otherwise parse a '(' list
+    **                          ('(' already consumed, current_ is first param).
+    ** ========================================================= */
+    int Compiler::lambda(int dest, Token *single_param)
+    {
+        int reg = (dest >= 0) ? dest : alloc_reg();
+
+        CompilerState fn_state;
+        fn_state.parent = state_;
+        fn_state.function = new_func(gc_);
+        fn_state.emitter = Emitter(gc_);
+        fn_state.local_count = 0;
+        memset(fn_state.reg_class_hints, 0, sizeof(fn_state.reg_class_hints));
+        fn_state.scope_depth = 0;
+        fn_state.next_reg = 0;
+        fn_state.max_reg = 0;
+        fn_state.upvalue_count = 0;
+        fn_state.loop_depth = 0;
+        fn_state.is_method = false;
+        fn_state.is_process = false;
+
+        fn_state.emitter.begin("<lambda>", 0, current_file_);
+
+        CompilerState *enclosing = state_;
+        state_ = &fn_state;
+
+        begin_scope();
+
+        int arity = 0;
+        if (single_param)
+        {
+            add_local(*single_param);
+            arity = 1;
+        }
+        else if (!check(TOK_RPAREN))
+        {
+            do
+            {
+                consume(TOK_IDENTIFIER, "Expected parameter name.");
+                add_local(previous_);
+                arity++;
+            } while (match(TOK_COMMA));
+        }
+        if (!single_param)
+            consume(TOK_RPAREN, "Expected ')' after lambda parameters.");
+        consume(TOK_ARROW, "Expected '=>' in lambda.");
+
+        /* Body: block or single expression (implicit return). */
+        if (match(TOK_LBRACE))
+        {
+            block();
+            state_->emitter.emit_abc(OP_LOADNIL, 0, 0, 0, previous_.line);
+            state_->emitter.emit_abc(OP_RETURN, 0, 1, 0, previous_.line);
+        }
+        else
+        {
+            int r = expression(-1);
+            state_->emitter.emit_abc(OP_RETURN, r, 1, 0, previous_.line);
+        }
+
+        ObjFunc *fn = state_->emitter.end(state_->max_reg);
+        fn->arity = arity;
+
         int nuv = state_->upvalue_count;
         fn->upvalue_count = nuv;
         if (nuv > 0)
