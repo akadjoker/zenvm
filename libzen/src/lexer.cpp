@@ -402,6 +402,7 @@ TokenType Lexer::identifier_type() {
                     case 'n': if (current_ - start_ == 2) return TOK_IN;
                               if (current_ - start_ == 7 && start_[2] == 'c') return check_keyword(2, 5, "clude", TOK_INCLUDE);
                     break;
+                    case 's': if (current_ - start_ == 2) return TOK_IS; break;
                 }
             }
             break;

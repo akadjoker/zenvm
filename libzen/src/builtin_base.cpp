@@ -867,6 +867,20 @@ namespace zen
 
 
     /* =========================================================
+    ** classname(x) — class name for an instance, else the basic type name.
+    ** ========================================================= */
+    static int nat_classname(VM *vm, Value *args, int nargs)
+    {
+        if (nargs >= 1 && is_instance(args[0]))
+        {
+            ObjClass *k = ((ObjInstance *)args[0].as.obj)->klass;
+            args[0] = val_obj((Obj *)vm->make_string(k->name ? k->name->chars : "instance"));
+            return 1;
+        }
+        return nat_typeof(vm, args, nargs);
+    }
+
+    /* =========================================================
     ** pcall(fn, args...) — protected call.
     ** Returns (true, result) if fn runs, or (false, message) on a runtime error.
     ** ========================================================= */
@@ -892,6 +906,7 @@ namespace zen
 
     static const NativeReg base_functions[] = {
         {"pcall", nat_pcall, -1},
+        {"classname", nat_classname, 1},
         {"str", nat_str, 1},
         {"int", nat_int, 1},
         {"float", nat_float, 1},
@@ -932,7 +947,7 @@ namespace zen
     const NativeLib zen_lib_base = {
         "base",
         base_functions,
-        29,   /* num_functions */
+        30,   /* num_functions */
         base_constants,
         4,    /* num_constants */
     };

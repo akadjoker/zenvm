@@ -454,6 +454,17 @@ var b = Boss(10, 20);
 b.damage(50);
 ```
 
+### Type checks
+
+```zen
+if (b is Boss)   { ... }   // exact class
+if (b is Entity) { ... }   // true for any ancestor (walks the parent chain)
+print(classname(b));       // "Boss"  (class name of an instance)
+print(classname(42));      // "int"   (basic type name for non-instances)
+```
+
+`is` compiles to a single opcode (fast enough for per-entity per-frame checks).
+
 - Single-level inheritance (`: Parent`)
 - `self` accesses fields and methods
 - `init` is called automatically during construction

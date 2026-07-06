@@ -392,6 +392,7 @@ namespace zen
             &&lbl_OP_CONTAINS,
             &&lbl_OP_DELINDEX,
             &&lbl_OP_GETSLICE,
+            &&lbl_OP_IS,
             &&lbl_OP_HALT,
         };
 
@@ -2781,6 +2782,26 @@ namespace zen
             } else {
                 RT_ERROR("slice not supported for this type");
             }
+            NEXT();
+        }
+
+        CASE(OP_IS)
+        {
+            uint32_t i = *ip;
+            Value v = R[ZEN_B(i)];
+            Value cls = R[ZEN_C(i)];
+            bool result = false;
+            if (is_instance(v) && is_class(cls))
+            {
+                ObjClass *k = ((ObjInstance *)v.as.obj)->klass;
+                ObjClass *target = as_class(cls);
+                while (k)
+                {
+                    if (k == target) { result = true; break; }
+                    k = k->parent;
+                }
+            }
+            R[ZEN_A(i)] = val_bool(result);
             NEXT();
         }
 

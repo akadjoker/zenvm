@@ -44,6 +44,7 @@ namespace zen
         TOK_EQ,
         TOK_EQ_EQ, /* = == */
         TOK_ARROW, /* => (lambda) */
+        TOK_IS,    /* is (type check) */
         TOK_LT,
         TOK_LT_EQ,
         TOK_LT_LT, /* < <= << */

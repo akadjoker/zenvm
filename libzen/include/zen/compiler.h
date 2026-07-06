@@ -177,6 +177,7 @@ namespace zen
         /* Infix handlers */
         int binary(Token op, int left, int dest);
         int in_expr(int left, int dest);
+        int is_expr(int left, int dest);
         int not_in_expr(int left, int dest);
         int pow_expr(int left, int dest);
         int safe_dot_expr(int obj, int dest, bool canAssign);

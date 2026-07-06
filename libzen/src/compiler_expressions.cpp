@@ -48,6 +48,8 @@ namespace zen
             return PREC_COMPARISON;
         case TOK_IN:
             return PREC_COMPARISON;
+        case TOK_IS:
+            return PREC_COMPARISON;
         case TOK_LT_LT:
         case TOK_GT_GT:
             return PREC_SHIFT;
@@ -388,6 +390,10 @@ namespace zen
         /* Containment */
         case TOK_IN:
             return in_expr(left, dest);
+
+        /* Type check: value is Class */
+        case TOK_IS:
+            return is_expr(left, dest);
 
         /* Ternary: cond ? then : else */
         case TOK_QUESTION:
@@ -1491,6 +1497,17 @@ namespace zen
         int right = parse_precedence((Precedence)(PREC_COMPARISON + 1), -1);
         int reg = dest >= 0 ? dest : alloc_reg();
         state_->emitter.emit_abc(OP_CONTAINS, reg, left, right, previous_.line);
+        if (right != reg) free_reg(right);
+        if (left != reg) free_reg(left);
+        return reg;
+    }
+
+    int Compiler::is_expr(int left, int dest)
+    {
+        /* 'is' already consumed. RHS is a class expression. */
+        int right = parse_precedence((Precedence)(PREC_COMPARISON + 1), -1);
+        int reg = dest >= 0 ? dest : alloc_reg();
+        state_->emitter.emit_abc(OP_IS, reg, left, right, previous_.line);
         if (right != reg) free_reg(right);
         if (left != reg) free_reg(left);
         return reg;
