@@ -1173,7 +1173,8 @@ namespace zen
                     DISPATCH();
                 }
 
-                if (fiber->frame_count >= kMaxFrames)
+                if (fiber->frame_count >= kMaxFrames ||
+                    &R[a + 1] + fn->num_regs > fiber->stack + fiber->stack_capacity)
                 {
                     RT_ERROR("stack overflow");
                 }
@@ -1278,7 +1279,8 @@ namespace zen
                         RT_ERROR("init() expects %d args but got %d", fn->arity, nargs);
                     }
                     /* Set up frame: R[a] = instance (self), args at R[a+1..] */
-                    if (fiber->frame_count >= kMaxFrames)
+                    if (fiber->frame_count >= kMaxFrames ||
+                        &R[a] + fn->num_regs > fiber->stack + fiber->stack_capacity)
                     {
                         RT_ERROR("stack overflow");
                     }
@@ -1320,7 +1322,8 @@ namespace zen
             {
                 ObjClosure *cl = as_closure(callee);
                 ObjFunc *fn = cl->func;
-                if (fiber->frame_count >= kMaxFrames)
+                if (fiber->frame_count >= kMaxFrames ||
+                    &R[a + 1] + fn->num_regs > fiber->stack + fiber->stack_capacity)
                 {
                     RT_ERROR("stack overflow");
                 }
@@ -2117,7 +2120,8 @@ namespace zen
                     {
                         RT_ERROR("%s.%s() expects %d args but got %d", klass->name->chars, mname, fn->arity, arg_count);
                     }
-                    if (fiber->frame_count >= kMaxFrames)
+                    if (fiber->frame_count >= kMaxFrames ||
+                        &R[base] + fn->num_regs > fiber->stack + fiber->stack_capacity)
                     {
                         RT_ERROR("stack overflow");
                     }
@@ -2167,7 +2171,8 @@ namespace zen
                     {
                         RT_ERROR("%s.%s() expects %d args but got %d", cls->name->chars, mname, fn->arity, arg_count);
                     }
-                    if (fiber->frame_count >= kMaxFrames)
+                    if (fiber->frame_count >= kMaxFrames ||
+                        &R[base + 1] + fn->num_regs > fiber->stack + fiber->stack_capacity)
                     {
                         RT_ERROR("stack overflow");
                     }
@@ -2285,7 +2290,8 @@ namespace zen
                     const char *mname = as_string(frame->func->constants[name_ki])->chars;
                     RT_ERROR("super.%s() expects %d args but got %d", mname, fn->arity, arg_count);
                 }
-                if (fiber->frame_count >= kMaxFrames)
+                if (fiber->frame_count >= kMaxFrames ||
+                    &R[base] + fn->num_regs > fiber->stack + fiber->stack_capacity)
                 {
                     RT_ERROR("stack overflow");
                 }

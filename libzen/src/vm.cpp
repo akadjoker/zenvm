@@ -967,6 +967,13 @@ namespace zen
             return false;
         }
 
+        /* Register-stack bounds: the frame needs num_regs slots. */
+        if ((fiber->stack_top - nargs) + func->num_regs > fiber->stack + fiber->stack_capacity)
+        {
+            runtime_error("stack overflow");
+            return false;
+        }
+
         CallFrame *frame = &fiber->frames[fiber->frame_count++];
         frame->closure = closure;
         frame->func = func;
