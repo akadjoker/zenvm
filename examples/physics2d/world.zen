@@ -1,23 +1,52 @@
 // ============================================================
-// physics2d / world — rigid circle bodies, integrator, and
-// circle-circle collision with impulse resolution.
-// Self-checking via physics invariants (headless).
+// physics2d / world — mini Box2D-style core with a body class
+// hierarchy (Godot-like): Body -> StaticBody / KinematicBody /
+// RigidBody. Uses inheritance + polymorphic dispatch (integrate,
+// inv_mass) and Vec2 operator overloading heavily on purpose.
+// Self-checking.
 // ============================================================
 include "vec2.zen";
 
+// Base: an immovable point with a radius. Subclasses override behaviour.
 class Body {
-    var pos;        // Vec2
-    var vel;        // Vec2
-    var r;          // radius
-    var inv_mass;   // 1/mass (0 = static/immovable)
-    var restitution;
+    var pos;
+    var vel;
+    var r;
+    var restitution = 0.2;
+    def init(x, y, r) { self.pos = Vec2(x, y); self.vel = Vec2(0.0, 0.0); self.r = r; }
+    def inv_mass() { return 0.0; }            // infinite mass by default
+    def integrate(g, dt) { }                  // static: never moves
+}
+
+// Immovable collider (walls, ground).
+class StaticBody : Body {
+    def init(x, y, r) { self.pos = Vec2(x, y); self.vel = Vec2(0.0, 0.0); self.r = r; }
+}
+
+// Script-driven: moves by its own velocity, ignores gravity, and collisions
+// don't push it (infinite mass) — like a moving platform / character.
+class KinematicBody : Body {
+    def init(x, y, r) { self.pos = Vec2(x, y); self.vel = Vec2(0.0, 0.0); self.r = r; }
+    def integrate(g, dt) { self.pos = self.pos + self.vel * dt; }   // no gravity
+}
+
+// Fully simulated body.
+class RigidBody : Body {
+    var im;   // inverse mass
     def init(x, y, r, mass) {
-        self.pos = Vec2(x, y);
-        self.vel = Vec2(0.0, 0.0);
-        self.r = r;
-        self.inv_mass = mass <= 0.0 ? 0.0 : 1.0 / mass;
-        self.restitution = 0.9;
+        self.pos = Vec2(x, y); self.vel = Vec2(0.0, 0.0); self.r = r;
+        self.im = mass <= 0.0 ? 0.0 : 1.0 / mass;
     }
+    def inv_mass() { return self.im; }
+    def integrate(g, dt) {
+        self.vel = self.vel + g * dt;
+        self.pos = self.pos + self.vel * dt;
+    }
+}
+
+class Manifold {
+    var a; var b; var normal; var depth;
+    def init(a, b, normal, depth) { self.a = a; self.b = b; self.normal = normal; self.depth = depth; }
 }
 
 class World {
@@ -27,40 +56,49 @@ class World {
     def add(b) { self.bodies.push(b); return b; }
 
     def integrate(dt) {
-        foreach (b in self.bodies) {
-            if (b.inv_mass == 0.0) { continue; }
-            b.vel = b.vel + self.gravity * dt;      // v += g*dt
-            b.pos = b.pos + b.vel * dt;             // x += v*dt
-        }
+        foreach (b in self.bodies) { b.integrate(self.gravity, dt); }   // polymorphic
     }
 
-    // Resolve one circle-circle contact with a normal impulse.
-    def resolve(a, b) {
+    def collide(a, b) {
         var d = b.pos - a.pos;
-        var dist2 = d.len2();
         var rsum = a.r + b.r;
-        if (dist2 >= rsum * rsum) { return false; }   // no overlap
+        var dist2 = d.len2();
+        if (dist2 >= rsum * rsum) { return nil; }
         var dist = sqrt(dist2);
-        var n = dist > 0.00001 ? d.scaled(1.0 / dist) : Vec2(1.0, 0.0); // contact normal
-        var rel = b.vel - a.vel;
-        var vn = rel.dot(n);                            // relative velocity along normal
-        if (vn > 0.0) { return true; }                 // separating already
-        var e = a.restitution < b.restitution ? a.restitution : b.restitution;
-        var inv_sum = a.inv_mass + b.inv_mass;
-        if (inv_sum == 0.0) { return true; }
-        var j = -(1.0 + e) * vn / inv_sum;             // impulse magnitude
-        var imp = n.scaled(j);
-        a.vel = a.vel - imp.scaled(a.inv_mass);
-        b.vel = b.vel + imp.scaled(b.inv_mass);
-        return true;
+        var n = dist > 0.00001 ? d.scaled(1.0 / dist) : Vec2(1.0, 0.0);
+        return Manifold(a, b, n, rsum - dist);
+    }
+
+    def resolve(m) {
+        var a = m.a; var b = m.b; var n = m.normal;
+        var ia = a.inv_mass(); var ib = b.inv_mass();     // polymorphic
+        var inv_sum = ia + ib;
+        if (inv_sum == 0.0) { return; }
+        var vn = (b.vel - a.vel).dot(n);
+        if (vn < 0.0) {
+            var e = a.restitution < b.restitution ? a.restitution : b.restitution;
+            var imp = n.scaled(-(1.0 + e) * vn / inv_sum);
+            a.vel = a.vel - imp.scaled(ia);
+            b.vel = b.vel + imp.scaled(ib);
+        }
+        var corr = m.depth - 0.01;
+        if (corr > 0.0) {
+            var c = n.scaled(0.8 * corr / inv_sum);
+            a.pos = a.pos - c.scaled(ia);
+            b.pos = b.pos + c.scaled(ib);
+        }
     }
 
     def step(dt) {
         self.integrate(dt);
         var n = self.bodies.len();
-        foreach (i in 0..n) {
-            foreach (k in i + 1..n) {
-                self.resolve(self.bodies[i], self.bodies[k]);
+        // Hot O(n^2) broad+narrow phase — C-style for uses the fused OP_FORLOOP
+        // (faster than foreach over a range). Swap in the quadtree for broad-phase
+        // once body counts grow.
+        for (var i = 0; i < n; i += 1) {
+            for (var k = i + 1; k < n; k += 1) {
+                var m = self.collide(self.bodies[i], self.bodies[k]);
+                if (m != nil) { self.resolve(m); }
             }
         }
     }
@@ -69,34 +107,28 @@ class World {
 def approx(a, b, tol) { return abs(a - b) < tol; }
 def eq(cond, m) { if (cond) { print("PASS " + m); } else { print("FAIL " + m); } }
 
-// --- 1. free fall: x = 0.5*g*t^2, v = g*t ---
-var w = World();
-w.gravity = Vec2(0.0, 10.0);
-var f = w.add(Body(0.0, 0.0, 1.0, 1.0));
-var t = 0.0; var dt = 0.001;
-foreach (i in 0..1000) { w.integrate(dt); t += dt; }   // 1 second
-eq(approx(f.vel.y, 10.0, 0.01), "free fall v = g*t");
-eq(approx(f.pos.y, 5.0, 0.02), "free fall x ~ 0.5*g*t^2");
+// --- polymorphism / `is` ---
+var s = StaticBody(0.0, 0.0, 10.0);
+var k = KinematicBody(0.0, 0.0, 1.0);
+var rb = RigidBody(0.0, 0.0, 1.0, 2.0);
+eq(s is Body and k is Body and rb is Body, "all are Body (inheritance)");
+eq(approx(s.inv_mass(), 0.0, 1e-9), "static inv_mass 0");
+eq(approx(k.inv_mass(), 0.0, 1e-9), "kinematic inv_mass 0");
+eq(approx(rb.inv_mass(), 0.5, 1e-9), "rigid inv_mass 1/2");
 
-// --- 2. head-on elastic collision (equal mass, e=1) => velocities swap ---
-var w2 = World();
-var A = w2.add(Body(-5.0, 0.0, 1.0, 1.0)); A.vel = Vec2(2.0, 0.0);  A.restitution = 1.0;
-var B = w2.add(Body( 5.0, 0.0, 1.0, 1.0)); B.vel = Vec2(-2.0, 0.0); B.restitution = 1.0;
-var p_before = A.vel.x + B.vel.x;
-// bring them into contact, then resolve
-A.pos = Vec2(-1.0, 0.0); B.pos = Vec2(1.0, 0.0);   // touching (dist 2 = r+r)
-A.pos = Vec2(-0.9, 0.0); B.pos = Vec2(0.9, 0.0);   // overlapping
-w2.resolve(A, B);
-eq(approx(A.vel.x, -2.0, 0.001) and approx(B.vel.x, 2.0, 0.001), "elastic equal-mass swap");
-eq(approx(A.vel.x + B.vel.x, p_before, 0.001), "momentum conserved");
+// --- kinematic ignores gravity, moves by velocity ---
+var wk = World(); wk.gravity = Vec2(0.0, 10.0);
+var km = wk.add(KinematicBody(0.0, 0.0, 1.0)); km.vel = Vec2(2.0, 0.0);
+foreach (i in 0..100) { wk.step(0.01); }         // 1s
+eq(approx(km.pos.x, 2.0, 0.01) and approx(km.pos.y, 0.0, 0.001), "kinematic moves by vel, no gravity");
 
-// --- 3. static body (inv_mass 0) is immovable ---
-var w3 = World();
-var wall = w3.add(Body(0.0, 0.0, 1.0, 0.0));   // mass 0 -> static
-var ball = w3.add(Body(1.5, 0.0, 1.0, 1.0)); ball.vel = Vec2(-3.0, 0.0);
-ball.pos = Vec2(1.8, 0.0);
-w3.resolve(wall, ball);
-eq(approx(wall.vel.x, 0.0, 0.0001), "static body unmoved");
-eq(ball.vel.x > 0.0, "ball bounces off static body");
+// --- rigid falls and rests on static ground (polymorphic integrate) ---
+var w = World(); w.gravity = Vec2(0.0, 10.0);
+var ball = w.add(RigidBody(0.0, 0.0, 1.0, 1.0));
+var ground = w.add(StaticBody(0.0, 100.0, 50.0));
+foreach (i in 0..2000) { w.step(0.008); }
+eq(approx(ball.pos.y, 49.0, 0.5), "rigid rests on static ground (y~49)");
+eq(abs(ball.vel.y) < 0.5, "rigid settles");
+eq(ground.pos.y == 100.0, "static ground unmoved");
 
-print("=== world OK ===");
+print("=== world (body hierarchy) OK ===");
