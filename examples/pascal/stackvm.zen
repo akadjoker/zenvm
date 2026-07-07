@@ -1,0 +1,94 @@
+// ============================================================
+// pascal / stackvm — a tiny stack machine that runs the bytecode
+// produced by codegen.zen. A push-down operand stack, a variable
+// map, back-patched jumps, and a couple of native functions
+// (write/writeln -> output, clock -> Zen clock()). This is "a VM
+// inside the VM" — the Pascal program runs on bytecode we generate
+// and interpret entirely in Zen.
+// ============================================================
+include "codegen.zen";
+
+class StackVM {
+    var stack;
+    var env;
+    var output;
+    var sp;        // logical stack pointer (stack.len())
+
+    def init() { self.stack = []; self.env = {}; self.output = ""; self.sp = 0; }
+
+    def push(v) { self.stack.push(v); self.sp += 1; }
+    def pop() { self.sp -= 1; return self.stack.pop(); }
+
+    def native(name, argc) {
+        // pop argc args (they were pushed left-to-right, so reverse on collect)
+        var args = [];
+        for (var i = 0; i < argc; i += 1) { args.push(self.pop()); }
+        // args is reversed; fix order
+        var ordered = [];
+        for (var i = args.len() - 1; i >= 0; i -= 1) { ordered.push(args[i]); }
+
+        if (name == "write" or name == "writeln") {
+            var s = "";
+            foreach (a in ordered) { s = s + str(a); }
+            self.output = self.output + s;
+            if (name == "writeln") { self.output = self.output + chr(10); }
+            self.push(nil);                 // procedures yield nil
+            return;
+        }
+        if (name == "clock") { self.push(clock()); return; }
+        if (name == "read" or name == "readln") { self.push(nil); return; }
+        self.push(nil);                     // unknown -> nil
+    }
+
+    def run(code) {
+        var pc = 0;
+        var n = code.len();
+        while (pc < n) {
+            var ins = code[pc];
+            var op = ins.op;
+
+            if (op == "PUSH")  { self.push(ins.a); pc += 1; }
+            else if (op == "LOAD")  {
+                var k = ins.a;
+                if (k in self.env) { self.push(self.env[k]); } else { self.push(0); }
+                pc += 1;
+            }
+            else if (op == "STORE") { self.env[ins.a] = self.pop(); pc += 1; }
+            else if (op == "POP")   { self.pop(); pc += 1; }
+
+            else if (op == "ADD")  { var b = self.pop(); var a = self.pop(); self.push(a + b); pc += 1; }
+            else if (op == "SUB")  { var b = self.pop(); var a = self.pop(); self.push(a - b); pc += 1; }
+            else if (op == "MUL")  { var b = self.pop(); var a = self.pop(); self.push(a * b); pc += 1; }
+            else if (op == "DIV")  { var b = self.pop(); var a = self.pop(); self.push(a / b); pc += 1; }
+            else if (op == "IDIV") { var b = self.pop(); var a = self.pop(); self.push(a div b); pc += 1; }
+            else if (op == "MOD")  { var b = self.pop(); var a = self.pop(); self.push(a % b); pc += 1; }
+
+            else if (op == "EQ")   { var b = self.pop(); var a = self.pop(); self.push(a == b); pc += 1; }
+            else if (op == "NEQ")  { var b = self.pop(); var a = self.pop(); self.push(a != b); pc += 1; }
+            else if (op == "LT")   { var b = self.pop(); var a = self.pop(); self.push(a < b); pc += 1; }
+            else if (op == "LE")   { var b = self.pop(); var a = self.pop(); self.push(a <= b); pc += 1; }
+            else if (op == "GT")   { var b = self.pop(); var a = self.pop(); self.push(a > b); pc += 1; }
+            else if (op == "GE")   { var b = self.pop(); var a = self.pop(); self.push(a >= b); pc += 1; }
+
+            else if (op == "AND")  { var b = self.pop(); var a = self.pop(); self.push(a and b); pc += 1; }
+            else if (op == "OR")   { var b = self.pop(); var a = self.pop(); self.push(a or b); pc += 1; }
+            else if (op == "NEG")  { var a = self.pop(); self.push(-a); pc += 1; }
+            else if (op == "NOT")  { var a = self.pop(); self.push(a == false); pc += 1; }
+
+            else if (op == "JMP")  { pc = ins.a; }
+            else if (op == "JMPF") { var c = self.pop(); if (c == nil or c == false) { pc = ins.a; } else { pc += 1; } }
+
+            else if (op == "CALLN") { self.native(ins.a, ins.b); pc += 1; }
+            else if (op == "HALT") { return self.output; }
+            else { print("bad opcode: " + op); return self.output; }
+        }
+        return self.output;
+    }
+}
+
+// Compile + run Pascal source through the stack VM. Returns program output.
+def pas_exec(src) {
+    var code = compile_pascal(src);
+    if (code == nil) { return "PARSE ERROR"; }
+    return StackVM().run(code);
+}
