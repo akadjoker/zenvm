@@ -245,6 +245,14 @@ namespace zen
         consume(TOK_IDENTIFIER, "Expected function name.");
         Token name = previous_;
 
+        /* Local functions: declare the name in the enclosing scope BEFORE
+           compiling the body, so the function can call itself recursively (the
+           self-reference becomes an upvalue). Global functions already resolve
+           forward via the global slot. */
+        int predeclared_local_reg = -1;
+        if (state_->scope_depth > 0)
+            predeclared_local_reg = add_local(name);
+
         /* Create function in a new compiler state */
         CompilerState fn_state;
         fn_state.parent = state_;
@@ -343,8 +351,8 @@ namespace zen
 
         if (state_->scope_depth > 0)
         {
-            /* Local function */
-            int reg = add_local(name);
+            /* Local function — already declared above; emit into that slot. */
+            int reg = predeclared_local_reg;
             state_->emitter.emit_abx(OP_CLOSURE, reg, ki, name.line);
         }
         else
