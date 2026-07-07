@@ -2774,10 +2774,29 @@ namespace zen
             ++ip;
             uint32_t i2 = *ip;
             Value vb = R[ZEN_B(i2)], vc = R[ZEN_C(i2)];
-            if (vb.type == VAL_INT && vc.type == VAL_INT)
-                R[ZEN_A(i2)] = val_int((int64_t)((uint64_t)vb.as.integer * (uint64_t)vc.as.integer));
+            if (__builtin_expect(!is_obj(vb) && !is_obj(vc), 1))
+            {
+                if (vb.type == VAL_INT && vc.type == VAL_INT)
+                    R[ZEN_A(i2)] = val_int((int64_t)((uint64_t)vb.as.integer * (uint64_t)vc.as.integer));
+                else
+                    R[ZEN_A(i2)] = val_float(to_number(vb) * to_number(vc));
+            }
+            else if (is_instance(vb) || is_instance(vc))
+            {
+                Value result;
+                SAVE_IP();
+                if (try_binary_operator(this, vb, vc, SLOT_MUL, SLOT_RMUL, &result))
+                {
+                    if (had_error_) return;
+                    LOAD_STATE();
+                    R[ZEN_A(i2)] = result;
+                }
+                else { LOAD_STATE(); R[ZEN_A(i2)] = val_float(to_number(vb) * to_number(vc)); }
+            }
             else
+            {
                 R[ZEN_A(i2)] = val_float(to_number(vb) * to_number(vc));
+            }
             NEXT();
         }
 
@@ -2791,10 +2810,29 @@ namespace zen
             ++ip;
             uint32_t i2 = *ip;
             Value vb = R[ZEN_B(i2)], vc = R[ZEN_C(i2)];
-            if (vb.type == VAL_INT && vc.type == VAL_INT)
-                R[ZEN_A(i2)] = val_int(vb.as.integer - vc.as.integer);
+            if (__builtin_expect(!is_obj(vb) && !is_obj(vc), 1))
+            {
+                if (vb.type == VAL_INT && vc.type == VAL_INT)
+                    R[ZEN_A(i2)] = val_int(vb.as.integer - vc.as.integer);
+                else
+                    R[ZEN_A(i2)] = val_float(to_number(vb) - to_number(vc));
+            }
+            else if (is_instance(vb) || is_instance(vc))
+            {
+                Value result;
+                SAVE_IP();
+                if (try_binary_operator(this, vb, vc, SLOT_SUB, SLOT_RSUB, &result))
+                {
+                    if (had_error_) return;
+                    LOAD_STATE();
+                    R[ZEN_A(i2)] = result;
+                }
+                else { LOAD_STATE(); R[ZEN_A(i2)] = val_float(to_number(vb) - to_number(vc)); }
+            }
             else
+            {
                 R[ZEN_A(i2)] = val_float(to_number(vb) - to_number(vc));
+            }
             NEXT();
         }
 

@@ -1,0 +1,102 @@
+// ============================================================
+// physics2d / world — rigid circle bodies, integrator, and
+// circle-circle collision with impulse resolution.
+// Self-checking via physics invariants (headless).
+// ============================================================
+include "vec2.zen";
+
+class Body {
+    var pos;        // Vec2
+    var vel;        // Vec2
+    var r;          // radius
+    var inv_mass;   // 1/mass (0 = static/immovable)
+    var restitution;
+    def init(x, y, r, mass) {
+        self.pos = Vec2(x, y);
+        self.vel = Vec2(0.0, 0.0);
+        self.r = r;
+        self.inv_mass = mass <= 0.0 ? 0.0 : 1.0 / mass;
+        self.restitution = 0.9;
+    }
+}
+
+class World {
+    var bodies;
+    var gravity;
+    def init() { self.bodies = []; self.gravity = Vec2(0.0, 0.0); }
+    def add(b) { self.bodies.push(b); return b; }
+
+    def integrate(dt) {
+        foreach (b in self.bodies) {
+            if (b.inv_mass == 0.0) { continue; }
+            b.vel = b.vel + self.gravity * dt;      // v += g*dt
+            b.pos = b.pos + b.vel * dt;             // x += v*dt
+        }
+    }
+
+    // Resolve one circle-circle contact with a normal impulse.
+    def resolve(a, b) {
+        var d = b.pos - a.pos;
+        var dist2 = d.len2();
+        var rsum = a.r + b.r;
+        if (dist2 >= rsum * rsum) { return false; }   // no overlap
+        var dist = sqrt(dist2);
+        var n = dist > 0.00001 ? d.scaled(1.0 / dist) : Vec2(1.0, 0.0); // contact normal
+        var rel = b.vel - a.vel;
+        var vn = rel.dot(n);                            // relative velocity along normal
+        if (vn > 0.0) { return true; }                 // separating already
+        var e = a.restitution < b.restitution ? a.restitution : b.restitution;
+        var inv_sum = a.inv_mass + b.inv_mass;
+        if (inv_sum == 0.0) { return true; }
+        var j = -(1.0 + e) * vn / inv_sum;             // impulse magnitude
+        var imp = n.scaled(j);
+        a.vel = a.vel - imp.scaled(a.inv_mass);
+        b.vel = b.vel + imp.scaled(b.inv_mass);
+        return true;
+    }
+
+    def step(dt) {
+        self.integrate(dt);
+        var n = self.bodies.len();
+        foreach (i in 0..n) {
+            foreach (k in i + 1..n) {
+                self.resolve(self.bodies[i], self.bodies[k]);
+            }
+        }
+    }
+}
+
+def approx(a, b, tol) { return abs(a - b) < tol; }
+def eq(cond, m) { if (cond) { print("PASS " + m); } else { print("FAIL " + m); } }
+
+// --- 1. free fall: x = 0.5*g*t^2, v = g*t ---
+var w = World();
+w.gravity = Vec2(0.0, 10.0);
+var f = w.add(Body(0.0, 0.0, 1.0, 1.0));
+var t = 0.0; var dt = 0.001;
+foreach (i in 0..1000) { w.integrate(dt); t += dt; }   // 1 second
+eq(approx(f.vel.y, 10.0, 0.01), "free fall v = g*t");
+eq(approx(f.pos.y, 5.0, 0.02), "free fall x ~ 0.5*g*t^2");
+
+// --- 2. head-on elastic collision (equal mass, e=1) => velocities swap ---
+var w2 = World();
+var A = w2.add(Body(-5.0, 0.0, 1.0, 1.0)); A.vel = Vec2(2.0, 0.0);  A.restitution = 1.0;
+var B = w2.add(Body( 5.0, 0.0, 1.0, 1.0)); B.vel = Vec2(-2.0, 0.0); B.restitution = 1.0;
+var p_before = A.vel.x + B.vel.x;
+// bring them into contact, then resolve
+A.pos = Vec2(-1.0, 0.0); B.pos = Vec2(1.0, 0.0);   // touching (dist 2 = r+r)
+A.pos = Vec2(-0.9, 0.0); B.pos = Vec2(0.9, 0.0);   // overlapping
+w2.resolve(A, B);
+eq(approx(A.vel.x, -2.0, 0.001) and approx(B.vel.x, 2.0, 0.001), "elastic equal-mass swap");
+eq(approx(A.vel.x + B.vel.x, p_before, 0.001), "momentum conserved");
+
+// --- 3. static body (inv_mass 0) is immovable ---
+var w3 = World();
+var wall = w3.add(Body(0.0, 0.0, 1.0, 0.0));   // mass 0 -> static
+var ball = w3.add(Body(1.5, 0.0, 1.0, 1.0)); ball.vel = Vec2(-3.0, 0.0);
+ball.pos = Vec2(1.8, 0.0);
+w3.resolve(wall, ball);
+eq(approx(wall.vel.x, 0.0, 0.0001), "static body unmoved");
+eq(ball.vel.x > 0.0, "ball bounces off static body");
+
+print("=== world OK ===");
