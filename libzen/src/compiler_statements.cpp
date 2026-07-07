@@ -1445,6 +1445,23 @@ namespace zen
         Token saved_previous = previous_;
         int saved_next_reg = state_->next_reg;
         int saved_local_count = state_->local_count;
+        int saved_code_offset = state_->emitter.current_offset();
+
+        /* Full rollback to the state at entry — restores the lexer, tokens,
+           register/local allocation AND any bytecode emitted by the (now
+           abandoned) fast path. Lets the caller fall back to the general for
+           loop. Used both for pattern misses in phase 1 (nothing emitted yet)
+           and for shapes we can't specialize discovered in phase 2 (e.g. the
+           condition is `i < a and ...`, or a non-trivial step) — those must
+           NOT be compile errors; the general for handles them correctly. */
+        auto rollback = [&]() {
+            lexer_.restore_state(saved_lex);
+            current_ = saved_current;
+            previous_ = saved_previous;
+            state_->next_reg = saved_next_reg;
+            state_->local_count = saved_local_count;
+            state_->emitter.rewind_to(saved_code_offset);
+        };
 
         /* --- Phase 1: Pattern matching (can rollback) --- */
         Token loop_var;
@@ -1585,14 +1602,19 @@ namespace zen
         /* Emit init value into counter reg */
         state_->emitter.emit_asbx(OP_LOADI, base_reg, init_val, loop_var.line);
 
-        /* Parse limit expression into limit_reg */
-        expression(limit_reg);
+        /* Parse the limit at additive precedence so a compound condition like
+           `i < n and X` or `i < a or b` does NOT get swallowed as the limit.
+           The limit must then be immediately followed by ';'; anything else
+           (a logical/relational continuation) means this isn't a simple
+           numeric for — roll back and let the general path compile it. */
+        parse_precedence(PREC_TERM, limit_reg);
 
-        if (!match(TOK_SEMICOLON))
+        if (!check(TOK_SEMICOLON))
         {
-            error_at_current("Expected ';' after for condition in numeric for.");
-            return true;
+            rollback();
+            return false;
         }
+        advance(); /* consume ';' */
 
         /* Step 3: check step — IDENT = IDENT + INT or IDENT += INT */
         int32_t step_val = 1;
@@ -1601,8 +1623,8 @@ namespace zen
             current_.length != loop_var.length ||
             memcmp(current_.start, loop_var.start, loop_var.length) != 0)
         {
-            error_at_current("Expected loop variable in for step.");
-            return true;
+            rollback();
+            return false;
         }
         advance(); /* consume loop var */
 
@@ -1617,8 +1639,8 @@ namespace zen
             }
             if (!check(TOK_INT))
             {
-                error_at_current("Numeric for step must be integer literal.");
-                return true;
+                rollback();
+                return false;
             }
             advance();
             step_val = (int32_t)strtol(previous_.start, nullptr, 10);
@@ -1632,8 +1654,8 @@ namespace zen
                 current_.length != loop_var.length ||
                 memcmp(current_.start, loop_var.start, loop_var.length) != 0)
             {
-                error_at_current("Expected loop variable in for step.");
-                return true;
+                rollback();
+                return false;
             }
             advance(); /* consume 'i' on RHS */
 
@@ -1647,8 +1669,8 @@ namespace zen
                 }
                 if (!check(TOK_INT))
                 {
-                    error_at_current("Numeric for step must be integer literal.");
-                    return true;
+                    rollback();
+                    return false;
                 }
                 advance();
                 step_val = (int32_t)strtol(previous_.start, nullptr, 10);
@@ -1659,22 +1681,22 @@ namespace zen
             {
                 if (!check(TOK_INT))
                 {
-                    error_at_current("Numeric for step must be integer literal.");
-                    return true;
+                    rollback();
+                    return false;
                 }
                 advance();
                 step_val = -(int32_t)strtol(previous_.start, nullptr, 10);
             }
             else
             {
-                error_at_current("Expected '+' or '-' in for step.");
-                return true;
+                rollback();
+                return false;
             }
         }
         else
         {
-            error_at_current("Expected '+=' or '=' in for step.");
-            return true;
+            rollback();
+            return false;
         }
 
         consume(TOK_RPAREN, "Expected ')' after for clauses.");

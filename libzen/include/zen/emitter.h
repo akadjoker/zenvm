@@ -72,6 +72,15 @@ namespace zen
 
         /* --- Accessors --- */
         int current_offset() const { return func_->code_count; }
+        /* Discard instructions emitted after `offset` (used to roll back a
+           speculative fast-path like the numeric-for optimizer). Line/constant
+           side tables are append-only, so any orphaned entries are simply
+           unused — harmless. */
+        void rewind_to(int offset)
+        {
+            if (offset >= 0 && offset <= func_->code_count)
+                func_->code_count = offset;
+        }
         int last_line() const { return last_line_; }
         Instruction instruction_at(int offset) const { return func_->code[offset]; }
         void rewrite_opcode_at(int offset, OpCode new_op)
