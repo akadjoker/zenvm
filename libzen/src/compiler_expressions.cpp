@@ -1892,6 +1892,8 @@ namespace zen
                 /* a[i] += expr — load, operate, store */
                 int cur_reg = alloc_reg();
                 state_->emitter.emit_abc(OP_GETINDEX, cur_reg, obj_reg, idx_reg, previous_.line);
+                if (cur_reg >= 0 && cur_reg < 256)
+                    state_->reg_class_hints[cur_reg] = nullptr;
                 int rhs_reg = alloc_reg();
                 expression(rhs_reg);
                 OpCode op;
@@ -1942,6 +1944,12 @@ namespace zen
         /* Not assignment — emit GETINDEX */
         int reg = dest >= 0 ? dest : alloc_reg();
         state_->emitter.emit_abc(OP_GETINDEX, reg, obj_reg, idx_reg, previous_.line);
+        /* An index read yields a raw element value, never a known class
+           instance. Clear any stale class hint on the destination register so
+           later operators (e.g. `var t = buf[i]; t <= n`) don't wrongly dispatch
+           through the object-operator path. */
+        if (reg >= 0 && reg < 256)
+            state_->reg_class_hints[reg] = nullptr;
         free_reg(idx_reg);
         if (obj_reg != reg)
             free_reg(obj_reg);
