@@ -106,7 +106,7 @@ namespace zen
         num_selectors_ = 0;
 
         /* Criar main fiber */
-        main_fiber_ = new_fiber(nullptr, kMaxRegs * 4);
+        main_fiber_ = new_fiber(nullptr, kMainStackSlots);
         current_fiber_ = main_fiber_;
     }
 
