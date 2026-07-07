@@ -911,8 +911,15 @@ namespace zen
             SAVE_IP();
             if (!try_unary_operator(this, R[ZEN_B(i)], SLOT_NEG, &result))
             {
+                /* Stale class hint on a numeric value: negate numerically
+                   instead of erroring. */
                 LOAD_STATE();
-                RT_ERROR("object does not implement unary operator -");
+                Value vb = R[ZEN_B(i)];
+                if (vb.type == VAL_INT)
+                    R[dst] = val_int(-vb.as.integer);
+                else
+                    R[dst] = val_float(-to_number(vb));
+                NEXT();
             }
             if (had_error_) return;
             LOAD_STATE();
@@ -944,8 +951,16 @@ namespace zen
             SAVE_IP();
             if (!try_binary_operator(this, R[ZEN_B(i)], R[ZEN_C(i)], SLOT_LT, -1, &result))
             {
+                /* Operand wasn't an instance with operator< (e.g. a stale class
+                   hint on a numeric/string value). Fall back like OP_LT rather
+                   than erroring, so a wrong compile-time hint stays harmless. */
                 LOAD_STATE();
-                RT_ERROR("object does not implement operator <");
+                Value vb = R[ZEN_B(i)], vc = R[ZEN_C(i)];
+                if (is_string(vb) && is_string(vc))
+                    R[dst] = val_bool(strcmp(as_cstring(vb), as_cstring(vc)) < 0);
+                else
+                    R[dst] = val_bool(to_number(vb) < to_number(vc));
+                NEXT();
             }
             if (had_error_) return;
             LOAD_STATE();
@@ -960,8 +975,16 @@ namespace zen
             SAVE_IP();
             if (!try_binary_operator(this, R[ZEN_B(i)], R[ZEN_C(i)], SLOT_LE, -1, &result))
             {
+                /* See OP_LT_OBJ: fall back to numeric/string instead of erroring
+                   when the hinted operand isn't actually an operator-bearing
+                   instance. */
                 LOAD_STATE();
-                RT_ERROR("object does not implement operator <=");
+                Value vb = R[ZEN_B(i)], vc = R[ZEN_C(i)];
+                if (is_string(vb) && is_string(vc))
+                    R[dst] = val_bool(strcmp(as_cstring(vb), as_cstring(vc)) <= 0);
+                else
+                    R[dst] = val_bool(to_number(vb) <= to_number(vc));
+                NEXT();
             }
             if (had_error_) return;
             LOAD_STATE();
