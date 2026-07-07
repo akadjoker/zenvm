@@ -1,0 +1,98 @@
+// ============================================================
+// chip8_raylib — visual frontend for the CHIP-8 core.
+// Reuses chip8_core.zen (the CPU) and drives it with raylib:
+// 64x32 buffer blitted as scaled rectangles, hex keypad mapped
+// to the keyboard, ~10 CPU cycles + 60Hz timers per frame.
+//
+// Run:  bin/zen_game chip8_raylib.zen [path/to/rom.ch8]
+//   no arg -> plays the built-in IBM Logo ROM.
+//   e.g.   bin/zen_game examples/chip8/chip8_raylib.zen \
+//              "examples/chip8/roms/games/Breakout [Carmelo Cortez, 1979].ch8"
+// (the plain `bin/zen` CLI has no raylib module by design.)
+// ============================================================
+using raylib;   // expose InitWindow/DrawRectangle/IsKeyDown/... as bare names
+import file;    // file.open/size/read_buffer/close for loading a real ROM
+include "chip8_core.zen";
+
+var SCALE = 12;                 // pixel size on screen
+var CYCLES_PER_FRAME = 12;      // CPU steps between draws (~700Hz at 60fps)
+
+// Classic "IBM Logo" ROM — draws "IBM" and halts. No input needed,
+// so it's the perfect first thing to see on screen.
+var IBM_LOGO = [
+    0x00,0xE0, 0xA2,0x2A, 0x60,0x0C, 0x61,0x08, 0xD0,0x1F, 0x70,0x09, 0xA2,0x39, 0xD0,0x1F,
+    0xA2,0x48, 0x70,0x08, 0xD0,0x1F, 0x70,0x04, 0xA2,0x57, 0xD0,0x1F, 0x70,0x08, 0xA2,0x66,
+    0xD0,0x1F, 0x70,0x08, 0xA2,0x75, 0xD0,0x1F, 0x12,0x28, 0xFF,0x00, 0xFF,0x00, 0x3C,0x00,
+    0x3C,0x00, 0x3C,0x00, 0x3C,0x00, 0xFF,0x00, 0xFF,0xFF, 0x00,0xFF, 0x00,0x38, 0x00,0x3F,
+    0x00,0x3F, 0x00,0x38, 0x00,0xFF, 0x00,0xFF, 0x80,0x00, 0xE0,0x00, 0xE0,0x00, 0x80,0x00,
+    0x80,0x00, 0xE0,0x00, 0xE0,0x00, 0x80,0xF8, 0x00,0xFC, 0x00,0x3E, 0x00,0x3F, 0x00,0x3B,
+    0x00,0x39, 0x00,0xF8, 0x00,0xF8, 0x03,0x00, 0x07,0x00, 0x0F,0x00, 0xBF,0x00, 0xFB,0x00,
+    0xF3,0x00, 0xE3,0x00, 0x43,0x00, 0xE3,0x00
+];
+
+// CHIP-8 hex keypad -> keyboard layout:
+//   1 2 3 C      1 2 3 4
+//   4 5 6 D  =>  Q W E R
+//   7 8 9 E      A S D F
+//   A 0 B F      Z X C V
+// raylib key codes are ASCII, and the module's KEY_* constants don't resolve
+// through `using` yet (only functions do), so we spell the codes out.
+// keymap[hex] = ascii keycode.
+var keymap = [
+    88, 49, 50, 51,   // 0='X' 1='1' 2='2' 3='3'
+    81, 87, 69, 65,   // 4='Q' 5='W' 6='E' 7='A'
+    83, 68, 90, 67,   // 8='S' 9='D' A='Z' B='C'
+    52, 82, 70, 86    // C='4' D='R' E='F' F='V'
+];
+
+// Read a .ch8 file into a byte buffer, or return nil on failure.
+def read_rom(path) {
+    var fd = file.open(path, "rb");
+    if (fd == 0 or fd < 0) { return nil; }
+    var n = file.size(fd);
+    if (n <= 0 or n > MEM_SIZE - PROG_START) { file.close(fd); return nil; }
+    var buf = Uint8Array(n);
+    file.read_buffer(fd, buf);
+    file.close(fd);
+    return buf;
+}
+
+var cpu = Chip8();
+var title = "zen CHIP-8 — IBM Logo";
+if (args.len() > 0) {
+    var rom = read_rom(args[0]);
+    if (rom == nil) { print("could not load ROM: " + args[0]); }
+    else { cpu.load(rom); title = "zen CHIP-8 — " + args[0]; print("loaded " + rom.len() + " bytes"); }
+} else {
+    cpu.load(IBM_LOGO);   // default: no ROM path given
+}
+
+InitWindow(SCR_W * SCALE, SCR_H * SCALE, title);
+SetTargetFPS(60);
+
+while (WindowShouldClose() == false) {
+    // 1) input: refresh the 16-key state from the keyboard
+    for (var k = 0; k < 16; k += 1) {
+        cpu.keys[k] = IsKeyDown(keymap[k]) ? 1 : 0;
+    }
+
+    // 2) run a batch of CPU cycles, then the 60Hz timers tick once
+    cpu.run(CYCLES_PER_FRAME);
+    cpu.tick_timers();
+
+    // 3) blit the 64x32 framebuffer
+    BeginDrawing();
+    ClearBackground(15, 15, 20, 255);
+    for (var y = 0; y < SCR_H; y += 1) {
+        for (var x = 0; x < SCR_W; x += 1) {
+            if (cpu.scr[y * SCR_W + x] == 1) {
+                DrawRectangle(x * SCALE, y * SCALE, SCALE, SCALE, 180, 255, 180, 255);
+            }
+        }
+    }
+    DrawFPS(6, 6);
+    EndDrawing();
+}
+
+CloseWindow();
+print("chip8 window closed");
