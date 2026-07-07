@@ -1,9 +1,11 @@
 // ============================================================
 // pascal / main — demo of the full pipeline:
-//   source -> Lexer -> Parser -> AST -> Printer (Visitor) -> source
+//   source -> Lexer -> Parser -> AST -> Printer visitor -> source
+//                                    \-> Interpreter visitor -> output
 // Run: bin/zen examples/pascal/main.zen
 // ============================================================
 include "printer.zen";
+include "interpreter.zen";
 
 var SRC = "program Fib;" + chr(10) +
           "var n, a, b, t, i: integer;" + chr(10) +
@@ -36,3 +38,7 @@ print(line);
 
 print("---------- reconstructed by the Printer visitor ----------");
 print(print_ast(ast));
+
+print("---------- executed by the Interpreter visitor ----------");
+var out = Interpreter().run(SRC);
+print(out);
