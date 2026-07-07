@@ -926,6 +926,7 @@ namespace zen
         {"int", nat_int, 1},
         {"float", nat_float, 1},
         {"char", nat_char, 1},
+        {"chr", nat_char, 1},
         {"ord", nat_ord, 1},
         {"typeof", nat_typeof, 1},
         {"isNil", nat_isNil, 1},
@@ -962,7 +963,7 @@ namespace zen
     const NativeLib zen_lib_base = {
         "base",
         base_functions,
-        30,   /* num_functions */
+        31,   /* num_functions */
         base_constants,
         4,    /* num_constants */
     };
