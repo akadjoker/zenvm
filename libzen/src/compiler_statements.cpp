@@ -2054,11 +2054,18 @@ namespace zen
     void Compiler::switch_statement()
     {
         consume(TOK_LPAREN, "Expected '(' after 'switch'.");
-        int expr_reg = expression(-1);
+        /* Evaluate the switch value into a FRESH temp above all live locals.
+           (Using expression(-1) could return a local's own register — e.g.
+           switch(x) — and then base_reg = expr_reg+1 would reset the allocator
+           below live locals, so case-body `var`s clobbered them.) */
+        int saved_next = state_->next_reg;
+        int expr_reg = alloc_reg();
+        expression(expr_reg);
+        state_->next_reg = expr_reg + 1;
         consume(TOK_RPAREN, "Expected ')' after switch expression.");
         consume(TOK_LBRACE, "Expected '{' after switch.");
 
-        /* Protect the switch expression register throughout */
+        /* Case bodies allocate above the protected expression register. */
         int base_reg = expr_reg + 1;
 
         int end_jumps[64];
@@ -2111,8 +2118,8 @@ namespace zen
         for (int i = 0; i < end_count; i++)
             state_->emitter.patch_jump(end_jumps[i]);
 
-        /* Release switch expression register */
-        state_->next_reg = expr_reg;
+        /* Release the switch expression temp (back to the live-locals top). */
+        state_->next_reg = saved_next;
     }
 
     /* =========================================================

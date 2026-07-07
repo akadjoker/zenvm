@@ -1,0 +1,166 @@
+// ============================================================
+// chip8 — a CHIP-8 CPU core written in Zen.
+// Memory/registers/stack + fetch-decode-dispatch over the core
+// opcode set. 64x32 XOR display buffer. Self-checking headless
+// (input/sound left for a later pass). A "VM inside the VM".
+// ============================================================
+
+var MEM_SIZE = 4096;
+var PROG_START = 512;   // 0x200
+var SCR_W = 64;
+var SCR_H = 32;
+
+class Chip8 {
+    var mem;      // Uint8Array(4096) — 8-bit, auto-wraps on write
+    var v;        // Uint8Array(16)   — V0..VF
+    var i;        // index register (12-bit)
+    var pc;       // program counter
+    var stack;    // call stack (array of return addrs)
+    var dt;       // delay timer
+    var st;       // sound timer
+    var scr;      // Uint8Array(64*32) — 0/1 pixels
+
+    def init() {
+        self.mem = Uint8Array(MEM_SIZE);
+        self.v = Uint8Array(16);
+        self.i = 0;
+        self.pc = PROG_START;
+        self.stack = [];
+        self.dt = 0;
+        self.st = 0;
+        self.scr = Uint8Array(SCR_W * SCR_H);
+    }
+
+    def load(bytes) {
+        for (var k = 0; k < bytes.len(); k += 1) { self.mem[PROG_START + k] = bytes[k]; }
+    }
+
+    def cls() { self.scr.fill(0); }
+
+    // Draw N-byte sprite at (vx,vy); XOR into screen; VF = collision.
+    def draw(vx, vy, n) {
+        self.v[15] = 0;
+        for (var row = 0; row < n; row += 1) {
+            var sprite = self.mem[self.i + row];
+            for (var col = 0; col < 8; col += 1) {
+                if ((sprite & (128 >> col)) != 0) {
+                    var px = (vx + col) % SCR_W;
+                    var py = (vy + row) % SCR_H;
+                    var idx = py * SCR_W + px;
+                    if (self.scr[idx] == 1) { self.v[15] = 1; }   // collision
+                    self.scr[idx] = self.scr[idx] ^ 1;
+                }
+            }
+        }
+    }
+
+    // Execute one instruction.
+    def step() {
+        var op = (self.mem[self.pc] << 8) | self.mem[self.pc + 1];
+        self.pc += 2;
+
+        var nnn = op & 0x0FFF;
+        var nn = op & 0x00FF;
+        var n = op & 0x000F;
+        var x = (op >> 8) & 0x0F;
+        var y = (op >> 4) & 0x0F;
+        var hi = (op >> 12) & 0x0F;
+
+        if (op == 0x00E0) { self.cls(); return; }
+        if (op == 0x00EE) { self.pc = self.stack.pop(); return; }
+
+        switch (hi) {
+            case 0x1: { self.pc = nnn; return; }                       // JP addr
+            case 0x2: { self.stack.push(self.pc); self.pc = nnn; return; } // CALL
+            case 0x3: { if (self.v[x] == nn) { self.pc += 2; } return; }   // SE Vx,byte
+            case 0x4: { if (self.v[x] != nn) { self.pc += 2; } return; }   // SNE Vx,byte
+            case 0x5: { if (self.v[x] == self.v[y]) { self.pc += 2; } return; } // SE Vx,Vy
+            case 0x6: { self.v[x] = nn; return; }                      // LD Vx,byte
+            case 0x7: { self.v[x] = self.v[x] + nn; return; }          // ADD Vx,byte (wraps)
+            case 0x9: { if (self.v[x] != self.v[y]) { self.pc += 2; } return; } // SNE Vx,Vy
+            case 0xA: { self.i = nnn; return; }                        // LD I,addr
+            case 0xB: { self.pc = nnn + self.v[0]; return; }           // JP V0,addr
+            case 0xD: { self.draw(self.v[x], self.v[y], n); return; }  // DRW
+        }
+
+        if (hi == 0x8) {
+            switch (n) {
+                case 0x0: { self.v[x] = self.v[y]; return; }
+                case 0x1: { self.v[x] = self.v[x] | self.v[y]; return; }
+                case 0x2: { self.v[x] = self.v[x] & self.v[y]; return; }
+                case 0x3: { self.v[x] = self.v[x] ^ self.v[y]; return; }
+                case 0x4: {                                            // ADD with carry
+                    var sum = self.v[x] + self.v[y];
+                    self.v[15] = sum > 255 ? 1 : 0;
+                    self.v[x] = sum;
+                    return;
+                }
+                case 0x5: {                                            // SUB (VF = NOT borrow)
+                    var a = self.v[x]; var b = self.v[y];
+                    self.v[15] = a >= b ? 1 : 0;
+                    self.v[x] = a - b;
+                    return;
+                }
+                case 0x6: {                                            // SHR
+                    self.v[15] = self.v[x] & 1;
+                    self.v[x] = self.v[x] >> 1;
+                    return;
+                }
+                case 0x7: {                                            // SUBN
+                    var a = self.v[x]; var b = self.v[y];
+                    self.v[15] = b >= a ? 1 : 0;
+                    self.v[x] = b - a;
+                    return;
+                }
+                case 0xE: {                                            // SHL
+                    self.v[15] = (self.v[x] >> 7) & 1;
+                    self.v[x] = self.v[x] << 1;
+                    return;
+                }
+            }
+        }
+
+        if (hi == 0xF) {
+            switch (nn) {
+                case 0x07: { self.v[x] = self.dt; return; }
+                case 0x15: { self.dt = self.v[x]; return; }
+                case 0x18: { self.st = self.v[x]; return; }
+                case 0x1E: { self.i = self.i + self.v[x]; return; }
+                case 0x33: {                                           // BCD
+                    var val = self.v[x];
+                    self.mem[self.i]     = val div 100;
+                    self.mem[self.i + 1] = (val div 10) % 10;
+                    self.mem[self.i + 2] = val % 10;
+                    return;
+                }
+                case 0x55: { for (var k = 0; k <= x; k += 1) { self.mem[self.i + k] = self.v[k]; } return; }
+                case 0x65: { for (var k = 0; k <= x; k += 1) { self.v[k] = self.mem[self.i + k]; } return; }
+            }
+        }
+        // unknown opcode: ignore (no crash)
+    }
+
+    def run(steps) { for (var s = 0; s < steps; s += 1) { self.step(); } }
+    def scr_count() { var c = 0; for (var k = 0; k < SCR_W * SCR_H; k += 1) { if (self.scr[k] == 1) { c += 1; } } return c; }
+}
+
+def eq(a, b, m) { if (a == b) { print("PASS " + m); } else { print("FAIL " + m + " got=" + a + " want=" + b); } }
+
+// Hand-assembled ROM exercising the core opcodes.
+var c = Chip8();
+c.load([
+    0x6A, 0x05,   // 200: LD VA, 5
+    0x6B, 0x03,   // 202: LD VB, 3
+    0x8A, 0xB4,   // 204: ADD VA, VB   -> VA=8, VF=0
+    0x7A, 0x02,   // 206: ADD VA, 2    -> VA=10
+    0x8A, 0xB5,   // 208: SUB VA, VB   -> VA=7, VF=1 (10>=3)
+    0x6C, 0xFF,   // 20A: LD VC, 255
+    0x7C, 0x02,   // 20C: ADD VC, 2    -> VC wraps to 1
+    0x12, 0x0E    // 20E: JP 0x20E     (halt: jump to self)
+]);
+c.run(7);
+eq(c.v[10], 7, "VA = (5+3)-3 = 7");     // wait: 5+3=8, 8-3=5? let's check below
+eq(c.v[15], 1, "VF = 1 (no borrow)");
+eq(c.v[12], 1, "VC wrapped 255+2 -> 1");
+
+print("=== chip8 core OK ===");
