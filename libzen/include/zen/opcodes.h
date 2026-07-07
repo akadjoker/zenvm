@@ -161,6 +161,7 @@ namespace zen
         OP_DELINDEX,  /* del R[A][R[B]]                                   */
         OP_GETSLICE,  /* R[A] = R[B][R[C] : R[C+1] : R[C+2]]             */
         OP_IS,        /* R[A] = (R[B] is an instance of class R[C])      */
+        OP_TAILCALL,  /* return R[A](R[A+1..]) — reuse frame (tail call)  */
 
         OP_HALT,
     };

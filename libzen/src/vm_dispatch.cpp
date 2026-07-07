@@ -251,6 +251,7 @@ namespace zen
         Value *R = frame->base;
         Value *K = frame->func->constants;
         ObjUpvalue **UV = frame->closure ? frame->closure->upvalues : nullptr;
+        bool tail_flag = false; /* set by OP_TAILCALL, consumed in the OP_CALL body */
 
 /* Macro para reload após CALL/RETURN (frame mudou) */
 #define LOAD_STATE()                                \
@@ -393,6 +394,7 @@ namespace zen
             &&lbl_OP_DELINDEX,
             &&lbl_OP_GETSLICE,
             &&lbl_OP_IS,
+            &&lbl_OP_TAILCALL,
             &&lbl_OP_HALT,
         };
 
@@ -1148,7 +1150,14 @@ namespace zen
         }
 
         /* --- Funções --- */
+        CASE(OP_TAILCALL)
+            /* `return f(args)` in tail position. Falls into OP_CALL with the tail
+               flag set — only the script-closure branch differs (reuse frame). */
+            tail_flag = true;
+            goto call_shared;
         CASE(OP_CALL)
+            tail_flag = false;
+        call_shared:
         {
             uint32_t i = *ip;
             int a = ZEN_A(i);
@@ -1169,6 +1178,28 @@ namespace zen
                 {
                     int pid = spawn_process(cl, &R[a + 1], nargs);
                     R[a] = val_int(pid);
+                    LOAD_STATE();
+                    DISPATCH();
+                }
+
+                /* Tail call to a script closure: reuse the current frame so the
+                   register/frame stacks don't grow → unbounded tail recursion. */
+                if (tail_flag)
+                {
+                    if (fn->arity >= 0 && nargs != fn->arity)
+                    {
+                        RT_ERROR("expected %d args but got %d", fn->arity, nargs);
+                    }
+                    if (fiber->open_upvalues && fiber->open_upvalues->location >= frame->base)
+                        close_upvalues(fiber, frame->base);
+                    Value *nb = frame->base;
+                    for (int k = 0; k < nargs; k++)
+                        nb[k] = R[a + 1 + k]; /* dst k < src a+1+k → safe */
+                    frame->closure = cl;
+                    frame->func = fn;
+                    frame->ip = fn->code;
+                    /* base/ret_reg/ret_count preserved → returns to original caller */
+                    fiber->stack_top = nb + fn->num_regs;
                     LOAD_STATE();
                     DISPATCH();
                 }

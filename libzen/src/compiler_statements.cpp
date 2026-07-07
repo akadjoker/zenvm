@@ -2135,6 +2135,23 @@ namespace zen
 
         consume(TOK_SEMICOLON, "Expected ';' after return value.");
 
+        /* Tail-call optimization: `return f(args);` where the single return value
+           is a direct call (the last emitted op is OP_CALL writing to `base`).
+           Rewrite that OP_CALL to OP_TAILCALL. For a script closure it reuses the
+           current frame (unbounded tail recursion); for any other callee it runs
+           normally and the OP_RETURN below returns the result. Conservative: if a
+           MOVE or anything else came after the call, we leave a normal return. */
+        if (count == 1)
+        {
+            int off = state_->emitter.current_offset();
+            if (off > 0)
+            {
+                uint32_t last = state_->emitter.instruction_at(off - 1);
+                if (ZEN_OP(last) == OP_CALL && ZEN_A(last) == base)
+                    state_->emitter.rewrite_opcode_at(off - 1, OP_TAILCALL);
+            }
+        }
+
         state_->emitter.emit_abc(OP_RETURN, base, count, 0, previous_.line);
         state_->next_reg = base; /* free temps */
     }
