@@ -1,0 +1,70 @@
+// Self-check for the Pascal parser + Printer visitor.
+// Run: bin/zen examples/pascal/test_parser.zen
+include "printer.zen";
+
+var pass = 0; var fail = 0;
+def eq(a, b, m) { if (a == b) { pass += 1; } else { fail += 1; print("FAIL " + m); print("  got : " + str(a)); print("  want: " + str(b)); } }
+def ok(cond, m) { if (cond) { pass += 1; } else { fail += 1; print("FAIL " + m); } }
+
+def parse(src) { return Parser(src).parse_program(); }
+
+// --- expression precedence (Printer parenthesises every BinOp) ---
+def expr(src) {
+    // wrap the expression in a trivial program and dig out the assigned expr
+    var p = Parser("program t; begin x := " + src + " end.");
+    var prog = p.parse_program();
+    ok(p.had_error == false, "expr parses: " + src);
+    return prog.block.compound.stmts[0].expr.accept(Printer());
+}
+eq(expr("1 + 2 * 3"), "(1 + (2 * 3))", "mul binds tighter than add");
+eq(expr("1 * 2 + 3"), "((1 * 2) + 3)", "left assoc add");
+eq(expr("2 + 3 = 5"), "((2 + 3) = 5)", "relational is lowest");
+eq(expr("a and b or c"), "((a and b) or c)", "and tighter than or");
+eq(expr("-x + 1"), "((-x) + 1)", "unary minus");
+eq(expr("not a and b"), "((not a) and b)", "not binds to factor");
+eq(expr("(1 + 2) * 3"), "((1 + 2) * 3)", "parens override");
+eq(expr("f(1, 2 + 3)"), "f(1, (2 + 3))", "call args");
+eq(expr("1 div 2 mod 3"), "((1 div 2) mod 3)", "div/mod");
+
+// --- a full program round-trips: print -> reparse -> print is stable ---
+var SRC = "program Demo;" + chr(10) +
+          "var i, total: integer;" + chr(10) +
+          "begin" + chr(10) +
+          "  total := 0;" + chr(10) +
+          "  for i := 1 to 10 do" + chr(10) +
+          "    if i mod 2 = 0 then" + chr(10) +
+          "      total := total + i" + chr(10) +
+          "    else" + chr(10) +
+          "      writeln('odd: ', i);" + chr(10) +
+          "  while total > 0 do" + chr(10) +
+          "    total := total - 1;" + chr(10) +
+          "  writeln('done', total)" + chr(10) +
+          "end.";
+
+var p1 = Parser(SRC);
+var ast1 = p1.parse_program();
+ok(p1.had_error == false, "full program parses without error");
+var out1 = print_ast(ast1);
+
+var p2 = Parser(out1);
+var ast2 = p2.parse_program();
+ok(p2.had_error == false, "printed output re-parses");
+var out2 = print_ast(ast2);
+
+eq(out1, out2, "print -> reparse -> print is stable (round-trip)");
+ok(out1.contains("for i := 1 to 10 do"), "for-loop rendered");
+ok(out1.contains("else"), "if/else rendered");
+ok(out1.contains("while"), "while rendered");
+
+// --- repeat/until ---
+var rp = Parser("program r; begin repeat x := x - 1 until x = 0 end.");
+var ra = rp.parse_program();
+ok(rp.had_error == false, "repeat/until parses");
+ok(print_ast(ra).contains("until (x = 0)"), "repeat rendered");
+
+// --- error reporting: missing ';' is detected, not crashed ---
+var bad = Parser("program b; begin x := 1 y := 2 end.");
+bad.parse_program();
+ok(bad.had_error, "missing ';' flagged");
+
+print("=== parser+visitor: " + str(pass) + " passed, " + str(fail) + " failed ===");

@@ -1,0 +1,162 @@
+// ============================================================
+// pascal / lexer — a hand-written scanner for a Pascal subset.
+// Token kinds are strings (self-documenting, and it exercises the
+// VM's string interning / comparison paths). Case-insensitive
+// keywords, {..} (*..*) // comments, int/real numbers, 'strings'.
+// Classes only — see test_lexer.zen for the self-check.
+// ============================================================
+
+class Token {
+    var kind;   // e.g. "INT","REAL","ID","STR","PLUS","KW_BEGIN","EOF"
+    var text;   // the raw lexeme
+    var line;
+    def init(kind, text, line) { self.kind = kind; self.text = text; self.line = line; }
+    def __str__() { return "Token(" + self.kind + ", '" + self.text + "', L" + self.line + ")"; }
+}
+
+// Pascal keywords -> token kind. Lookup is case-insensitive (we lower the id).
+var PAS_KEYWORDS = {
+    "program": "KW_PROGRAM", "begin": "KW_BEGIN", "end": "KW_END",
+    "var": "KW_VAR", "const": "KW_CONST", "procedure": "KW_PROCEDURE",
+    "function": "KW_FUNCTION", "if": "KW_IF", "then": "KW_THEN",
+    "else": "KW_ELSE", "while": "KW_WHILE", "do": "KW_DO",
+    "for": "KW_FOR", "to": "KW_TO", "downto": "KW_DOWNTO",
+    "repeat": "KW_REPEAT", "until": "KW_UNTIL", "case": "KW_CASE",
+    "of": "KW_OF", "array": "KW_ARRAY", "div": "KW_DIV", "mod": "KW_MOD",
+    "and": "KW_AND", "or": "KW_OR", "not": "KW_NOT",
+    "integer": "KW_INTEGER", "real": "KW_REAL", "boolean": "KW_BOOLEAN",
+    "char": "KW_CHAR", "string": "KW_STRING",
+    "true": "KW_TRUE", "false": "KW_FALSE",
+    "write": "KW_WRITE", "writeln": "KW_WRITELN",
+    "read": "KW_READ", "readln": "KW_READLN"
+};
+
+class Lexer {
+    var src;
+    var pos;
+    var line;
+    var n;
+
+    def init(src) { self.src = src; self.pos = 0; self.line = 1; self.n = len(src); }
+
+    def at_end() { return self.pos >= self.n; }
+    def peek() { if (self.pos >= self.n) { return ""; } return self.src[self.pos]; }
+    def peek2() { if (self.pos + 1 >= self.n) { return ""; } return self.src[self.pos + 1]; }
+    def advance() { var c = self.src[self.pos]; self.pos += 1; if (c == "\n") { self.line += 1; } return c; }
+
+    def is_digit(c)  { if (c == "") { return false; } var o = ord(c); return o >= 48 and o <= 57; }
+    def is_alpha(c)  { if (c == "") { return false; } var o = ord(c);
+                       return (o >= 65 and o <= 90) or (o >= 97 and o <= 122) or c == "_"; }
+    def is_alnum(c)  { return self.is_alpha(c) or self.is_digit(c); }
+
+    // Skip spaces and the three comment styles. Returns nothing.
+    def skip_trivia() {
+        while (self.at_end() == false) {
+            var c = self.peek();
+            if (c == " " or c == "\t" or c == "\r" or c == "\n") { self.advance(); }
+            else if (c == '{') {                                  // Pascal { ... } comment
+                while (self.at_end() == false and self.peek() != '}') { self.advance(); }
+                if (self.at_end() == false) { self.advance(); }   // eat closing brace
+            }
+            else if (c == "(" and self.peek2() == "*") {          // (* ... *)
+                self.advance(); self.advance();
+                while (self.at_end() == false and (self.peek() != "*" or self.peek2() != ")")) { self.advance(); }
+                if (self.at_end() == false) { self.advance(); self.advance(); }
+            }
+            else if (c == "/" and self.peek2() == "/") {          // // line
+                while (self.at_end() == false and self.peek() != "\n") { self.advance(); }
+            }
+            else { return; }
+        }
+    }
+
+    def read_number() {
+        var start = self.pos;
+        while (self.is_digit(self.peek())) { self.advance(); }
+        var is_real = false;
+        // real: a '.' followed by a digit (NOT '..' range, NOT '.' record/end)
+        if (self.peek() == "." and self.is_digit(self.peek2())) {
+            is_real = true;
+            self.advance();
+            while (self.is_digit(self.peek())) { self.advance(); }
+        }
+        // exponent
+        if (self.peek() == "e" or self.peek() == "E") {
+            is_real = true;
+            self.advance();
+            if (self.peek() == "+" or self.peek() == "-") { self.advance(); }
+            while (self.is_digit(self.peek())) { self.advance(); }
+        }
+        var text = self.src[start:self.pos];
+        if (is_real) { return Token("REAL", text, self.line); }
+        return Token("INT", text, self.line);
+    }
+
+    def read_ident() {
+        var start = self.pos;
+        while (self.is_alnum(self.peek())) { self.advance(); }
+        var text = self.src[start:self.pos];
+        var low = text.lower();
+        if (low in PAS_KEYWORDS) { return Token(PAS_KEYWORDS[low], text, self.line); }
+        return Token("ID", text, self.line);
+    }
+
+    // Pascal string: 'abc''def' -> the '' is an escaped single quote.
+    def read_string() {
+        var ln = self.line;
+        self.advance();                          // opening quote
+        var out = "";
+        while (self.at_end() == false) {
+            var c = self.advance();
+            if (c == "'") {
+                if (self.peek() == "'") { out = out + "'"; self.advance(); }   // escaped ''
+                else { return Token("STR", out, ln); }
+            } else { out = out + c; }
+        }
+        return Token("STR", out, ln);            // unterminated: return what we have
+    }
+
+    // Try to match a 1- or 2-char operator at the cursor. Returns a Token or nil.
+    def read_op() {
+        var c = self.peek();
+        var c2 = self.peek2();
+        var two = c + c2;
+        // two-char operators first
+        if (two == ":=") { self.advance(); self.advance(); return Token("ASSIGN", ":=", self.line); }
+        if (two == "<>") { self.advance(); self.advance(); return Token("NEQ", "<>", self.line); }
+        if (two == "<=") { self.advance(); self.advance(); return Token("LE", "<=", self.line); }
+        if (two == ">=") { self.advance(); self.advance(); return Token("GE", ">=", self.line); }
+        if (two == "..") { self.advance(); self.advance(); return Token("DOTDOT", "..", self.line); }
+        var single = {
+            "+": "PLUS", "-": "MINUS", "*": "STAR", "/": "SLASH",
+            "=": "EQ", "<": "LT", ">": "GT",
+            "(": "LPAREN", ")": "RPAREN", "[": "LBRACK", "]": "RBRACK",
+            ";": "SEMI", ":": "COLON", ",": "COMMA", ".": "DOT", "^": "CARET", "@": "AT"
+        };
+        if (c in single) { self.advance(); return Token(single[c], c, self.line); }
+        return nil;
+    }
+
+    def next_token() {
+        self.skip_trivia();
+        if (self.at_end()) { return Token("EOF", "", self.line); }
+        var c = self.peek();
+        if (self.is_digit(c)) { return self.read_number(); }
+        if (self.is_alpha(c)) { return self.read_ident(); }
+        if (c == "'") { return self.read_string(); }
+        var op = self.read_op();
+        if (op != nil) { return op; }
+        // unknown char: consume it as an ERROR token so the scanner never stalls
+        var bad = self.advance();
+        return Token("ERROR", bad, self.line);
+    }
+
+    def tokenize() {
+        var toks = [];
+        while (true) {
+            var t = self.next_token();
+            toks.push(t);
+            if (t.kind == "EOF") { return toks; }
+        }
+    }
+}

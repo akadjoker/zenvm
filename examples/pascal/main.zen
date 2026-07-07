@@ -1,0 +1,38 @@
+// ============================================================
+// pascal / main — demo of the full pipeline:
+//   source -> Lexer -> Parser -> AST -> Printer (Visitor) -> source
+// Run: bin/zen examples/pascal/main.zen
+// ============================================================
+include "printer.zen";
+
+var SRC = "program Fib;" + chr(10) +
+          "var n, a, b, t, i: integer;" + chr(10) +
+          "begin" + chr(10) +
+          "  n := 10; a := 0; b := 1;" + chr(10) +
+          "  for i := 1 to n do" + chr(10) +
+          "  begin" + chr(10) +
+          "    t := a + b;" + chr(10) +
+          "    a := b;" + chr(10) +
+          "    b := t;" + chr(10) +
+          "    if a mod 2 = 0 then writeln('even ', a) else writeln('odd ', a)" + chr(10) +
+          "  end;" + chr(10) +
+          "  writeln('fib(', n, ') = ', a)" + chr(10) +
+          "end.";
+
+print("---------- source ----------");
+print(SRC);
+
+var p = Parser(SRC);
+var ast = p.parse_program();
+if (p.had_error) { print("parse error: " + p.err_msg); }
+
+print("---------- tokens (first 20) ----------");
+var toks = Lexer(SRC).tokenize();
+var line = "";
+// NB: parenthesise the two comparisons — a for-condition of the form
+// `<cmp> and <cmp>` currently miscompiles in the VM (see project notes).
+for (var i = 0; (i < 20) and (i < toks.len()); i += 1) { line = line + toks[i].kind + " "; }
+print(line);
+
+print("---------- reconstructed by the Printer visitor ----------");
+print(print_ast(ast));
