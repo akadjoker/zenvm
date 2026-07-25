@@ -23,3 +23,6 @@
 *.a
 /DIV
 /bin/CMakeFiles/
+
+# Third-party CHIP-8 ROM pack (bring your own)
+examples/chip8/roms/
