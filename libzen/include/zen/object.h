@@ -102,6 +102,22 @@ namespace zen
         return h;
     }
 
+    /* Lazy string hash: 0 means "not computed yet" (strings born from
+       create_string / in-place appends). Computed once on first use so equal
+       strings always agree on their hash regardless of how they were built.
+       (If FNV genuinely returns 0 the string is re-hashed on each use —
+       consistent, just a 1-in-2^32 slow path.) */
+    inline uint32_t string_hash(ObjString *s)
+    {
+        uint32_t h = s->obj.hash;
+        if (h == 0)
+        {
+            h = hash_string(s->chars, s->length);
+            s->obj.hash = h;
+        }
+        return h;
+    }
+
     /* =========================================================
     ** ObjFunc — Função script compilada.
     **

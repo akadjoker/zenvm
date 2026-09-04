@@ -46,22 +46,20 @@ if (STR_METHOD("find"))
 }
 if (STR_METHOD("upper"))
 {
-    /* str.upper() → new uppercase string */
-    char *buf = (char *)malloc(str->length);
+    /* str.upper() → new uppercase string (transform in place, single copy) */
+    ObjString *up = new_string_uninit(&gc_, str->length);
     for (int si = 0; si < str->length; si++)
-        buf[si] = (str->chars[si] >= 'a' && str->chars[si] <= 'z') ? str->chars[si] - 32 : str->chars[si];
-    R[base] = val_obj((Obj *)create_string(&gc_, buf, str->length));
-    free(buf);
+        up->chars[si] = (str->chars[si] >= 'a' && str->chars[si] <= 'z') ? str->chars[si] - 32 : str->chars[si];
+    R[base] = val_obj((Obj *)up);
     break;
 }
 if (STR_METHOD("lower"))
 {
-    /* str.lower() → new lowercase string */
-    char *buf = (char *)malloc(str->length);
+    /* str.lower() → new lowercase string (transform in place, single copy) */
+    ObjString *lo = new_string_uninit(&gc_, str->length);
     for (int si = 0; si < str->length; si++)
-        buf[si] = (str->chars[si] >= 'A' && str->chars[si] <= 'Z') ? str->chars[si] + 32 : str->chars[si];
-    R[base] = val_obj((Obj *)create_string(&gc_, buf, str->length));
-    free(buf);
+        lo->chars[si] = (str->chars[si] >= 'A' && str->chars[si] <= 'Z') ? str->chars[si] + 32 : str->chars[si];
+    R[base] = val_obj((Obj *)lo);
     break;
 }
 if (STR_METHOD("split"))

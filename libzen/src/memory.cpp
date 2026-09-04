@@ -266,8 +266,10 @@ namespace zen
 
     ObjString *create_string(GC *gc, const char *chars, int length)
     {
-        uint32_t hash = hash_string(chars, length);
-        return alloc_string_raw(gc, chars, length, hash);
+        /* Hash lazily (see string_hash): most method results (split pieces,
+           upper/lower, sub, …) are never used as map keys, so don't pay
+           FNV over every byte up front. */
+        return alloc_string_raw(gc, chars, length, 0);
     }
 
     ObjString *new_string_concat(GC *gc, ObjString *a, ObjString *b)
@@ -300,7 +302,7 @@ namespace zen
         memcpy(str->chars, a->chars, a->length);
         memcpy(str->chars + a->length, b->chars, b->length);
         str->chars[length] = '\0';
-        str->obj.hash = hash_string(str->chars, length);
+        str->obj.hash = 0; /* lazy — see string_hash() */
         return str;
     }
 
@@ -747,7 +749,12 @@ namespace zen
                 break;
             }
             case VAL_OBJ:
-                h = v.as.obj->hash;
+                /* Strings hash lazily (0 = not yet computed); equal strings
+                   must produce equal hashes however they were built. */
+                if (v.as.obj->type == OBJ_STRING)
+                    h = string_hash((ObjString *)v.as.obj);
+                else
+                    h = v.as.obj->hash;
                 break;
             default:
                 h = 0;
