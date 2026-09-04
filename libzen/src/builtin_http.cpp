@@ -27,12 +27,7 @@
 #include <cstdlib>
 #include <cstdio>
 
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <unistd.h>
-#include <errno.h>
+#include "zen_socket.h"
 
 namespace zen
 {
@@ -115,6 +110,7 @@ namespace zen
         if (getaddrinfo(host, port_str, &hints, &res) != 0)
             return -1;
 
+        zen_sock_startup();
         int fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
         if (fd < 0)
         {
@@ -123,16 +119,12 @@ namespace zen
         }
 
         /* Set timeout */
-        struct timeval tv;
-        tv.tv_sec = timeout_sec;
-        tv.tv_usec = 0;
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+        zen_sock_set_timeouts(fd, timeout_sec * 1000);
 
         if (connect(fd, res->ai_addr, res->ai_addrlen) < 0)
         {
             freeaddrinfo(res);
-            close(fd);
+            zen_sock_close(fd);
             return -1;
         }
 
@@ -146,7 +138,7 @@ namespace zen
         int sent = 0;
         while (sent < len)
         {
-            ssize_t n = ::send(fd, data + sent, (size_t)(len - sent), MSG_NOSIGNAL);
+            zen_ssize n = ::send(fd, data + sent, (size_t)(len - sent), ZEN_MSG_NOSIGNAL);
             if (n <= 0)
                 return false;
             sent += (int)n;
@@ -177,7 +169,7 @@ namespace zen
                     break;
                 buf = nb;
             }
-            ssize_t n = ::recv(fd, buf + len, (size_t)(cap - len), 0);
+            zen_ssize n = ::recv(fd, buf + len, (size_t)(cap - len), 0);
             if (n <= 0)
                 break;
             len += (int)n;
@@ -322,14 +314,14 @@ namespace zen
 
         if (!send_all(fd, req, req_len))
         {
-            close(fd);
+            zen_sock_close(fd);
             args[0] = val_nil();
             return 1;
         }
 
         int resp_len = 0;
         char *resp = recv_all(fd, &resp_len, 16 * 1024 * 1024);
-        close(fd);
+        zen_sock_close(fd);
 
         if (!resp || resp_len == 0)
         {
@@ -389,14 +381,14 @@ namespace zen
 
         if (!send_all(fd, hdr, hdr_len) || !send_all(fd, body->chars, body->length))
         {
-            close(fd);
+            zen_sock_close(fd);
             args[0] = val_nil();
             return 1;
         }
 
         int resp_len = 0;
         char *resp = recv_all(fd, &resp_len, 16 * 1024 * 1024);
-        close(fd);
+        zen_sock_close(fd);
 
         if (!resp || resp_len == 0)
         {
@@ -450,7 +442,7 @@ namespace zen
 
         if (!send_all(fd, req, req_len))
         {
-            close(fd);
+            zen_sock_close(fd);
             args[0] = val_bool(false);
             return 1;
         }
@@ -459,7 +451,7 @@ namespace zen
         FILE *fp = fopen(filepath, "wb");
         if (!fp)
         {
-            close(fd);
+            zen_sock_close(fd);
             args[0] = val_bool(false);
             return 1;
         }
@@ -471,7 +463,7 @@ namespace zen
 
         for (;;)
         {
-            ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
+            zen_ssize n = ::recv(fd, buf, sizeof(buf), 0);
             if (n <= 0)
                 break;
 
@@ -504,7 +496,7 @@ namespace zen
         }
 
         fclose(fp);
-        close(fd);
+        zen_sock_close(fd);
         args[0] = val_bool(headers_done);
         return 1;
     }
@@ -531,7 +523,7 @@ namespace zen
             return 1;
         }
 
-        close(fd);
+        zen_sock_close(fd);
         args[0] = val_bool(true);
         return 1;
     }

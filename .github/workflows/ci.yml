@@ -71,13 +71,10 @@ jobs:
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-ninja
 
-      # net/http use POSIX sockets (no winsock port yet) — off on Windows.
       - name: Configure
         run: >-
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           $ZEN_CI_CMAKE_FLAGS
-          -DZEN_ENABLE_NET=OFF
-          -DZEN_ENABLE_HTTP=OFF
 
       - name: Build
         run: cmake --build build --target zen -j"$(nproc)"

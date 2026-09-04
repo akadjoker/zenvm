@@ -10,7 +10,7 @@
 **   var sock = net.tcp_connect("example.com", 80);
 **   net.send(sock, "GET / HTTP/1.0\r\nHost: example.com\r\n\r\n");
 **   var resp = net.recv(sock, 4096);
-**   net.close(sock);
+**   net.zen_sock_close(sock);
 ** ========================================================= */
 
 #include "module.h"
@@ -19,15 +19,7 @@
 #include <cstdlib>
 #include <cstdio>
 
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <poll.h>
+#include "zen_socket.h"
 
 namespace zen
 {
@@ -154,6 +146,7 @@ namespace zen
             return 1;
         }
 
+        zen_sock_startup();
         int fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
         if (fd < 0)
         {
@@ -165,7 +158,7 @@ namespace zen
         if (connect(fd, res->ai_addr, res->ai_addrlen) < 0)
         {
             freeaddrinfo(res);
-            close(fd);
+            zen_sock_close(fd);
             args[0] = val_nil();
             return 1;
         }
@@ -175,7 +168,7 @@ namespace zen
         int handle = alloc_sock(fd, false);
         if (handle < 0)
         {
-            close(fd);
+            zen_sock_close(fd);
             vm->runtime_error("net: too many open sockets.");
             return -1;
         }
@@ -198,6 +191,7 @@ namespace zen
         int port = (int)args[0].as.integer;
         int backlog = (nargs >= 2 && is_int(args[1])) ? (int)args[1].as.integer : 16;
 
+        zen_sock_startup();
         int fd = socket(AF_INET, SOCK_STREAM, 0);
         if (fd < 0)
         {
@@ -206,7 +200,7 @@ namespace zen
         }
 
         int opt = 1;
-        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, ZEN_SOCKOPT_CAST(&opt), sizeof(opt));
 
         struct sockaddr_in addr;
         memset(&addr, 0, sizeof(addr));
@@ -216,14 +210,14 @@ namespace zen
 
         if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
         {
-            close(fd);
+            zen_sock_close(fd);
             args[0] = val_nil();
             return 1;
         }
 
         if (listen(fd, backlog) < 0)
         {
-            close(fd);
+            zen_sock_close(fd);
             args[0] = val_nil();
             return 1;
         }
@@ -231,7 +225,7 @@ namespace zen
         int handle = alloc_sock(fd, false);
         if (handle < 0)
         {
-            close(fd);
+            zen_sock_close(fd);
             vm->runtime_error("net: too many open sockets.");
             return -1;
         }
@@ -270,7 +264,7 @@ namespace zen
         int handle = alloc_sock(client_fd, false);
         if (handle < 0)
         {
-            close(client_fd);
+            zen_sock_close(client_fd);
             vm->runtime_error("net: too many open sockets.");
             return -1;
         }
@@ -284,6 +278,7 @@ namespace zen
     ** ========================================================= */
     static int nat_net_udp_create(VM *vm, Value *args, int nargs)
     {
+        zen_sock_startup();
         int fd = socket(AF_INET, SOCK_DGRAM, 0);
         if (fd < 0)
         {
@@ -303,7 +298,7 @@ namespace zen
 
             if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
             {
-                close(fd);
+                zen_sock_close(fd);
                 args[0] = val_nil();
                 return 1;
             }
@@ -312,7 +307,7 @@ namespace zen
         int handle = alloc_sock(fd, true);
         if (handle < 0)
         {
-            close(fd);
+            zen_sock_close(fd);
             vm->runtime_error("net: too many open sockets.");
             return -1;
         }
@@ -340,7 +335,7 @@ namespace zen
         }
 
         ObjString *data = as_string(args[1]);
-        ssize_t sent = ::send(fd, data->chars, (size_t)data->length, MSG_NOSIGNAL);
+        zen_ssize sent = ::send(fd, data->chars, (size_t)data->length, ZEN_MSG_NOSIGNAL);
         args[0] = val_int((int64_t)sent);
         return 1;
     }
@@ -376,7 +371,7 @@ namespace zen
             return 1;
         }
 
-        ssize_t n = ::recv(fd, buf, (size_t)max_bytes, 0);
+        zen_ssize n = ::recv(fd, buf, (size_t)max_bytes, 0);
         if (n <= 0)
         {
             free(buf);
@@ -418,7 +413,7 @@ namespace zen
         addr.sin_port = htons((uint16_t)port);
         inet_pton(AF_INET, host, &addr.sin_addr);
 
-        ssize_t sent = ::sendto(fd, data->chars, (size_t)data->length, 0,
+        zen_ssize sent = ::sendto(fd, data->chars, (size_t)data->length, 0,
                                 (struct sockaddr *)&addr, sizeof(addr));
         args[0] = val_int((int64_t)sent);
         return 1;
@@ -457,7 +452,7 @@ namespace zen
 
         struct sockaddr_in from_addr;
         socklen_t from_len = sizeof(from_addr);
-        ssize_t n = ::recvfrom(fd, buf, (size_t)max_bytes, 0,
+        zen_ssize n = ::recvfrom(fd, buf, (size_t)max_bytes, 0,
                                (struct sockaddr *)&from_addr, &from_len);
         if (n <= 0)
         {
@@ -498,13 +493,8 @@ namespace zen
             return 1;
         }
 
-        int flags = fcntl(fd, F_GETFL, 0);
-        if (args[1].as.boolean)
-            flags &= ~O_NONBLOCK;
-        else
-            flags |= O_NONBLOCK;
-
-        args[0] = val_bool(fcntl(fd, F_SETFL, flags) == 0);
+        /* args[1] == true -> blocking */
+        args[0] = val_bool(zen_sock_set_nonblock(fd, !args[1].as.boolean) == 0);
         return 1;
     }
 
@@ -527,7 +517,7 @@ namespace zen
         }
 
         int flag = args[1].as.boolean ? 1 : 0;
-        args[0] = val_bool(setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag)) == 0);
+        args[0] = val_bool(setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, ZEN_SOCKOPT_CAST(&flag), sizeof(flag)) == 0);
         return 1;
     }
 
@@ -549,18 +539,13 @@ namespace zen
             return 1;
         }
 
-        struct pollfd pfd;
-        pfd.fd = fd;
-        pfd.events = POLLIN;
-        pfd.revents = 0;
-
-        int ret = ::poll(&pfd, 1, (int)args[1].as.integer);
-        args[0] = val_bool(ret > 0 && (pfd.revents & POLLIN));
+        int ret = zen_sock_poll_read(fd, (int)args[1].as.integer);
+        args[0] = val_bool(ret > 0);
         return 1;
     }
 
     /* =========================================================
-    ** close(handle) → bool
+    ** zen_sock_close(handle) → bool
     ** ========================================================= */
     static int nat_net_close(VM *vm, Value *args, int nargs)
     {
@@ -578,7 +563,7 @@ namespace zen
             return 1;
         }
 
-        close(fd);
+        zen_sock_close(fd);
         free_sock(handle);
         args[0] = val_bool(true);
         return 1;
