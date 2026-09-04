@@ -175,7 +175,7 @@ namespace zen
 
         ObjFiber *fiber = (ObjFiber *)zen_alloc(&gc_, sizeof(ObjFiber));
         fiber->obj.type = OBJ_FIBER;
-        fiber->obj.color = GC_BLACK;
+        fiber->obj.color = gc_.black_val;
         fiber->obj.hash = 0;
 
         /* Initialize ALL fields BEFORE linking to GC list */
@@ -239,7 +239,7 @@ namespace zen
         ObjClosure *cl = (ObjClosure *)zen_alloc(&gc_, sizeof(ObjClosure));
         gc_.pause_depth--;
         cl->obj.type = OBJ_CLOSURE;
-        cl->obj.color = GC_BLACK;
+        cl->obj.color = gc_.black_val;
         cl->obj.hash = 0;
         cl->obj.gc_next = gc_.objects;
         gc_.objects = (Obj *)cl;
@@ -915,7 +915,7 @@ namespace zen
         /* Cria novo upvalue */
         ObjUpvalue *created = (ObjUpvalue *)zen_alloc(&gc_, sizeof(ObjUpvalue));
         created->obj.type = OBJ_UPVALUE;
-        created->obj.color = GC_BLACK;
+        created->obj.color = gc_.black_val;
         created->obj.hash = 0;
         created->obj.gc_next = gc_.objects;
         gc_.objects = (Obj *)created;
@@ -1222,7 +1222,7 @@ namespace zen
         
         ObjNativeStruct *ns = (ObjNativeStruct *)zen_alloc(&gc_, sizeof(ObjNativeStruct));
         ns->obj.type = OBJ_NATIVE_STRUCT;
-        ns->obj.color = GC_BLACK;
+        ns->obj.color = gc_.black_val;
         ns->obj.hash = 0;
         ns->obj.interned = 0;
         ns->obj._pad = 0;
@@ -1451,7 +1451,7 @@ namespace zen
     {
         def_ = (ObjStructDef *)zen_alloc(&vm->gc_, sizeof(ObjStructDef));
         def_->obj.type = OBJ_STRUCT_DEF;
-        def_->obj.color = GC_BLACK;
+        def_->obj.color = vm->gc_.black_val;
         def_->obj.hash = 0;
         def_->obj.gc_next = vm->gc_.objects;
         vm->gc_.objects = (Obj *)def_;
@@ -1496,7 +1496,7 @@ namespace zen
     {
         def_ = (NativeStructDef *)zen_alloc(&vm->gc_, sizeof(NativeStructDef));
         def_->obj.type = OBJ_NATIVE_STRUCT_DEF;
-        def_->obj.color = GC_BLACK;
+        def_->obj.color = vm->gc_.black_val;
         def_->obj.hash = 0;
         def_->obj.gc_next = vm->gc_.objects;
         vm->gc_.objects = (Obj *)def_;
@@ -1801,7 +1801,7 @@ namespace zen
 
         ObjFiber *fiber = (ObjFiber *)malloc(sizeof(ObjFiber));
         fiber->obj.type = OBJ_FIBER;
-        fiber->obj.color = GC_BLACK;
+        fiber->obj.color = gc_.black_val;
         fiber->obj.hash = 0;
         fiber->obj.gc_next = nullptr; /* NOT in GC list */
 

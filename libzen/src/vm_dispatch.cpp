@@ -1202,7 +1202,7 @@ namespace zen
                 gc_pause(&gc_);
                 ObjStruct *s = (ObjStruct *)zen_alloc(&gc_, sizeof(ObjStruct));
                 s->obj.type = OBJ_STRUCT;
-                s->obj.color = GC_BLACK;
+                s->obj.color = gc_.black_val;
                 s->obj.hash = 0;
                 s->obj.interned = 0;
                 s->obj._pad = 0;
@@ -1222,7 +1222,7 @@ namespace zen
                 gc_pause(&gc_);
                 ObjNativeStruct *ns = (ObjNativeStruct *)zen_alloc(&gc_, sizeof(ObjNativeStruct));
                 ns->obj.type = OBJ_NATIVE_STRUCT;
-                ns->obj.color = GC_BLACK;
+                ns->obj.color = gc_.black_val;
                 ns->obj.hash = 0;
                 ns->obj.interned = 0;
                 ns->obj._pad = 0;
@@ -1420,7 +1420,7 @@ namespace zen
             int nuv = fn->upvalue_count;
             ObjClosure *cl = (ObjClosure *)zen_alloc(&gc_, sizeof(ObjClosure));
             cl->obj.type = OBJ_CLOSURE;
-            cl->obj.color = GC_BLACK;
+            cl->obj.color = gc_.black_val;
             cl->obj.interned = 0;
             cl->obj.hash = 0;
             cl->obj.gc_next = gc_.objects;

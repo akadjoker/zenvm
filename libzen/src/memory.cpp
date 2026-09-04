@@ -103,6 +103,9 @@ namespace zen
         gc->pause_saved_next_gc = kGCInitThreshold;
         gc->pause_depth = 0;
         gc->vm = nullptr;
+        gc->white_val = GC_WHITE;
+        gc->black_val = GC_BLACK;
+        gc->first_old = nullptr;
 
         arena_init(&gc->arena);
 
@@ -140,7 +143,7 @@ namespace zen
     {
         Obj *obj = (Obj *)zen_alloc(gc, size);
         obj->type = type;
-        obj->color = GC_BLACK; /* born BLACK: survives current GC cycle */
+        obj->color = gc->black_val; /* born black: survives current GC cycle */
         obj->interned = 0;
         obj->hash = 0;
         obj->gc_next = gc->objects;
@@ -151,7 +154,7 @@ namespace zen
     {
         Obj *obj = (Obj *)zen_alloc_now(gc, size);
         obj->type = type;
-        obj->color = GC_BLACK;
+        obj->color = gc->black_val;
         obj->interned = 0;
         obj->hash = 0;
         obj->gc_next = gc->objects;
@@ -1270,7 +1273,7 @@ namespace zen
             ** C++ é dono da memória. Chama vm.destroy_instance() para libertar. */
             inst = (ObjInstance *)malloc(sizeof(ObjInstance));
             inst->obj.type = OBJ_INSTANCE;
-            inst->obj.color = GC_BLACK;
+            inst->obj.color = gc->black_val;
             inst->obj.interned = 0;
             inst->obj.hash = 0;
             inst->obj.gc_next = nullptr; /* not in any list */
@@ -1336,7 +1339,7 @@ namespace zen
     {
         if (obj == nullptr)
             return;
-        if (obj->color != GC_WHITE)
+        if (obj->color != gc->white_val)
             return; /* já visitado */
 
         obj->color = GC_GRAY;
@@ -1360,7 +1363,7 @@ namespace zen
     /* Processa um objecto gray → marca os filhos, torna-o black */
     static void gc_blacken(GC *gc, Obj *obj)
     {
-        obj->color = GC_BLACK;
+        obj->color = gc->black_val;
 
         switch (obj->type)
         {
@@ -1741,7 +1744,7 @@ namespace zen
         for (int i = 0; i < old_capacity; i++)
         {
             ObjString *s = old_table[i];
-            if (!s || s->obj.color == GC_WHITE)
+            if (!s || s->obj.color == gc->white_val)
                 continue;
 
             uint32_t idx = s->obj.hash & (uint32_t)(old_capacity - 1);
@@ -1763,37 +1766,18 @@ namespace zen
         Obj **ptr = &gc->objects;
         while (*ptr)
         {
-            if ((*ptr)->color == GC_WHITE)
+            if ((*ptr)->color == gc->white_val)
             {
                 Obj *dead = *ptr;
                 *ptr = dead->gc_next;
-
-                /* Remove da intern table se for string */
-                if (dead->type == OBJ_STRING)
-                {
-                    ObjString *s = (ObjString *)dead;
-                    uint32_t idx = s->obj.hash & (gc->string_capacity - 1);
-                    while (gc->strings[idx] != s)
-                    {
-                        if (gc->strings[idx] == nullptr)
-                            break;
-                        idx = (idx + 1) & (gc->string_capacity - 1);
-                    }
-                    if (gc->strings[idx] == s)
-                    {
-                        gc->strings[idx] = nullptr;
-                        gc->string_count--;
-                        /* NOTA: tombstone simplificado — pode degradar.
-                           Para produção: rehash periódico. */
-                    }
-                }
-
+                /* Dead interned strings were already dropped from the intern
+                   table by gc_rebuild_intern_table() above. */
                 free_obj(gc, dead);
             }
             else
             {
-                /* Sobreviveu: repinta WHITE para o próximo ciclo */
-                (*ptr)->color = GC_WHITE;
+                /* Survivor keeps its color — the white/black flip at the end
+                   of gc_collect() makes it white for the next cycle. */
                 ptr = &(*ptr)->gc_next;
             }
         }
@@ -1848,12 +1832,15 @@ namespace zen
         /* Reset gray list */
         gc->gray_count = 0;
 
-        /* Full collection: every tracked object must be considered white
-        ** before root marking. New allocations are born BLACK to survive the
-        ** allocation that just created them, but BLACK roots still need their
-        ** children traced on the next collection. */
-        for (Obj *obj = gc->objects; obj; obj = obj->gc_next)
-            obj->color = GC_WHITE;
+        /* Whiten ONLY the newborn prefix: every object allocated since the
+        ** last collection sits before first_old in the list (allocation
+        ** always prepends) and was born black. It must be whitened so the
+        ** mark phase traces through it — a black object is never traced, and
+        ** skipping one would leave its white children unmarked (and swept
+        ** while still referenced). Survivors behind first_old are already
+        ** white thanks to the epoch flip below — no walk needed for them. */
+        for (Obj *o = gc->objects; o && o != gc->first_old; o = o->gc_next)
+            o->color = gc->white_val;
 
         /* Mark roots */
         vm->gc_mark_roots();
@@ -1863,6 +1850,16 @@ namespace zen
 
         /* Sweep dead objects */
         gc_sweep(gc);
+
+        /* Epoch flip: survivors (black_val) and this cycle's newborns all
+        ** read as white next cycle; the next cycle's allocations get the new
+        ** black_val. Equivalent to repainting every object white, in O(1). */
+        {
+            GCColor tmp = gc->white_val;
+            gc->white_val = gc->black_val;
+            gc->black_val = tmp;
+        }
+        gc->first_old = gc->objects; /* everything left is now "old" */
 
         /* Adjust next threshold — ensure next_gc is always above bytes_allocated
         ** so GC never thrashes when the live set is large. */

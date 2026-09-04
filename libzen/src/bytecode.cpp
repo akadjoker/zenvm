@@ -766,7 +766,7 @@ namespace
             GC *gc = &vm->get_gc();
             ObjClosure *cl = (ObjClosure *)zen_alloc(gc, sizeof(ObjClosure));
             cl->obj.type = OBJ_CLOSURE;
-            cl->obj.color = GC_BLACK;
+            cl->obj.color = gc->black_val;
             cl->obj.interned = 0;
             cl->obj._pad = 0;
             cl->obj.hash = 0;
@@ -800,7 +800,7 @@ namespace
             }
             ObjStructDef *sd = (ObjStructDef *)zen_alloc(gc, sizeof(ObjStructDef));
             sd->obj.type = OBJ_STRUCT_DEF;
-            sd->obj.color = GC_BLACK;
+            sd->obj.color = gc->black_val;
             sd->obj.interned = 0;
             sd->obj._pad = 0;
             sd->obj.hash = 0;

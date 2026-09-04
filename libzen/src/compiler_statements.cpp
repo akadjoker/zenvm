@@ -904,7 +904,7 @@ namespace zen
             /* Create closure for the method (no upvalues typically) */
             ObjClosure *cl = (ObjClosure *)zen_alloc(gc_, sizeof(ObjClosure));
             cl->obj.type = OBJ_CLOSURE;
-            cl->obj.color = GC_BLACK;
+            cl->obj.color = gc_->black_val;
             cl->obj.interned = 0;
             cl->obj.hash = 0;
             cl->obj._pad = 0;

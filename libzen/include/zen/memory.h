@@ -41,6 +41,20 @@ namespace zen
         size_t pause_saved_next_gc;
         int pause_depth;
 
+        /* Tri-color epoch flip: the numeric values meaning "white" and
+        ** "black" swap after every collection, so all survivors become
+        ** white for the next cycle with zero repainting work. GRAY is
+        ** fixed. Always paint new/protected objects with black_val —
+        ** never the GC_BLACK constant directly. */
+        GCColor white_val;
+        GCColor black_val;
+        /* Head of the object list at the end of the last collection. Objects
+        ** prepended since then (the "newborn prefix") are the only ones that
+        ** still carry black and must be whitened before marking — see
+        ** gc_collect(). Only ever dereferenced before sweep, and refreshed
+        ** right after it, so it can never dangle. */
+        Obj *first_old;
+
         /* String interning table (open addressing) */
         ObjString **strings;
         int string_count;
@@ -124,10 +138,14 @@ namespace zen
     void gc_mark_value(GC *gc, Value v);
     void gc_mark_obj(GC *gc, Obj *obj);
 
-    /* Write barrier — chamar quando um obj BLACK recebe nova referência */
+    /* Write barrier — chamar quando um obj BLACK recebe nova referência.
+    ** Compares against the CURRENT epoch's colours (white/black swap every
+    ** collection) — hardcoding GC_BLACK/GC_WHITE here would fire backwards
+    ** on odd epochs and grey out white parents, hiding their children from
+    ** the mark phase. */
     inline void gc_write_barrier(GC *gc, Obj *parent, Obj *child)
     {
-        if (parent->color == GC_BLACK && child && child->color == GC_WHITE)
+        if (parent->color == gc->black_val && child && child->color == gc->white_val)
         {
             parent->color = GC_GRAY;
             /* adiciona ao gray list para re-scan */
