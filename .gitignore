@@ -26,3 +26,4 @@
 /build-ci
 /build-asan
 /bin/zen-asan
+/build-win

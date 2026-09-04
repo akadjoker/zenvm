@@ -90,6 +90,31 @@ namespace zen
     inline ObjString *as_string(Value v) { return (ObjString *)v.as.obj; }
     inline const char *as_cstring(Value v) { return ((ObjString *)v.as.obj)->chars; }
 
+    /* Substring search. glibc's memmem is SIMD-optimised; MinGW lacks the
+       function entirely, so Windows gets a memchr-driven fallback. */
+    inline const void *zen_memmem(const void *hay, size_t haylen,
+                                  const void *needle, size_t nlen)
+    {
+#ifdef _WIN32
+        if (nlen == 0) return hay;
+        if (haylen < nlen) return nullptr;
+        const char *h = (const char *)hay;
+        const char *end = h + haylen - nlen + 1;
+        const char first = *(const char *)needle;
+        while ((h = (const char *)memchr(h, first, (size_t)(end - h))) != nullptr)
+        {
+            if (memcmp(h, needle, nlen) == 0)
+                return h;
+            h++;
+            if (h >= end)
+                break;
+        }
+        return nullptr;
+#else
+        return memmem(hay, haylen, needle, nlen);
+#endif
+    }
+
     /* FNV-1a hash */
     inline uint32_t hash_string(const char *str, int length)
     {

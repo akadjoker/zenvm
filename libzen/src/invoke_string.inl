@@ -39,7 +39,7 @@ if (STR_METHOD("find"))
     ObjString *needle = as_string(args[0]);
     if (needle->length == 0) { R[base] = val_int(0); }
     else {
-        const char *found = (const char *)memmem(str->chars, str->length, needle->chars, needle->length);
+        const char *found = (const char *)zen_memmem(str->chars, str->length, needle->chars, needle->length);
         R[base] = found ? val_int((int32_t)(found - str->chars)) : val_int(-1);
     }
     break;
@@ -102,7 +102,7 @@ if (STR_METHOD("split"))
             const char *end_ptr = str->chars + str->length;
             while (start_ptr <= end_ptr)
             {
-                const char *found = (const char *)memmem(
+                const char *found = (const char *)zen_memmem(
                     start_ptr, end_ptr - start_ptr, sep->chars, sep->length);
                 if (!found)
                 {
@@ -148,7 +148,7 @@ if (STR_METHOD("replace"))
         const char *sp = str->chars;
         const char *ep = str->chars + str->length;
         while (sp < ep) {
-            const char *f = (const char *)memmem(sp, ep - sp, old_s->chars, old_s->length);
+            const char *f = (const char *)zen_memmem(sp, ep - sp, old_s->chars, old_s->length);
             if (!f) break;
             occurrences++;
             sp = f + old_s->length;
@@ -160,7 +160,7 @@ if (STR_METHOD("replace"))
             char *wp = buf;
             sp = str->chars;
             while (sp < ep) {
-                const char *f = (const char *)memmem(sp, ep - sp, old_s->chars, old_s->length);
+                const char *f = (const char *)zen_memmem(sp, ep - sp, old_s->chars, old_s->length);
                 if (!f) { memcpy(wp, sp, ep - sp); wp += (ep - sp); break; }
                 memcpy(wp, sp, f - sp); wp += (f - sp);
                 memcpy(wp, new_s->chars, new_s->length); wp += new_s->length;
@@ -232,7 +232,7 @@ if (STR_METHOD("count"))
     const char *sp = str->chars;
     const char *ep = str->chars + str->length;
     while (sp < ep) {
-        const char *f = (const char *)memmem(sp, ep - sp, needle->chars, needle->length);
+        const char *f = (const char *)zen_memmem(sp, ep - sp, needle->chars, needle->length);
         if (!f) break;
         cnt++;
         sp = f + needle->length;
@@ -280,7 +280,7 @@ if (STR_METHOD("contains"))
     if (arg_count != 1 || !is_string(args[0])) { RT_ERROR("contains() expects a string"); }
     ObjString *needle = as_string(args[0]);
     if (needle->length == 0) { R[base] = val_bool(true); break; }
-    const char *f = (const char *)memmem(str->chars, str->length, needle->chars, needle->length);
+    const char *f = (const char *)zen_memmem(str->chars, str->length, needle->chars, needle->length);
     R[base] = val_bool(f != nullptr);
     break;
 }

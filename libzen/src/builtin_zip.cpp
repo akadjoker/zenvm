@@ -20,8 +20,17 @@
 #include <cstdlib>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <unistd.h>
 #include <errno.h>
+#ifdef _WIN32
+#include <direct.h>
+#define zen_mkdir(path, mode) _mkdir(path)
+#ifndef S_ISDIR
+#define S_ISDIR(m) (((m) & _S_IFMT) == _S_IFDIR)
+#endif
+#else
+#include <unistd.h>
+#define zen_mkdir(path, mode) mkdir((path), (mode))
+#endif
 
 namespace zen
 {
@@ -35,7 +44,7 @@ namespace zen
         struct stat st;
         if (stat(path, &st) == 0)
             return S_ISDIR(st.st_mode);
-        return mkdir(path, 0755) == 0;
+        return zen_mkdir(path, 0755) == 0;
     }
 
     static bool ensure_dir_recursive(const char *path, int len)
