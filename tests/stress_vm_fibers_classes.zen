@@ -10,17 +10,16 @@ var fb = spawn boomf;
 print("f2:", resume(fb));
 var (ok1, e1) = pcall(def() { return resume(fb); });
 print("f2-err:", ok1 == false);
-// KNOWN QUIRK: a fiber whose error was caught by pcall is left in "running"
-// state, so this resume errors instead of returning nil like a dead fiber.
-// Locked under pcall so the snapshot flags it when the VM fixes fiber state.
+// a fiber that died from an error is dead: resuming it returns nil,
+// exactly like a fiber that finished normally
 var (okz, ez) = pcall(def() { return resume(fb); });
-print("f2-dead:", okz, okz ? ez : "resume-errors");
+print("f2-dead:", okz, ez);
 
 // spawn non-function must be catchable
 var (ok2, e2) = pcall(def() { var bad = spawn 42; return resume(bad); });
 print("spawn-bad:", ok2 == false);
 
-// send values both ways
+// send values both ways; the final resume delivers the fiber's RETURN value
 def pingpong() {
     var got = yield "ready";
     var got2 = yield "got:" + got;

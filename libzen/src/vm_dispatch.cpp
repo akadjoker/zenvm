@@ -1363,11 +1363,15 @@ namespace zen
             fiber->frame_count--;
             if (fiber->frame_count == 0)
             {
-                /* Retorno do top-level */
+                /* Retorno do top-level. The return value travels in the
+                   FINISHING fiber's transfer_value — that is what OP_RESUME
+                   and VM::resume_fiber read after execute() returns (writing
+                   it to the caller's slot lost the value and handed back the
+                   stale sent value instead). */
                 fiber->state = FIBER_DONE;
+                fiber->transfer_value = nresults > 0 ? R[a] : val_nil();
                 if (fiber->caller)
                 {
-                    fiber->caller->transfer_value = nresults > 0 ? R[a] : val_nil();
                     fiber->caller->state = FIBER_RUNNING;
                     current_fiber_ = fiber->caller;
                 }
@@ -1581,8 +1585,9 @@ namespace zen
             ++ip;
             SAVE_IP();
 
-            if (target->state == FIBER_DONE)
+            if (target->state == FIBER_DONE || target->state == FIBER_ERROR)
             {
+                /* Dead fiber (finished or died with an error): resume → nil */
                 R[ZEN_A(i)] = val_nil();
                 DISPATCH();
             }
@@ -1614,6 +1619,16 @@ namespace zen
             ++fiber_depth_;
             execute(target);
             --fiber_depth_;
+
+            /* Error escaped the resumed fiber: it is already FIBER_ERROR
+               (runtime_error marks it); restore ourselves and keep unwinding
+               so an enclosing pcall can catch it. */
+            if (had_error_)
+            {
+                fiber->state = FIBER_RUNNING;
+                current_fiber_ = fiber;
+                return;
+            }
 
             /* Voltámos — target fez yield ou terminou */
             fiber->state = FIBER_RUNNING;

@@ -1047,6 +1047,13 @@ namespace zen
         /* Always remember the message so pcall() can hand it back. */
         snprintf(error_msg_, sizeof(error_msg_), "%s", msg);
 
+        /* The fiber that raised dies with the error — even when the error is
+           trapped by an enclosing pcall (call_protected re-marks ITS OWN
+           fiber RUNNING afterwards; a deeper fiber must stay dead so a later
+           resume yields nil instead of "cannot resume running fiber"). */
+        if (current_fiber_ && current_fiber_ != main_fiber_)
+            current_fiber_->state = FIBER_ERROR;
+
         /* Inside pcall(): trap silently — no print, no traceback. call_protected
            will unwind and turn this into a (false, message) result. */
         if (protected_depth_ > 0)
@@ -1075,10 +1082,6 @@ namespace zen
             }
         }
 
-        if (current_fiber_ && current_fiber_ != main_fiber_)
-        {
-            current_fiber_->state = FIBER_ERROR;
-        }
     }
 
     /* =========================================================

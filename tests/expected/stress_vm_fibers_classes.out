@@ -1,9 +1,9 @@
 f1: 1 nil nil nil
 f2: 1
 f2-err: true
-f2-dead: false resume-errors
+f2-dead: true nil
 spawn-bad: true
-pp: ready got:A B nil
+pp: ready got:A end:B nil
 nested-fiber: 10 20
 chain: B<65 65 9 true true true false
 names: C int string nil array
