@@ -31,6 +31,6 @@ print(cfg4["window"]["width"]);
 print(cfg4["audio"]["volume"]);
 
 // save + load
-ini.save(cfg, "/tmp/test_zen.ini");
-var cfg5 = ini.load("/tmp/test_zen.ini");
+ini.save(cfg, "zen_tmp_test.ini");
+var cfg5 = ini.load("zen_tmp_test.ini");
 print(cfg5["window"]["height"]);

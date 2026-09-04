@@ -1,7 +1,7 @@
 import file;
 
 // Write binary data
-var f = file.open("/tmp/test_zen.bin", "w");
+var f = file.open("zen_tmp_test.bin", "w");
 file.write_byte(f, 255);
 file.write_short(f, 1234);
 file.write_int(f, 987654);
@@ -12,7 +12,7 @@ file.write_string(f, "hello zen");
 file.close(f);
 
 // Read it back
-var g = file.open("/tmp/test_zen.bin", "r");
+var g = file.open("zen_tmp_test.bin", "r");
 print(file.read_byte(g));
 print(file.read_short(g));
 print(file.read_int(g));

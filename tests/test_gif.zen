@@ -27,7 +27,7 @@ while (i < W * H) {
 }
 
 /* --- 3. Modo memória: gif.begin + w.save --- */
-var path = "/tmp/zen_test_out.gif";
+var path = "zen_tmp_out.gif";
 var w = gif.begin(W, H);
 print("GifWriter created: " + (w != nil));
 
@@ -51,7 +51,7 @@ var gif_size = fs.size(path);
 print("gif size > 0: " + (gif_size > 0));
 
 /* --- 5. Modo ficheiro: gif.create + w.close --- */
-var path2 = "/tmp/zen_test_file.gif";
+var path2 = "zen_tmp_file.gif";
 
 // frame verde
 var k = 0;

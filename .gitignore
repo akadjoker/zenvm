@@ -27,3 +27,4 @@
 /build-asan
 /bin/zen-asan
 /build-win
+/zen_tmp_*

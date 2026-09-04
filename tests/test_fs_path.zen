@@ -10,11 +10,11 @@ print(path.ext("/home/user/file.txt"));
 print(path.normalize("/home/user/../admin/./docs"));
 
 // fs module
-fs.write("/tmp/zen_test.txt", "hello zen!");
-print(fs.exists("/tmp/zen_test.txt"));
-print(fs.size("/tmp/zen_test.txt"));
-print(fs.read("/tmp/zen_test.txt"));
-print(fs.isfile("/tmp/zen_test.txt"));
-print(fs.isdir("/tmp"));
-fs.remove("/tmp/zen_test.txt");
-print(fs.exists("/tmp/zen_test.txt"));
+fs.write("zen_tmp_fs.txt", "hello zen!");
+print(fs.exists("zen_tmp_fs.txt"));
+print(fs.size("zen_tmp_fs.txt"));
+print(fs.read("zen_tmp_fs.txt"));
+print(fs.isfile("zen_tmp_fs.txt"));
+print(fs.isdir("tests"));
+fs.remove("zen_tmp_fs.txt");
+print(fs.exists("zen_tmp_fs.txt"));

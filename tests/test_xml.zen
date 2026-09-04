@@ -61,8 +61,8 @@ print(e1kids.len());
 print(e1kids[0].text());
 
 // --- save and reload ---
-doc2.saveFile("/tmp/test_zen.xml");
-var doc3 = xml.load("/tmp/test_zen.xml");
+doc2.saveFile("zen_tmp_test.xml");
+var doc3 = xml.load("zen_tmp_test.xml");
 var r3 = doc3.root();
 print(r3.name());
 print(r3.child("title").text());

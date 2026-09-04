@@ -27,7 +27,7 @@ print(logger.getLevel());
 
 // log para ficheiro
 logger.setLevel("info");
-logger.setFile("/tmp/zen_log_test.log");
+logger.setFile("zen_tmp_test.log");
 logger.info("written to file");
 logger.close();
 print("ok");
