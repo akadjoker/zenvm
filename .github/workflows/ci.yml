@@ -82,5 +82,17 @@ jobs:
       - name: Build
         run: cmake --build build --target zen -j"$(nproc)"
 
+      # Failures are re-emitted as ::error:: annotations so they are visible
+      # through the public API (job logs need authentication).
       - name: Snapshot tests
-        run: ZEN_TEST_VERBOSE=1 tests/run_zen_tests.sh bin/zen.exe
+        run: |
+          set +e
+          ZEN_TEST_VERBOSE=1 tests/run_zen_tests.sh bin/zen.exe | tee test_out.txt
+          rc=${PIPESTATUS[0]}
+          fails=$(grep '\[FAIL\]' test_out.txt | paste -sd'|' -)
+          [ -n "$fails" ] && echo "::error::snapshot failures: $fails"
+          diffs=$(grep -E '^\s{8}' test_out.txt | head -60 | sed 's/%/%25/g' | paste -sd'\n' - | sed ':a;N;$!ba;s/\n/%0A/g')
+          [ -n "$diffs" ] && echo "::error::diff head:%0A$diffs"
+          summary=$(tail -n 12 test_out.txt | sed ':a;N;$!ba;s/\n/%0A/g')
+          echo "::notice::summary:%0A$summary"
+          exit $rc
