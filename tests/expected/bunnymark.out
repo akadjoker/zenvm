@@ -1,1 +1,5 @@
-
+File "tests/bunnymark.zen", line 56
+          if (mouse_down(0)) {
+              ^^^^^^^^^^
+Error at 'mouse_down': undefined variable (never declared with var/def/class)
+zen: compilation failed.

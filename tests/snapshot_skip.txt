@@ -8,3 +8,14 @@ benchmark.zen
 test_os_time.zen
 test_gc.zen
 test_gc2.zen
+bench_num.zen
+bench_struct_nofuse.zen
+bench_struct_nofuse2.zen
+
+# Windowed tests — need glfw/gl/raylib modules and a display; run manually
+# with the full build (they would open a window or fail headless).
+test_raylib_texture.zen
+test_raylib_types.zen
+test_raylib_window.zen
+test_zen_gl.zen
+triangle.zen

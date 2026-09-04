@@ -1,4 +1,4 @@
-File "/media/ctw04578/data/projects/zen/zen/tests/fake_engine.zen", line 1
+File "tests/fake_engine.zen", line 1
   class Player : ScriptComponent {
                                  ^
 Error at '{': Parent class not found.

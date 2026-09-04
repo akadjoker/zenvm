@@ -47,20 +47,38 @@ SKIP_FILE="$TESTS_DIR/snapshot_skip.txt"
 
 mkdir -p "$EXPECTED_DIR"
 
-# Build skip set
+# Build skip set (common file + optional per-platform file, e.g.
+# snapshot_skip_windows.txt on MSYS2/Git-Bash runners)
 declare -A SKIP=()
-if [[ -f "$SKIP_FILE" ]]; then
+load_skip_file() {
+    [[ -f "$1" ]] || return 0
     while IFS= read -r line; do
         line="${line%%#*}"          # strip comments
         line="${line//[$'\t\r ']/}" # strip whitespace
         [[ -z "$line" ]] && continue
         SKIP["$line"]=1
-    done < "$SKIP_FILE"
+    done < "$1"
+}
+load_skip_file "$SKIP_FILE"
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) load_skip_file "$TESTS_DIR/snapshot_skip_windows.txt" ;;
+esac
+
+# Windows (MSYS2/Git-Bash) may hand the binary a mixed-form path (D:/...);
+# capture it so path normalisation catches both spellings of ROOT.
+ROOT_WIN=""
+if command -v cygpath >/dev/null 2>&1; then
+    ROOT_WIN="$(cygpath -m "$ROOT")"
 fi
 
-# Normalisation: rstrip each line, drop trailing blank lines.
+# Normalisation: make ROOT-relative paths, rstrip each line, drop trailing
+# blank lines. Path rewriting keeps snapshots portable across machines/CI.
 normalize() {
-    sed -E 's/[[:space:]]+$//' | awk '
+    local script='s|'"$ROOT"'/||g'
+    if [[ -n "$ROOT_WIN" ]]; then
+        script+=$'\n''s|'"$ROOT_WIN"'/||g'
+    fi
+    sed -e "$script" | sed -E 's/[[:space:]]+$//' | awk '
         { buf[NR] = $0; lastnonblank = ($0 == "" ? lastnonblank : NR) }
         END { for (i = 1; i <= lastnonblank; i++) print buf[i] }
     '
