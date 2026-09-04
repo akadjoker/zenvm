@@ -341,8 +341,11 @@ namespace zen
         const char *file = current_file_ ? current_file_ : "<input>";
         fprintf(stderr, "File \"%s\", line %d\n", file, token->line);
 
-        /* --- source snippet: find the line start by walking back from token --- */
-        if (token->start)
+        /* --- source snippet: find the line start by walking back from token ---
+           TOK_ERROR tokens carry the error *message* in start (not a pointer
+           into the source buffer), so walking the line from it reads out of
+           bounds — skip the snippet for those. */
+        if (token->start && token->type != TOK_ERROR)
         {
             /* walk back to start of line */
             const char *line_start = token->start;
@@ -385,6 +388,17 @@ namespace zen
     void Compiler::error_at_current(const char *msg)
     {
         error_at(&current_, msg);
+    }
+
+    bool Compiler::function_nesting_ok()
+    {
+        int nest = 0;
+        for (CompilerState *s = state_; s; s = s->parent)
+            nest++;
+        if (nest <= kMaxFuncNesting)
+            return true;
+        error_at_current("functions nested too deeply");
+        return false;
     }
 
     /* =========================================================

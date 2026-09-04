@@ -16,6 +16,19 @@ namespace zen
 
     void Compiler::declaration()
     {
+        /* Depth guard: nested declarations (def inside def inside def…)
+           recurse without passing through statement(), so guard here too. */
+        struct DepthGuard { int &d; DepthGuard(int &x) : d(x) { ++d; } ~DepthGuard() { --d; } } _dg(recursion_depth_);
+        if (recursion_depth_ > kMaxParseDepth)
+        {
+            if (!panic_mode_)
+                error("declaration too deeply nested");
+            /* consume something so callers looping on declaration() make progress */
+            if (!check(TOK_EOF))
+                advance();
+            return;
+        }
+
         if (panic_mode_)
         {
             /* Synchronize: skip tokens until a statement boundary */
@@ -245,6 +258,9 @@ namespace zen
         consume(TOK_IDENTIFIER, "Expected function name.");
         Token name = previous_;
 
+        if (!function_nesting_ok())
+            return;
+
         /* Create function in a new compiler state */
         CompilerState fn_state;
         fn_state.parent = state_;
@@ -386,6 +402,9 @@ namespace zen
     {
         consume(TOK_IDENTIFIER, "Expected process name.");
         Token name = previous_;
+
+        if (!function_nesting_ok())
+            return;
 
         CompilerState fn_state;
         fn_state.parent = state_;
@@ -674,6 +693,8 @@ namespace zen
 
                 /* Compile method as a function. Instance methods get an implicit
                    'self' at reg 0; static methods do not. */
+                if (!function_nesting_ok())
+                    return;
                 CompilerState fn_state;
                 fn_state.parent = state_;
                 fn_state.function = new_func(gc_);

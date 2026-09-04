@@ -24,3 +24,5 @@
 /DIV
 /bin/CMakeFiles/
 /build-ci
+/build-asan
+/bin/zen-asan

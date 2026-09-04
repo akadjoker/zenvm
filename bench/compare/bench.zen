@@ -1,0 +1,130 @@
+// zen side of the zen-vs-python micro-benchmark suite.
+// Mirrors bench.py 1:1. Output: "BENCH <name> <seconds>" per scenario.
+
+def bench(name, fn) {
+    var t0 = clock();
+    var r = fn();
+    var dt = clock() - t0;
+    print("BENCH {name} {dt}");
+    return r;
+}
+
+var N = 3000000;
+
+// 1. int arithmetic in a while loop
+bench("int_loop", def() {
+    var s = 0;
+    var i = 0;
+    while (i < N) { s = s + i; i = i + 1; }
+    return s;
+});
+
+// 2. float arithmetic
+bench("float_loop", def() {
+    var s = 0.0;
+    var i = 0;
+    while (i < N) { s = s + 0.25; i = i + 1; }
+    return s;
+});
+
+// 3. function call overhead
+def ident(x) { return x; }
+bench("calls", def() {
+    var s = 0;
+    var i = 0;
+    while (i < N) { s = s + ident(i); i = i + 1; }
+    return s;
+});
+
+// 4. recursive fib (call stack pressure; depth <= 25)
+def fib(n) {
+    if (n < 2) { return n; }
+    return fib(n - 1) + fib(n - 2);
+}
+bench("fib25", def() { return fib(25); });
+
+// 5. string building with += (rope/realloc behaviour)
+bench("str_concat", def() {
+    var s = "";
+    var i = 0;
+    while (i < 20000) { s += "x"; i = i + 1; }
+    return s.len();
+});
+
+// 6. string methods: split + join + upper
+bench("str_methods", def() {
+    var base = "alpha,beta,gamma,delta,epsilon";
+    var acc = 0;
+    var i = 0;
+    while (i < 50000) {
+        var parts = base.split(",");
+        acc = acc + parts.len() + parts.join("-").upper().len();
+        i = i + 1;
+    }
+    return acc;
+});
+
+// 7. array push + indexed read-modify-write
+bench("array_ops", def() {
+    var a = [];
+    var i = 0;
+    while (i < 300000) { a.push(i); i = i + 1; }
+    var s = 0;
+    i = 0;
+    while (i < 300000) { s = s + a[i]; a[i] = s; i = i + 1; }
+    return s;
+});
+
+// 8. map set/get with string keys
+bench("map_ops", def() {
+    var m = {};
+    var i = 0;
+    while (i < 100000) { m.set("k" + (i % 1000), i); i = i + 1; }
+    var s = 0;
+    i = 0;
+    while (i < 100000) { s = s + m.get("k" + (i % 1000)); i = i + 1; }
+    return s;
+});
+
+// 9. class method dispatch
+class Vec {
+    var x = 0;
+    def add(n) { self.x = self.x + n; return self.x; }
+}
+bench("method_dispatch", def() {
+    var v = Vec();
+    var i = 0;
+    while (i < 1000000) { v.add(1); i = i + 1; }
+    return v.x;
+});
+
+// 10. closure invocation (captured upvalue)
+bench("closures", def() {
+    var total = 0;
+    var addr = def(n) { total = total + n; };
+    var i = 0;
+    while (i < 1000000) { addr(1); i = i + 1; }
+    return total;
+});
+
+// 11. foreach over numeric range
+bench("foreach_range", def() {
+    var s = 0;
+    foreach (i in 0..N) { s = s + i; }
+    return s;
+});
+
+// 12. object allocation churn (GC pressure)
+bench("alloc_churn", def() {
+    var keep = 0;
+    var i = 0;
+    while (i < 200000) {
+        var v = Vec();
+        v.add(i);
+        keep = keep + (v.x % 2);
+        i = i + 1;
+    }
+    return keep;
+});
+
+print("DONE");

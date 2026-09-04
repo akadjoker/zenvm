@@ -122,6 +122,7 @@ namespace zen
         void error_at(Token *token, const char *msg);
         void error(const char *msg);
         void error_at_current(const char *msg);
+        bool function_nesting_ok(); /* false + error when defs nest past kMaxFuncNesting */
 
         /* --- Statements --- */
         void declaration();

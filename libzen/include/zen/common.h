@@ -19,6 +19,8 @@ namespace zen
     constexpr int kMaxFrames = 256;                 /* max call depth */
     constexpr int kMaxFiberDepth = 64;              /* max nested fiber resumes (C stack) */
     constexpr int kMaxParseDepth = 400;             /* max nested expr/stmt (guards parser C stack) */
+    constexpr int kMaxFuncNesting = 64;             /* max nested function defs: each level holds a
+                                                       ~25KB CompilerState frame on the C stack */
     constexpr int kMaxConstants = 65536;            /* constant pool per function */
     constexpr int kOperatorSlotCount = 15;          /* fixed object operator slots */
     /* Globals are stored in a dynamic array (grows on demand).

@@ -155,7 +155,10 @@ Token Lexer::string_token() {
     if (quote == '\'') {
         while (peek() != '\'' && !is_at_end()) {
             if (peek() == '\n') line_++;
-            if (peek() == '\\') advance(); /* skip escape */
+            if (peek() == '\\') {
+                advance(); /* skip escape */
+                if (is_at_end()) break; /* trailing '\' at EOF: don't run past NUL */
+            }
             advance();
         }
         if (is_at_end()) return error_token("Unterminated string.");
@@ -168,6 +171,7 @@ Token Lexer::string_token() {
         if (peek() == '\n') line_++;
         if (peek() == '\\') {
             advance(); /* skip escape char */
+            if (is_at_end()) break; /* trailing '\' at EOF: don't run past NUL */
             advance(); /* skip escaped char */
             continue;
         }

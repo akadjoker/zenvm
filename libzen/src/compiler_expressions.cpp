@@ -2522,6 +2522,9 @@ namespace zen
     {
         int reg = (dest >= 0) ? dest : alloc_reg();
 
+        if (!function_nesting_ok())
+            return reg;
+
         CompilerState fn_state;
         fn_state.parent = state_;
         fn_state.function = new_func(gc_);
@@ -2628,6 +2631,9 @@ namespace zen
     int Compiler::lambda(int dest, Token *single_param)
     {
         int reg = (dest >= 0) ? dest : alloc_reg();
+
+        if (!function_nesting_ok())
+            return reg;
 
         CompilerState fn_state;
         fn_state.parent = state_;
