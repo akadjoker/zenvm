@@ -88,8 +88,13 @@ jobs:
           rc=${PIPESTATUS[0]}
           fails=$(grep '\[FAIL\]' test_out.txt | paste -sd'|' -)
           [ -n "$fails" ] && echo "::error::snapshot failures: $fails"
-          diffs=$(grep -E '^\s{8}' test_out.txt | head -60 | sed 's/%/%25/g' | paste -sd'\n' - | sed ':a;N;$!ba;s/\n/%0A/g')
-          [ -n "$diffs" ] && echo "::error::diff head:%0A$diffs"
+          # one annotation per failing test with the first diff lines
+          awk '
+            /\[FAIL\]/ { if (msg != "") print msg; name=$2; msg="::error::" name; n=0; next }
+            /^        / { if (name != "" && n < 6) { line=$0; gsub(/%/,"%25",line); msg=msg "%0A" substr(line,1,160); n++ } next }
+            { if (msg != "") print msg; msg=""; name="" }
+            END { if (msg != "") print msg }
+          ' test_out.txt | head -8
           summary=$(tail -n 12 test_out.txt | sed ':a;N;$!ba;s/\n/%0A/g')
           echo "::notice::summary:%0A$summary"
           exit $rc

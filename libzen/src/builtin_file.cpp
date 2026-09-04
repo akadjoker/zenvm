@@ -102,7 +102,24 @@ namespace zen
         if (nargs >= 2 && is_string(args[1]))
             mode_str = as_string(args[1])->chars;
 
-        FILE *fp = fopen(path->chars, mode_str);
+        /* Always open in binary: on Windows, text mode would translate
+           \n <-> \r\n and desync sizes/offsets across platforms. */
+        char mode_buf[8];
+        {
+            size_t mi = 0;
+            bool has_b = false;
+            for (const char *m = mode_str; *m && mi < sizeof(mode_buf) - 2; m++)
+            {
+                mode_buf[mi++] = *m;
+                if (*m == 'b')
+                    has_b = true;
+            }
+            if (!has_b)
+                mode_buf[mi++] = 'b';
+            mode_buf[mi] = '\0';
+        }
+
+        FILE *fp = fopen(path->chars, mode_buf);
         if (!fp)
         {
             args[0] = val_nil();
