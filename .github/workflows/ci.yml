@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Headless CI: build the zen CLI + portable modules only. Graphics/audio
+# modules (glfw, sdl2, raylib, opengl, miniaudio) need system libs and a
+# display, so they stay off here and are exercised locally instead.
+env:
+  ZEN_CI_CMAKE_FLAGS: >-
+    -DZEN_ENABLE_GLFW=OFF
+    -DZEN_ENABLE_SDL2=OFF
+    -DZEN_ENABLE_RAYLIB_MODULE=OFF
+    -DZEN_ENABLE_GL_MODULE=OFF
+    -DZEN_ENABLE_AUDIO=OFF
+    -DZEN_BUILD_VISUAL=OFF
+    -DZEN_BUILD_GFX=OFF
+
+jobs:
+  linux:
+    name: Linux (gcc, Release)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release $ZEN_CI_CMAKE_FLAGS
+
+      - name: Build
+        run: cmake --build build --target zen -j"$(nproc)"
+
+      - name: Snapshot tests
+        run: ZEN_TEST_VERBOSE=1 tests/run_zen_tests.sh bin/zen
+
+  linux-sanitize:
+    name: Linux (gcc, ASan+UBSan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Debug build type enables -fsanitize=address,undefined (see CMakeLists)
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug $ZEN_CI_CMAKE_FLAGS
+
+      - name: Build
+        run: cmake --build build --target zen -j"$(nproc)"
+
+      - name: Snapshot tests (sanitized)
+        run: |
+          export ASAN_OPTIONS=detect_leaks=0
+          ZEN_TEST_VERBOSE=1 tests/run_zen_tests.sh bin/zen
+
+  windows:
+    name: Windows (MinGW, Release)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+
+      # net/http use POSIX sockets (no winsock port yet) — off on Windows.
+      - name: Configure
+        run: >-
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          $ZEN_CI_CMAKE_FLAGS
+          -DZEN_ENABLE_NET=OFF
+          -DZEN_ENABLE_HTTP=OFF
+
+      - name: Build
+        run: cmake --build build --target zen -j"$(nproc)"
+
+      - name: Snapshot tests
+        run: ZEN_TEST_VERBOSE=1 tests/run_zen_tests.sh bin/zen.exe
