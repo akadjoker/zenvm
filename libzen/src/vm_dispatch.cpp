@@ -1,3 +1,8 @@
+#ifdef ZEN_OPCODE_PROFILE
+#include <x86intrin.h>
+#include <cstdlib>
+#include <cstdio>
+#endif
 #include "vm.h"
 #include "debug.h"
 #include "name_tables.h"
@@ -12,6 +17,72 @@
 
 namespace zen
 {
+#ifdef ZEN_OPCODE_PROFILE
+    /* Per-opcode cycle profile (build with -DZEN_OPCODE_PROFILE). Every
+    ** dispatch charges the cycles since the previous one to the opcode that
+    ** just ran, so the table shows where the interpreter's time goes without
+    ** perf or valgrind. rdtsc adds a constant per dispatch, so compare
+    ** opcodes against each other, never against wall-clock. */
+    static uint64_t g_prof_cycles[256];
+    static uint64_t g_prof_count[256];
+    static int g_prof_prev = -1;
+    static uint64_t g_prof_t0 = 0;
+    static bool g_prof_registered = false;
+
+    static void zen_prof_dump()
+    {
+        int order[256];
+        int n = 0;
+        uint64_t total = 0;
+        for (int i = 0; i < 256; i++)
+        {
+            if (g_prof_count[i])
+            {
+                order[n++] = i;
+                total += g_prof_cycles[i];
+            }
+        }
+        for (int a = 1; a < n; a++) /* insertion sort by cycles, descending */
+        {
+            int key = order[a], b = a - 1;
+            while (b >= 0 && g_prof_cycles[order[b]] < g_prof_cycles[key])
+            {
+                order[b + 1] = order[b];
+                b--;
+            }
+            order[b + 1] = key;
+        }
+        fprintf(stderr, "\n%-18s %12s %14s %7s %8s\n", "opcode", "count", "cycles", "%", "avg");
+        for (int k = 0; k < n && k < 40; k++)
+        {
+            int i = order[k];
+            fprintf(stderr, "%-18s %12llu %14llu %6.1f%% %8.1f\n", opcode_name((OpCode)i),
+                    (unsigned long long)g_prof_count[i], (unsigned long long)g_prof_cycles[i],
+                    100.0 * (double)g_prof_cycles[i] / (double)(total ? total : 1),
+                    (double)g_prof_cycles[i] / (double)g_prof_count[i]);
+        }
+        uint64_t c = 0;
+        for (int i = 0; i < 256; i++)
+            c += g_prof_count[i];
+        fprintf(stderr, "total dispatches: %llu\n", (unsigned long long)c);
+    }
+
+    static inline void zen_prof_tick(int op)
+    {
+        uint64_t now = __rdtsc();
+        if (g_prof_prev >= 0)
+            g_prof_cycles[g_prof_prev] += now - g_prof_t0;
+        else if (!g_prof_registered)
+        {
+            g_prof_registered = true;
+            atexit(zen_prof_dump);
+        }
+        g_prof_count[op]++;
+        g_prof_prev = op;
+        g_prof_t0 = now;
+    }
+#endif
+
 
     static inline void copy_native_results(Value *dst, Value *src, int nret, int nresults)
     {
@@ -398,7 +469,16 @@ namespace zen
             &&lbl_OP_HALT,
         };
 
+#ifdef ZEN_OPCODE_PROFILE
+#define DISPATCH()                         \
+    do                                     \
+    {                                      \
+        zen_prof_tick(ZEN_OP(*ip));        \
+        goto *dispatch_table[ZEN_OP(*ip)]; \
+    } while (0)
+#else
 #define DISPATCH() goto *dispatch_table[ZEN_OP(*ip)]
+#endif
 #define CASE(op) lbl_##op:
 #define NEXT()      \
     do              \
