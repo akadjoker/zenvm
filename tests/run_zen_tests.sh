@@ -58,11 +58,23 @@ if [[ -f "$SKIP_FILE" ]]; then
     done < "$SKIP_FILE"
 fi
 
-# Normalisation: rstrip each line, drop trailing blank lines.
+# Normalisation, so a snapshot is comparable across machines and checkouts:
+#   - rstrip each line
+#   - rewrite the path inside File "..." to just the basename, since the
+#     snapshot may have been recorded from a different working directory
+#     (or on a different machine entirely)
+#   - mask timing values (seconds=..., or a bare high-precision float on
+#     its own line), which differ on every run and every machine
+#   - drop leading and trailing blank lines
 normalize() {
-    sed -E 's/[[:space:]]+$//' | awk '
-        { buf[NR] = $0; lastnonblank = ($0 == "" ? lastnonblank : NR) }
-        END { for (i = 1; i <= lastnonblank; i++) print buf[i] }
+    sed -E -e 's/[[:space:]]+$//' \
+           -e 's|File "[^"]*/([^"/]+)"|File "\1"|g' \
+           -e 's|, in [^ ]*/([^/ ]+)$|, in \1|' \
+           -e 's/(seconds|elapsed|time)=[0-9]+\.?[0-9]*(e[-+]?[0-9]+)?/\1=<T>/gI' \
+           -e 's/^[0-9]+\.[0-9]{4,}([eE][-+]?[0-9]+)?$/<T>/' | awk '
+        { buf[NR] = $0
+          if ($0 != "") { lastnonblank = NR; if (!firstnonblank) firstnonblank = NR } }
+        END { if (firstnonblank) for (i = firstnonblank; i <= lastnonblank; i++) print buf[i] }
     '
 }
 

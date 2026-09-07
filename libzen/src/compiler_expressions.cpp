@@ -2204,7 +2204,17 @@ namespace zen
             state_->next_reg = save_next > base + 1 ? save_next : base + 1;
             int result_reg = dest >= 0 ? dest : base;
             if (result_reg != base)
+            {
                 emit_move(result_reg, base);
+                /* The result moved down to dest, so the registers the invoke
+                ** used above it are free again. Release them: a call on this
+                ** result — m.get("f")(1, 2) — allocates its arguments from
+                ** next_reg and OP_CALL requires them directly above the
+                ** callee. Leaving next_reg above dest put the arguments one
+                ** slot too high and the callee read a stale register. */
+                if (result_reg < base && state_->next_reg > result_reg + 1)
+                    state_->next_reg = result_reg + 1;
+            }
 
             /* Propagate return type hint from vtable method if available */
             ObjClass *ret_class_hint = nullptr;
