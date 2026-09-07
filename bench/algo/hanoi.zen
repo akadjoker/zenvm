@@ -1,0 +1,109 @@
+// Towers of Hanoi and flood fill. Port of the zenpy algo_bench hanoi.py.
+var DISKS = 20;
+var W = 256;
+var H = 256;
+var N = W * H;
+var WALL_PCT = 35;
+var SEEDS = 60;
+
+var seed = 42;
+def rnd() {
+    seed = (seed * 16807) % 2147483647;
+    return seed;
+}
+
+class Pegs {
+    var moves;
+    var a;
+    var b;
+    var c;
+    def init() {
+        self.moves = 0;
+        self.a = 0;
+        self.b = 0;
+        self.c = 0;
+    }
+    def move(n, src, dst, tmp) {
+        if (n == 1) {
+            self.moves = self.moves + 1;
+            return;
+        }
+        self.move(n - 1, src, tmp, dst);
+        self.moves = self.moves + 1;
+        self.move(n - 1, tmp, dst, src);
+    }
+}
+
+def hanoi_plain(n, src, dst, tmp) {
+    if (n == 1) { return 1; }
+    return hanoi_plain(n - 1, src, tmp, dst) + 1 + hanoi_plain(n - 1, tmp, dst, src);
+}
+
+def run_hanoi() {
+    var p = Pegs();
+    p.move(DISKS, 0, 2, 1);
+    return p.moves + hanoi_plain(DISKS - 2, 0, 2, 1);
+}
+
+def make_grid() {
+    var cells = [];
+    for (var i = 0; i < N; i = i + 1) { cells.push(0); }
+    for (var i = 0; i < N; i = i + 1) {
+        if (rnd() % 100 < WALL_PCT) { cells[i] = 1; }
+    }
+    return cells;
+}
+
+def flood(cells, start, color) {
+    if (cells[start] != 0) { return 0; }
+    var stack = [start];
+    cells[start] = color;
+    var painted = 0;
+    while (stack.len() > 0) {
+        var cur = stack.pop();
+        painted = painted + 1;
+        var x = cur % W;
+        if (x > 0 && cells[cur - 1] == 0) {
+            cells[cur - 1] = color;
+            stack.push(cur - 1);
+        }
+        if (x < W - 1 && cells[cur + 1] == 0) {
+            cells[cur + 1] = color;
+            stack.push(cur + 1);
+        }
+        if (cur >= W && cells[cur - W] == 0) {
+            cells[cur - W] = color;
+            stack.push(cur - W);
+        }
+        if (cur < N - W && cells[cur + W] == 0) {
+            cells[cur + W] = color;
+            stack.push(cur + W);
+        }
+    }
+    return painted;
+}
+
+def run_flood() {
+    seed = 42;
+    var cells = make_grid();
+    var total = 0;
+    var regions = 0;
+    for (var s = 0; s < SEEDS; s = s + 1) {
+        var n = flood(cells, rnd() % N, 2 + s);
+        if (n > 0) {
+            regions = regions + 1;
+            total = total + n;
+        }
+    }
+    return total * 100 + regions;
+}
+
+var t0 = clock();
+var a = run_hanoi();
+var t1 = clock();
+var b = run_flood();
+var t2 = clock();
+print("hanoi checksum", a);
+print("floodfill checksum", b);
+print("hanoi", t1 - t0);
+print("floodfill", t2 - t1);
