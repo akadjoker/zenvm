@@ -580,6 +580,11 @@ namespace zen
             }
             parent_class = as_class(vm_->get_global(pidx));
             /* Copy parent field names into cfi */
+            if (parent_class->num_fields > 64)
+            {
+                error("Parent class has too many fields (max 64).");
+                return;
+            }
             for (int i = 0; i < parent_class->num_fields; i++)
             {
                 int flen = parent_class->field_names[i]->length;
@@ -615,6 +620,11 @@ namespace zen
                 {
                     consume(TOK_IDENTIFIER, "Expected static variable name.");
                     int slen = previous_.length < 63 ? previous_.length : 63;
+                    if (static_var_count >= 64)
+                    {
+                        error("Too many static variables in class (max 64).");
+                        return;
+                    }
                     memcpy(static_names[static_var_count], previous_.start, slen);
                     static_names[static_var_count][slen] = '\0';
                     Value sv = val_nil();
@@ -631,6 +641,11 @@ namespace zen
                 do
                 {
                     consume(TOK_IDENTIFIER, "Expected field name.");
+                    if (field_count >= 64 || cfi.count >= 64)
+                    {
+                        error("Too many fields in class (max 64, including inherited).");
+                        return;
+                    }
                     int flen = previous_.length < 63 ? previous_.length : 63;
                     memcpy(fields[field_count], previous_.start, flen);
                     fields[field_count][flen] = '\0';
@@ -1009,6 +1024,11 @@ namespace zen
         while (!check(TOK_RBRACE) && !check(TOK_EOF))
         {
             consume(TOK_IDENTIFIER, "Expected field name.");
+            if (field_count >= 64)
+            {
+                error("Too many fields in struct (max 64).");
+                return;
+            }
             int flen = previous_.length < 63 ? previous_.length : 63;
             memcpy(fields[field_count], previous_.start, flen);
             fields[field_count][flen] = '\0';
@@ -1362,7 +1382,7 @@ namespace zen
         scoped_body();
 
         /* Collect all "skip to end" jumps — one per if/elif branch */
-        int end_jumps[64];
+        int end_jumps[kMaxBranchJumps];
         int end_jump_count = 0;
         end_jumps[end_jump_count++] = state_->emitter.emit_jump(OP_JMP, 0, previous_.line);
         state_->emitter.patch_jump(then_jump);
@@ -1379,6 +1399,11 @@ namespace zen
 
             scoped_body();
 
+            if (end_jump_count >= kMaxBranchJumps)
+            {
+                error("Too many 'elif' branches in one chain (max 255).");
+                return;
+            }
             end_jumps[end_jump_count++] = state_->emitter.emit_jump(OP_JMP, 0, previous_.line);
             state_->emitter.patch_jump(elif_jump);
         }
@@ -2090,7 +2115,7 @@ namespace zen
         /* Case bodies allocate above the protected expression register. */
         int base_reg = expr_reg + 1;
 
-        int end_jumps[64];
+        int end_jumps[kMaxBranchJumps];
         int end_count = 0;
 
         while (match(TOK_CASE))
@@ -2117,8 +2142,12 @@ namespace zen
             end_scope();
 
             /* Jump to end of switch */
-            if (end_count < 64)
-                end_jumps[end_count++] = state_->emitter.emit_jump(OP_JMP, 0, previous_.line);
+            if (end_count >= kMaxBranchJumps)
+            {
+                error("Too many 'case' branches in one switch (max 255).");
+                return;
+            }
+            end_jumps[end_count++] = state_->emitter.emit_jump(OP_JMP, 0, previous_.line);
 
             state_->emitter.patch_jump(skip_jump);
         }

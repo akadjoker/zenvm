@@ -245,6 +245,8 @@ namespace zen
         const char *current_file_; /* path of file being compiled */
 
         /* Include file memory management */
+        /* if/elif chain: one "jump to end" per branch. */
+        static const int kMaxBranchJumps = 256;
         static const int MAX_INCLUDES = 64;
         static const int MAX_INCLUDE_DEPTH = 16;
         char *include_sources_[MAX_INCLUDES];

@@ -26,3 +26,5 @@
 
 # Third-party CHIP-8 ROM pack (bring your own)
 examples/chip8/roms/
+/build_asan/
+/bin/zen_asan
