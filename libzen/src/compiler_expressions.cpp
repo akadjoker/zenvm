@@ -1437,8 +1437,41 @@ namespace zen
             state_->emitter.emit_abc(opcode, reg, left, right, op.line);
         }
 
+        /* Peephole: `x + 1` loads the 1 into a register and then adds it.
+        ** OP_ADDI/OP_SUBI carry the constant in C as a signed byte, so drop
+        ** the LOADI when the right operand is a small integer literal that
+        ** was loaded into a temporary immediately before this instruction. */
+        bool folded_immediate = false;
+        if ((opcode == OP_ADD || opcode == OP_SUB) && !use_obj_op)
+        {
+            Emitter &e = state_->emitter;
+            int arith_off = e.current_offset() - 1;
+            if (arith_off >= 1)
+            {
+                Instruction load = e.instruction_at(arith_off - 1);
+                /* The word before the LOADI must not be the head of a 2-word
+                ** instruction, and the GETFIELD_MUL/SUB peepholes below want
+                ** to rewrite a plain GETFIELD_IDX + MUL/SUB pair — leave that
+                ** shape to them rather than folding half of it away. */
+                if (ZEN_OP(load) == OP_LOADI && ZEN_A(load) == right &&
+                    right != left && !is_local_reg(right))
+                {
+                    int imm = ZEN_SBX(load);
+                    if (imm >= -128 && imm <= 127)
+                    {
+                        int line = op.line;
+                        e.rewind_to(arith_off - 1);
+                        e.emit_abc(opcode == OP_ADD ? OP_ADDI : OP_SUBI,
+                                   reg, left, (uint8_t)(int8_t)imm, line);
+                        free_reg(right);
+                        folded_immediate = true;
+                    }
+                }
+            }
+        }
+
         /* Peephole: fuse GETFIELD_IDX + MUL → OP_GETFIELD_MUL (2-word) */
-        if (opcode == OP_MUL)
+        if (opcode == OP_MUL && !folded_immediate)
         {
             int mul_off = state_->emitter.current_offset() - 1;
             if (mul_off >= 1)
@@ -1456,7 +1489,7 @@ namespace zen
         }
 
         /* Peephole: fuse GETFIELD_IDX + SUB → OP_GETFIELD_SUB (2-word) */
-        if (opcode == OP_SUB)
+        if (opcode == OP_SUB && !folded_immediate)
         {
             int sub_off = state_->emitter.current_offset() - 1;
             if (sub_off >= 1)
