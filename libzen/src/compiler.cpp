@@ -615,6 +615,99 @@ namespace zen
         state_->next_reg = reg;
     }
 
+    /* =========================================================
+    ** Branch on a condition, fusing the comparison when possible.
+    **
+    ** `while (i < n)` normally compiles to LT into a temporary, then
+    ** JMPIFNOT on that temporary: two instructions and a register that
+    ** exists only to be tested once. OP_LTJMPIFNOT/OP_LEJMPIFNOT do both
+    ** in one 2-word instruction and never materialise the boolean.
+    **
+    ** Only safe when the comparison is the instruction we just emitted and
+    ** its result register is a temporary: if it is a named local, something
+    ** else may read it later.
+    ** ========================================================= */
+    int Compiler::emit_cond_false_jump(int cond_reg, int line, bool &fused)
+    {
+        Emitter &e = state_->emitter;
+        int off = e.current_offset() - 1;
+        fused = false;
+
+        if (off >= 0 && !is_local_reg(cond_reg))
+        {
+            Instruction ins = e.instruction_at(off);
+            OpCode op = (OpCode)ZEN_OP(ins);
+            if ((op == OP_LT || op == OP_LE) && ZEN_A(ins) == cond_reg)
+            {
+                int b = ZEN_B(ins), c = ZEN_C(ins);
+                /* The operands must outlive the comparison we are deleting.
+                ** A temporary above the condition register was produced by
+                ** the comparison's own operand evaluation and is still live
+                ** here, so both reads stay valid. */
+                e.rewind_to(off);
+                fused = true;
+                free_reg(cond_reg);
+                return op == OP_LT ? e.emit_lt_jmpifnot(b, c, line)
+                                   : e.emit_le_jmpifnot(b, c, line);
+            }
+        }
+
+        int j = e.emit_jump(OP_JMPIFNOT, cond_reg, line);
+        free_reg(cond_reg);
+        return j;
+    }
+
+    /* =========================================================
+    ** `s = s + i` compiles the addition into a temporary and then moves it
+    ** to the local, because the right-hand side may read the local being
+    ** assigned. But when the value came from a single instruction that
+    ** writes its result to A and has already read its operands, pointing
+    ** that instruction at the local is equivalent and drops the MOVE.
+    **
+    ** Restricted to one-word arithmetic/logic opcodes whose only effect is
+    ** R[A] = f(R[B], R[C]): anything with a second word, a jump, a call, or
+    ** a side effect is left alone. The instruction must also be the last
+    ** one emitted, so nothing has read the temporary in between.
+    ** ========================================================= */
+    static bool is_retargetable_producer(OpCode op)
+    {
+        switch (op)
+        {
+        case OP_ADD: case OP_SUB: case OP_MUL: case OP_DIV:
+        case OP_MOD: case OP_IDIV: case OP_POW:
+        case OP_ADDI: case OP_SUBI:
+        case OP_BAND: case OP_BOR: case OP_BXOR: case OP_SHL: case OP_SHR:
+        case OP_LT: case OP_LE: case OP_EQ:
+        case OP_NEG: case OP_NOT: case OP_BNOT:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    bool Compiler::retarget_last_producer(int src, int dest)
+    {
+        if (src == dest || is_local_reg(src))
+            return false;
+        Emitter &e = state_->emitter;
+        int off = e.current_offset() - 1;
+        if (off < 0)
+            return false;
+        Instruction ins = e.instruction_at(off);
+        if (!is_retargetable_producer((OpCode)ZEN_OP(ins)) || ZEN_A(ins) != src)
+            return false;
+        e.rewrite_a_at(off, dest);
+        return true;
+    }
+
+    void Compiler::patch_cond_jump(int offset, bool fused)
+    {
+        if (fused)
+            state_->emitter.patch_fused_jump(offset);
+        else
+            state_->emitter.patch_jump(offset);
+    }
+
     bool Compiler::is_local_reg(int reg)
     {
         for (int i = 0; i < state_->local_count; i++)

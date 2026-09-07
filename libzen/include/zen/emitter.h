@@ -87,6 +87,12 @@ namespace zen
         {
             func_->code[offset] = (func_->code[offset] & 0x00FFFFFF) | ((uint32_t)new_op << 24);
         }
+        /* Retarget the destination register of an ABC instruction. */
+        void rewrite_a_at(int offset, int a)
+        {
+            func_->code[offset] = (func_->code[offset] & 0xFF00FFFF) | ((uint32_t)(a & 0xFF) << 16);
+        }
+        int line_at(int offset) const { return func_->lines ? func_->lines[offset] : last_line_; }
 
         /* Error from escape processing */
         bool has_escape_error() const { return escape_error_[0] != '\0'; }

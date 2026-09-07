@@ -821,7 +821,13 @@ namespace zen
                     int rhs = expression(-1);
                     if (rhs != local_reg)
                     {
-                        emit_move(local_reg, rhs);
+                        /* If the value came straight out of an arithmetic
+                        ** instruction, point that instruction at the local
+                        ** instead of copying afterwards. It has already read
+                        ** its operands, so writing to the local is safe even
+                        ** when the local was one of them (`s = s + i`). */
+                        if (!retarget_last_producer(rhs, local_reg))
+                            emit_move(local_reg, rhs);
                     }
                     /* Restore next_reg — we don't want to permanently consume
                        a temp register (if rhs was a temp) or accidentally free

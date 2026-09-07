@@ -1439,14 +1439,14 @@ namespace zen
         int cond_reg = expression(-1);
         consume(TOK_RPAREN, "Expected ')' after condition.");
 
-        int exit_jump = state_->emitter.emit_jump(OP_JMPIFNOT, cond_reg, previous_.line);
-        free_reg(cond_reg);
+        bool cond_fused = false;
+        int exit_jump = emit_cond_false_jump(cond_reg, previous_.line, cond_fused);
 
         scoped_body();
 
         /* Loop back */
         state_->emitter.emit_loop(loop_start, 0, previous_.line);
-        state_->emitter.patch_jump(exit_jump);
+        patch_cond_jump(exit_jump, cond_fused);
 
         /* Patch breaks */
         for (int i = 0; i < loop.break_count; i++)
