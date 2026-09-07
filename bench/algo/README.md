@@ -17,33 +17,40 @@ seguir aos tempos.
 
 ## Resultados (2026-09-07, mesma máquina, melhor de 3)
 
+Depois do branch `perf/compiler-codegen` (fusão comparação+salto, retarget
+da aritmética, imediatos `ADDI`/`SUBI`):
+
 | segundos | astar | dijkstra | quadtree | octree | hanoi | floodfill |
 |---|---:|---:|---:|---:|---:|---:|
-| **zen** | 0.044 | 0.166 | **0.043** | **0.064** | 0.057 | 0.011 |
-| Lua 5.4 | **0.042** | **0.160** | 0.057 | 0.077 | 0.066 | **0.009** |
-| Wren 0.4 | 0.062 | 0.342 | 0.071 | 0.102 | 0.075 | 0.020 |
-| zenpy | 0.056 | 0.184 | 0.051 | 0.067 | **0.055** | 0.011 |
-| CPython 3 | 0.070 | 0.254 | 0.074 | 0.109 | 0.092 | 0.027 |
+| **zen** | **0.042** | **0.155** | **0.041** | **0.060** | **0.051** | 0.010 |
+| Lua 5.4 | 0.042 | 0.160 | 0.054 | 0.076 | 0.066 | **0.009** |
+| Wren 0.4 | 0.062 | 0.339 | 0.071 | 0.101 | 0.074 | 0.020 |
+| zenpy | 0.056 | 0.183 | 0.052 | 0.068 | 0.055 | 0.011 |
+| CPython 3 | 0.069 | 0.252 | 0.074 | 0.111 | 0.091 | 0.027 |
 
 Checksums iguais nas cinco linguagens em todas as fases: astar/dijkstra
 3527039, quadtree 155484, octree 79081, hanoi 1310718, floodfill 4010601.
 
+Antes do branch, para comparar (o que mudou foi só o compilador, o VM está
+igual):
+
+| segundos | astar | dijkstra | quadtree | octree | hanoi | floodfill |
+|---|---:|---:|---:|---:|---:|---:|
+| zen (antes) | 0.043 | 0.166 | 0.042 | 0.062 | 0.057 | 0.011 |
+
 ## Leitura
 
-- **O zen está ao nível do Lua.** Ganha nas árvores (quadtree 0.043 vs
-  0.057, octree 0.064 vs 0.077 — 25 a 30% mais rápido), perde por pouco no
-  pathfinding e no flood fill. Não há aqui uma linguagem lenta e outra
-  rápida: são a mesma classe.
-- **Ganha ao Wren em tudo**, com margem grande no Dijkstra (0.166 vs 0.342,
-  mais do dobro).
-- **Onde o zen ganha é onde há objectos e métodos**: quadtree e octree são
-  `Quad`/`Oct` com campos e chamadas de método recursivas. As vtables planas
-  com selectores internados e o `OP_INVOKE_VT` pagam-se aqui. Onde perde é
-  em ciclos apertados sobre arrays (o heap binário do pathfinding), onde o
-  Lua tem anos de afinação.
-- **Contra o zenpy** o zen ganha no pathfinding e nas árvores, empata em
-  Hanói e flood fill. Consistente com os micro-benchmarks: o zenpy paga
-  semântica de Python que o zen não tem.
+- **O zen ganha ou empata com o Lua em todas as fases.** Nas árvores a
+  margem é grande (quadtree 0.041 vs 0.054, octree 0.060 vs 0.076, 24 a 27%),
+  no pathfinding e no Hanói passou de perder para ganhar por pouco. Só o
+  flood fill continua marginalmente para o Lua (0.010 vs 0.009).
+- **Ganha ao Wren em tudo**, com mais do dobro no Dijkstra.
+- **Onde ganha mais é onde há objectos e métodos**: quadtree e octree são
+  `Quad`/`Oct` com campos e chamadas recursivas. As vtables planas com
+  selectores internados e o `OP_INVOKE_VT` pagam-se aqui.
+- **Contra o zenpy**, que é o mesmo VM com outro compilador, o zen está
+  agora à frente em tudo. As três optimizações do branch vieram de lá; o
+  zenvm ficou com elas mais o `FORPREP`/`FORLOOP` que o zenpy não tem.
 
 ## Notas de porte
 
