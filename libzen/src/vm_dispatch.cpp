@@ -1574,20 +1574,14 @@ namespace zen
             int field = ZEN_C(i);
             ProcessSlot *target = nullptr;
 
+            /* current_slot() is O(1): the scheduler records the running
+            ** slot index. find_slot() is a linear scan over the pool, so
+            ** only father/son (which need another process) pay for it. */
+            ProcessSlot *self = current_slot();
             if (mode == 0) /* self */
-            {
-                target = find_slot(current_process_id_);
-            }
-            else if (mode == 1) /* father */
-            {
-                ProcessSlot *self = find_slot(current_process_id_);
-                if (self) target = find_slot(self->parent_id);
-            }
-            else /* son */
-            {
-                ProcessSlot *self = find_slot(current_process_id_);
-                if (self) target = find_slot(self->last_child_id);
-            }
+                target = self;
+            else if (self) /* father / son */
+                target = find_slot(mode == 1 ? self->parent_id : self->last_child_id);
 
             if (target && field < MAX_PRIVATES)
                 R[a] = target->privates[field];
@@ -1606,20 +1600,14 @@ namespace zen
             int field = ZEN_C(i);
             ProcessSlot *target = nullptr;
 
+            /* current_slot() is O(1): the scheduler records the running
+            ** slot index. find_slot() is a linear scan over the pool, so
+            ** only father/son (which need another process) pay for it. */
+            ProcessSlot *self = current_slot();
             if (mode == 0) /* self */
-            {
-                target = find_slot(current_process_id_);
-            }
-            else if (mode == 1) /* father */
-            {
-                ProcessSlot *self = find_slot(current_process_id_);
-                if (self) target = find_slot(self->parent_id);
-            }
-            else /* son */
-            {
-                ProcessSlot *self = find_slot(current_process_id_);
-                if (self) target = find_slot(self->last_child_id);
-            }
+                target = self;
+            else if (self) /* father / son */
+                target = find_slot(mode == 1 ? self->parent_id : self->last_child_id);
 
             if (target && field < MAX_PRIVATES)
                 target->privates[field] = R[a];
