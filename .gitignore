@@ -28,3 +28,6 @@
 examples/chip8/roms/
 /build_asan/
 /bin/zen_asan
+/build_prof/
+/build_pgo/
+/build_pgo2/
