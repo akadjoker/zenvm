@@ -1,0 +1,5 @@
+def hp(n, a, b, c):
+    if n == 1:
+        return 1
+    return hp(n - 1, a, c, b) + 1 + hp(n - 1, c, b, a)
+print(hp(21, 0, 2, 1))
