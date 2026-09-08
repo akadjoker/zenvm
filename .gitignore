@@ -28,3 +28,4 @@
 /bin/zen-asan
 /build-win
 /zen_tmp_*
+/bin/fuzz_zen
