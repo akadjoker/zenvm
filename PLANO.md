@@ -137,6 +137,34 @@ argumento. O zenvm tem 14 módulos nativos escritos à mão — é onde poupa ma
 
 ---
 
+## Fundir instruções baratas não rende (medido 2026-09-08)
+
+Tentativa: `OP_MOVE2`, duas cópias de registo num dispatch. Os MOVE de
+preparação de argumentos são 25% do hanoi e 15% do pathfind, e aparecem em
+blocos de 2-3 — parecia o alvo óbvio.
+
+Implementado, correcto (suite 59/0, checksums iguais), e **executado 8.4M
+vezes** num hanoi(23) recursivo, substituindo metade dos MOVE. Ganho:
+**zero**, em todas as benchmarks.
+
+O profiler explica: MOVE custa 19.9 ciclos/dispatch, MOVE2 custa 19.6 —
+praticamente o mesmo, apesar de fazer o dobro do trabalho. Antes: 16.8M
+dispatches a ~19.9. Depois: 8.4M + 8.4M a ~19.8. A soma não muda.
+
+**O custo é o dispatch, não o trabalho da instrução.** É a mesma conclusão
+do PERF_GAP_ZENVM.md ("o custo é por dispatch"), agora com um contra-exemplo
+que a confirma pelo lado negativo. Revertido — não vale um opcode, um
+caminho no compilador e uma regra de segurança a troco de nada.
+
+O que daqui se tira, para não repetir:
+- **Fundir duas instruções baratas não poupa nada.** Só compensa quando o
+  ciclo é curto e a instrução removida é uma fracção grande do total (a
+  fusão do `if` deu -18% por isso), ou quando se remove *trabalho* real
+  (varredura, alocação, memcmp), não um dispatch.
+- Antes de implementar uma fusão, estimar: quantas instruções tem o ciclo
+  quente? Se são dez, tirar uma vale 10% no melhor caso, e só se o resto
+  não mudar.
+
 ## O método que funcionou hoje, para repetir
 
 Falhei três hipóteses antes de encontrar o `Value` de 24 bytes. Achei que era
