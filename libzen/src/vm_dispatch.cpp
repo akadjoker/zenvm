@@ -466,8 +466,23 @@ namespace zen
             &&lbl_OP_GETSLICE,
             &&lbl_OP_IS,
             &&lbl_OP_TAILCALL,
+            &&lbl_OP_RETURNNIL,
+            &&lbl_OP_JMPIFNIL,
+            &&lbl_OP_LTIJMPIFNOT,
+            &&lbl_OP_GTIJMPIFNOT,
+            &&lbl_OP_EQJMPIFNOT,
+            &&lbl_OP_NEJMPIFNOT,
+            &&lbl_OP_INVOKE_VT_FAST,
             &&lbl_OP_HALT,
         };
+
+        /* Indexed by OpCode, like s_opnames in debug.cpp. An opcode added to
+        ** the enum without a slot here shifts every later entry, so dispatch
+        ** silently jumps to the wrong handler — no crash at the edit, just a
+        ** VM that runs the wrong instruction. s_opnames had this guard and
+        ** caught the same mistake; this table did not. */
+        static_assert(sizeof(dispatch_table) / sizeof(dispatch_table[0]) == (size_t)OP_HALT + 1,
+                      "dispatch_table is out of sync with the OpCode enum");
 
 #ifdef ZEN_OPCODE_PROFILE
 #define DISPATCH()                         \
@@ -1483,6 +1498,64 @@ namespace zen
             RT_ERROR("attempt to call non-function (got %s)", val_type_str(callee));
         }
 
+        CASE(OP_RETURNNIL)
+        {
+            /* `return` with no value, and the implicit return the compiler
+            ** appends to every function. The returned value is the nil
+            ** constant, so the general OP_RETURN work — reading R[a],
+            ** counting results, nil-filling — is all known in advance.
+            ** Falls through to OP_RETURN's path for the cases that are not
+            ** a plain script-to-script return. */
+            if (fiber->open_upvalues && fiber->open_upvalues->location >= frame->base)
+                close_upvalues(fiber, frame->base);
+
+            if (__builtin_expect(fiber->frame_count > 1 && frame->ret_count == 1 &&
+                                     external_call_stop_depth_ < 0, 1))
+            {
+                int ret_reg = frame->ret_reg;
+                fiber->frame_count--;
+                CallFrame *caller_frame = &fiber->frames[fiber->frame_count - 1];
+                caller_frame->base[ret_reg] = val_nil();
+                fiber->stack_top = caller_frame->base + caller_frame->func->num_regs;
+                LOAD_STATE();
+                DISPATCH();
+            }
+
+            /* Anything else — top-level return, a native waiting at a stop
+            ** depth, a multi-value caller — takes the general path below.
+            ** Upvalues are already closed, so this repeats only the result
+            ** handling, with the returned value known to be nil. */
+            {
+                int ret_reg = frame->ret_reg;
+                int ret_count = frame->ret_count;
+                fiber->frame_count--;
+                if (fiber->frame_count == 0)
+                {
+                    fiber->state = FIBER_DONE;
+                    if (fiber->caller)
+                    {
+                        fiber->caller->transfer_value = val_nil();
+                        fiber->caller->state = FIBER_RUNNING;
+                        current_fiber_ = fiber->caller;
+                    }
+                    return;
+                }
+                CallFrame *caller_frame = &fiber->frames[fiber->frame_count - 1];
+                Value *caller_base = caller_frame->base;
+                /* One value produced (nil); nil-fill whatever else was asked for. */
+                for (int j = 0; j < ret_count; j++)
+                    caller_base[ret_reg + j] = val_nil();
+                fiber->stack_top = caller_base + caller_frame->func->num_regs;
+                if (external_call_stop_depth_ >= 0 &&
+                    fiber->frame_count <= external_call_stop_depth_)
+                {
+                    return;
+                }
+                LOAD_STATE();
+                DISPATCH();
+            }
+        }
+
         CASE(OP_RETURN)
         {
             uint32_t i = *ip;
@@ -2397,6 +2470,43 @@ namespace zen
             NEXT();
         }
 
+        CASE(OP_INVOKE_VT_FAST)
+        {
+            /* The compiler proved the receiver is an annotated instance, the
+            ** slot holds a script closure in its sealed vtable, and the
+            ** signature takes exactly arg_count values — so OP_INVOKE_VT's
+            ** type test, slot range check and closure/native branch are all
+            ** already decided. Only the frame push remains.
+            **
+            ** The guarantee is the compiler's: emit this ONLY where all
+            ** three hold, or the as_instance()/as_closure() below are the
+            ** same unchecked casts that made the fused opcodes segfault. */
+            uint32_t i = *ip;
+            uint8_t base = ZEN_A(i);
+            uint8_t arg_count = ZEN_B(i);
+            uint8_t slot = ZEN_C(i);
+            (void)arg_count;
+            ObjInstance *inst = as_instance(R[base]);
+            ObjClosure *cl = as_closure(inst->klass->vtable[slot]);
+            ObjFunc *fn = cl->func;
+            if (fiber->frame_count >= kMaxFrames)
+            {
+                RT_ERROR("stack overflow");
+            }
+            ++ip;
+            SAVE_IP();
+            CallFrame *new_frame = &fiber->frames[fiber->frame_count++];
+            new_frame->closure = cl;
+            new_frame->func = fn;
+            new_frame->ip = fn->code;
+            new_frame->base = &R[base]; /* base[0]=self, base[1..]=args */
+            new_frame->ret_reg = base;
+            new_frame->ret_count = 1;
+            fiber->stack_top = new_frame->base + fn->num_regs;
+            LOAD_STATE();
+            DISPATCH();
+        }
+
         CASE(OP_SUPER_INVOKE)
         {
             /* 3-word: word1=[OP|base|argc|0], word2=(sel<<16|name_ki), word3=parent_ki */
@@ -2844,6 +2954,118 @@ namespace zen
                 le = to_number(vb) <= to_number(vc);
             ++ip; /* advance to the sBx word */
             if (!le)
+                ip += ZEN_SBX(*ip);
+            NEXT();
+        }
+
+        /* --- Ported from zenpy (PLANO.md item 1) ---
+        ** Same shape as OP_LTJMPIFNOT/OP_LEJMPIFNOT above: compare, step to
+        ** the sBx word, jump when the condition does not hold. */
+
+        CASE(OP_EQJMPIFNOT)
+        {
+            uint32_t i = *ip;
+            Value vb = R[ZEN_B(i)], vc = R[ZEN_C(i)];
+            bool eq;
+            if (__builtin_expect(is_instance(vb) || is_instance(vc), 0))
+            {
+                ++ip; /* operator overload may re-enter; be at the sBx word */
+                Value result;
+                SAVE_IP();
+                if (try_binary_operator(this, vb, vc, SLOT_EQ, SLOT_EQ, &result))
+                {
+                    if (had_error_) return;
+                    LOAD_STATE();
+                    eq = is_truthy(result);
+                }
+                else
+                {
+                    LOAD_STATE();
+                    eq = values_equal(vb, vc);
+                }
+                if (!eq)
+                    ip += ZEN_SBX(*ip);
+                NEXT();
+            }
+            eq = values_equal(vb, vc);
+            ++ip;
+            if (!eq)
+                ip += ZEN_SBX(*ip);
+            NEXT();
+        }
+
+        CASE(OP_NEJMPIFNOT)
+        {
+            uint32_t i = *ip;
+            Value vb = R[ZEN_B(i)], vc = R[ZEN_C(i)];
+            bool ne;
+            if (__builtin_expect(is_instance(vb) || is_instance(vc), 0))
+            {
+                ++ip;
+                Value result;
+                SAVE_IP();
+                if (try_binary_operator(this, vb, vc, SLOT_EQ, SLOT_EQ, &result))
+                {
+                    if (had_error_) return;
+                    LOAD_STATE();
+                    ne = !is_truthy(result);
+                }
+                else
+                {
+                    LOAD_STATE();
+                    ne = !values_equal(vb, vc);
+                }
+                if (!ne)
+                    ip += ZEN_SBX(*ip);
+                NEXT();
+            }
+            ne = !values_equal(vb, vc);
+            ++ip;
+            if (!ne)
+                ip += ZEN_SBX(*ip);
+            NEXT();
+        }
+
+        /* C is a signed 8-bit immediate, so `i < 10` needs no register for
+        ** the literal and no constant load before the compare. */
+        CASE(OP_LTIJMPIFNOT)
+        {
+            uint32_t i = *ip;
+            Value vx = R[ZEN_B(i)];
+            int64_t imm = (int8_t)ZEN_C(i);
+            bool less;
+            if (__builtin_expect(vx.type == VAL_INT, 1))
+                less = vx.as.integer < imm;
+            else
+                less = to_number(vx) < (double)imm;
+            ++ip;
+            if (!less)
+                ip += ZEN_SBX(*ip);
+            NEXT();
+        }
+
+        CASE(OP_GTIJMPIFNOT)
+        {
+            uint32_t i = *ip;
+            Value vx = R[ZEN_B(i)];
+            int64_t imm = (int8_t)ZEN_C(i);
+            bool greater;
+            if (__builtin_expect(vx.type == VAL_INT, 1))
+                greater = vx.as.integer > imm;
+            else
+                greater = to_number(vx) > (double)imm;
+            ++ip;
+            if (!greater)
+                ip += ZEN_SBX(*ip);
+            NEXT();
+        }
+
+        CASE(OP_JMPIFNIL)
+        {
+            uint32_t i = *ip;
+            bool isnil = is_nil(R[ZEN_A(i)]);
+            ++ip;
+            if (isnil)
                 ip += ZEN_SBX(*ip);
             NEXT();
         }

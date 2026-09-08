@@ -109,6 +109,13 @@ namespace zen
         "GETSLICE",
         "IS",
         "TAILCALL",
+        "RETURNNIL",
+        "JMPIFNIL",
+        "LTIJMPIFNOT",
+        "GTIJMPIFNOT",
+        "EQJMPIFNOT",
+        "NEJMPIFNOT",
+        "INVOKE_VT_FAST",
         "HALT",
     };
 
