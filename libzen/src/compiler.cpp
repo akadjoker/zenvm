@@ -633,7 +633,14 @@ namespace zen
         int off = e.current_offset() - 1;
         fused = false;
 
-        if (off >= 0 && !is_local_reg(cond_reg))
+        /* A jump patched to land exactly here — the short-circuit JMPIF of
+        ** `a() || b < c`, or the equivalent for && — expects the branch to
+        ** start at this offset. Fusing replaces the comparison with a 2-word
+        ** instruction, so the branch word moves and that jump would land on
+        ** the sBx word instead of an opcode. Leave those alone. */
+        bool targeted = e.last_patched_target() >= e.current_offset();
+
+        if (off >= 0 && !targeted && !is_local_reg(cond_reg))
         {
             Instruction ins = e.instruction_at(off);
             OpCode op = (OpCode)ZEN_OP(ins);

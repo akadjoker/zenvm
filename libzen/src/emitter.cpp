@@ -346,6 +346,8 @@ namespace zen
     void Emitter::patch_jump(int offset)
     {
         /* Calcula distância: de (offset+1) até current */
+        if (func_->code_count > last_patched_target_)
+            last_patched_target_ = func_->code_count;
         int jump = func_->code_count - (offset + 1);
         uint32_t instr = func_->code[offset];
         uint8_t op = ZEN_OP(instr);
@@ -355,6 +357,8 @@ namespace zen
 
     void Emitter::patch_jump_to(int offset, int target)
     {
+        if (target > last_patched_target_)
+            last_patched_target_ = target;
         int jump = target - (offset + 1);
         uint32_t instr = func_->code[offset];
         uint8_t op = ZEN_OP(instr);

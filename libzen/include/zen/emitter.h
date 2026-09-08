@@ -56,6 +56,17 @@ namespace zen
         /* --- Jumps (backpatching) --- */
         int emit_jump(OpCode op, int a, int line);      /* retorna offset do hole */
         void patch_jump(int offset);                    /* preenche com distância actual */
+
+        /* Highest offset any backpatched jump now targets.
+        **
+        ** A fused compare-and-branch deletes the comparison and emits a
+        ** 2-word instruction in its place, which moves the branch one word
+        ** later. That is invisible to a jump already patched to land on it —
+        ** `a() || b < c` patches the short-circuit JMPIF to the branch, and
+        ** after fusing that target is the *second* word of the fused
+        ** instruction, so the jump lands mid-instruction. Fusion checks this
+        ** and declines when anything already points at the current offset. */
+        int last_patched_target() const { return last_patched_target_; }
         void patch_jump_to(int offset, int target);     /* preenche com destino explícito */
         int emit_loop(int loop_start, int a, int line); /* jump para trás */
 
@@ -64,6 +75,9 @@ namespace zen
         int emit_le_jmpifnot(int b, int c, int line);
         int emit_cmp_jmpifnot(OpCode op, int b, int c, int line);
         void patch_fused_jump(int sbx_offset); /* patch the sBx word */
+    private:
+        int last_patched_target_ = -1;
+    public:
 
         /* --- Fused global call (2-word: CALLGLOBAL + global_idx) --- */
         void emit_callglobal(int a, int nargs, int nresults, int global_idx, int line);

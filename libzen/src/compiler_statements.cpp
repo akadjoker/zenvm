@@ -1371,9 +1371,11 @@ namespace zen
         int cond_reg = expression(-1);
         consume(TOK_RPAREN, "Expected ')' after condition.");
 
-        /* Jump over 'then' body if false */
-        int then_jump = state_->emitter.emit_jump(OP_JMPIFNOT, cond_reg, previous_.line);
-        free_reg(cond_reg);
+        /* Jump over 'then' body if false. Fuses the comparison into the
+        ** branch when it is the instruction just emitted and nothing already
+        ** jumps here — the same win while() has had. */
+        bool then_fused = false;
+        int then_jump = emit_cond_false_jump(cond_reg, previous_.line, then_fused);
 
         /* Then body */
         scoped_body();
@@ -1382,7 +1384,7 @@ namespace zen
         int end_jumps[kMaxBranchJumps];
         int end_jump_count = 0;
         end_jumps[end_jump_count++] = state_->emitter.emit_jump(OP_JMP, 0, previous_.line);
-        state_->emitter.patch_jump(then_jump);
+        patch_cond_jump(then_jump, then_fused);
 
         /* elif chain */
         while (match(TOK_ELIF))
@@ -1391,8 +1393,8 @@ namespace zen
             cond_reg = expression(-1);
             consume(TOK_RPAREN, "Expected ')' after elif condition.");
 
-            int elif_jump = state_->emitter.emit_jump(OP_JMPIFNOT, cond_reg, previous_.line);
-            free_reg(cond_reg);
+            bool elif_fused = false;
+            int elif_jump = emit_cond_false_jump(cond_reg, previous_.line, elif_fused);
 
             scoped_body();
 
@@ -1402,7 +1404,7 @@ namespace zen
                 return;
             }
             end_jumps[end_jump_count++] = state_->emitter.emit_jump(OP_JMP, 0, previous_.line);
-            state_->emitter.patch_jump(elif_jump);
+            patch_cond_jump(elif_jump, elif_fused);
         }
 
         /* else */
