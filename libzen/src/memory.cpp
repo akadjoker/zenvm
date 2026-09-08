@@ -21,8 +21,13 @@ namespace zen
 #ifdef ZEN_ARENA_BYPASS
     void *zen_alloc(GC *gc, size_t size)
     {
+#ifdef ZEN_DEBUG_STRESS_GC
+        if (gc->pause_depth == 0 && gc->vm)
+            gc_collect((VM *)gc->vm);
+#else
         if (gc->pause_depth == 0 && gc->vm && gc->bytes_allocated > gc->next_gc)
             gc_collect((VM *)gc->vm);
+#endif
         gc->bytes_allocated += size;
         return malloc(size);
     }
@@ -33,8 +38,13 @@ namespace zen
     }
     void *zen_realloc(GC *gc, void *ptr, size_t old_size, size_t new_size)
     {
+#ifdef ZEN_DEBUG_STRESS_GC
+        if (gc->pause_depth == 0 && gc->vm)
+            gc_collect((VM *)gc->vm);
+#else
         if (gc->pause_depth == 0 && gc->vm && gc->bytes_allocated > gc->next_gc)
             gc_collect((VM *)gc->vm);
+#endif
         gc->bytes_allocated += (new_size > old_size) ? (new_size - old_size) : 0;
         gc->bytes_allocated -= (old_size > new_size) ? (old_size - new_size) : 0;
         return realloc(ptr, new_size);
@@ -48,8 +58,13 @@ namespace zen
     void *zen_alloc(GC *gc, size_t size)
     {
         /* Trigger GC BEFORE allocation (so new objects won't be swept) */
+#ifdef ZEN_DEBUG_STRESS_GC
+        if (gc->pause_depth == 0 && gc->vm)
+            gc_collect((VM *)gc->vm);
+#else
         if (gc->pause_depth == 0 && gc->vm && gc->bytes_allocated > gc->next_gc)
             gc_collect((VM *)gc->vm);
+#endif
         gc->bytes_allocated += size;
         return arena_alloc(&gc->arena, size);
     }
@@ -61,8 +76,13 @@ namespace zen
 
     void *zen_realloc(GC *gc, void *ptr, size_t old_size, size_t new_size)
     {
+#ifdef ZEN_DEBUG_STRESS_GC
+        if (gc->pause_depth == 0 && gc->vm)
+            gc_collect((VM *)gc->vm);
+#else
         if (gc->pause_depth == 0 && gc->vm && gc->bytes_allocated > gc->next_gc)
             gc_collect((VM *)gc->vm);
+#endif
         gc->bytes_allocated += (new_size > old_size) ? (new_size - old_size) : 0;
         gc->bytes_allocated -= (old_size > new_size) ? (old_size - new_size) : 0;
         return arena_realloc(&gc->arena, ptr, old_size, new_size);

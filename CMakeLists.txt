@@ -132,6 +132,10 @@ elseif(EXISTS "${CMAKE_SOURCE_DIR}/test_class_api/CMakeLists.txt")
     add_subdirectory(test_class_api)
 endif()
 
+# --- Fuzzer (requires clang + -DZEN_BUILD_FUZZ=ON) ---
+option(ZEN_BUILD_FUZZ "Build libFuzzer harness" OFF)
+add_subdirectory(tests/fuzz)
+
 # --- Visual benchmark (raylib, process system) ---
 option(ZEN_BUILD_VISUAL "Build visual benchmark (requires raylib)" ON)
 option(ZEN_BUILD_GFX "Build graphics engine prototype (requires raylib)" ON)
