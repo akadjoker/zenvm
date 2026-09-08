@@ -2,6 +2,11 @@
 /build/
 /build-rel
 /build-malloc
+# Catch-all: build dirs are named per experiment (build-switch, build-prof,
+# build-p3, ...) and listing them one by one meant each new one showed up as
+# untracked until someone noticed.
+/build-*/
+/build_*/
 /test_collections
 /zen
 /zen_bench
