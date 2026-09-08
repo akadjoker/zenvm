@@ -1,58 +1,37 @@
-# zen — Makefile
-# g++ -std=c++11, all .cpp in src/
+# zen — convenience wrapper around the CMake build.
+#
+# CMake is the real build: it owns the optional modules (regex, zip, net,
+# http, crypto, json, utf8), the vendored C/C++ libraries (libregexp, miniz,
+# tinyxml2) and their per-target defines. This file used to be a second,
+# hand-maintained build over a src/ directory that stopped existing when the
+# sources moved to libzen/src/ — `make` failed on a fresh clone. Rather than
+# duplicate the CMake logic and let it rot again, these targets shell out.
 
-CXX      = g++
-CXXFLAGS = -std=c++11 -O2 -Wall -Wextra -Wno-unused-parameter
-SRCDIR   = src
-BUILDDIR = build
-TARGET   = zen
+BUILD_DIR ?= build
+BUILD_TYPE ?= Release
+JOBS ?= $(shell nproc 2>/dev/null || echo 4)
 
-# Core sources: everything except test_*.cpp and main entry points
-CORE_SRCS = $(filter-out $(SRCDIR)/test_%.cpp $(SRCDIR)/main.cpp $(SRCDIR)/zen_main.cpp, $(wildcard $(SRCDIR)/*.cpp))
-CORE_OBJS = $(patsubst $(SRCDIR)/%.cpp,$(BUILDDIR)/%.o,$(CORE_SRCS))
+.PHONY: all release debug clean test bench run
 
-# CLI binary (zen_main.cpp)
-CLI_OBJS = $(CORE_OBJS) $(BUILDDIR)/zen_main.o
+all: release
 
-# VM test binary (main.cpp — handcoded bytecode tests)
-TEST_VM_OBJS = $(CORE_OBJS) $(BUILDDIR)/main.o
+release:
+	cmake -S . -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE)
+	cmake --build $(BUILD_DIR) -j$(JOBS)
 
-.PHONY: all clean run debug test_vm
+# Debug turns on ASan+UBSan at -O0 (see CMakeLists.txt) — correctness, not speed.
+debug:
+	cmake -S . -B $(BUILD_DIR)-debug -DCMAKE_BUILD_TYPE=Debug
+	cmake --build $(BUILD_DIR)-debug -j$(JOBS)
 
-all: $(TARGET)
+test: release
+	./tests/run_zen_tests.sh ./bin/zen
 
-$(TARGET): $(CLI_OBJS)
-	$(CXX) $(CXXFLAGS) -o $@ $^
+bench: release
+	./bench/algo/run.sh
 
-# Old handcoded VM tests
-test_vm: $(TEST_VM_OBJS)
-	$(CXX) $(CXXFLAGS) -o zen_test_vm $^
-	./zen_test_vm
-
-$(BUILDDIR)/%.o: $(SRCDIR)/%.cpp | $(BUILDDIR)
-	$(CXX) $(CXXFLAGS) -I$(SRCDIR) -c $< -o $@
-
-$(BUILDDIR):
-	mkdir -p $(BUILDDIR)
+run: release
+	./bin/zen
 
 clean:
-	rm -rf $(BUILDDIR) $(TARGET) zen_test_vm
-
-run: $(TARGET)
-	./$(TARGET)
-
-debug: CXXFLAGS = -std=c++11 -g -O0 -Wall -Wextra -Wno-unused-parameter -DZEN_DEBUG_TRACE_EXEC
-debug: clean $(TARGET)
-
-# Stress test for collections (separate binary)
-TEST_COLL_SRCS = $(SRCDIR)/test_collections.cpp $(SRCDIR)/memory.cpp
-bench: $(TEST_COLL_SRCS)
-	$(CXX) $(CXXFLAGS) -flto -I$(SRCDIR) $^ -o test_collections
-	./test_collections
-
-# Edge-case correctness tests (with sanitizers)
-SANITIZE = -fsanitize=address,undefined -fno-omit-frame-pointer
-TEST_EDGE_SRCS = $(SRCDIR)/test_edge_cases.cpp $(SRCDIR)/memory.cpp
-test_edge: $(TEST_EDGE_SRCS)
-	$(CXX) -std=c++11 -O1 -g -Wall -Wextra -Wno-unused-parameter $(SANITIZE) -I$(SRCDIR) $^ -o test_edge_cases
-	ASAN_OPTIONS=detect_leaks=0 ./test_edge_cases
+	rm -rf $(BUILD_DIR) $(BUILD_DIR)-debug
