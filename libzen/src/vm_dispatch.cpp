@@ -1843,7 +1843,12 @@ namespace zen
         CASE(OP_APPEND)
         {
             uint32_t i = *ip;
-            ObjArray *arr = as_array(R[ZEN_A(i)]);
+            Value aval = R[ZEN_A(i)];
+            if (!is_array(aval))
+            {
+                RT_ERROR("APPEND expected array: receiver=R%d receiver_type=%s", ZEN_A(i), value_debug_type(aval));
+            }
+            ObjArray *arr = as_array(aval);
             array_push(&gc_, arr, R[ZEN_B(i)]);
             NEXT();
         }
@@ -1851,7 +1856,12 @@ namespace zen
         CASE(OP_SETADD)
         {
             uint32_t i = *ip;
-            ObjSet *set = as_set(R[ZEN_A(i)]);
+            Value sval = R[ZEN_A(i)];
+            if (!is_set(sval))
+            {
+                RT_ERROR("SETADD expected set: receiver=R%d receiver_type=%s", ZEN_A(i), value_debug_type(sval));
+            }
+            ObjSet *set = as_set(sval);
             set_add(&gc_, set, R[ZEN_B(i)]);
             NEXT();
         }
@@ -2337,8 +2347,17 @@ namespace zen
             uint8_t arg_count = ZEN_B(i);
             uint8_t slot = ZEN_C(i);
 
-            ObjInstance *inst = as_instance(R[base]);
+            Value recv = R[base];
+            if (!is_instance(recv))
+            {
+                RT_ERROR("INVOKE_VT expected instance: receiver=R%d receiver_type=%s slot=%d", base, value_debug_type(recv), slot);
+            }
+            ObjInstance *inst = as_instance(recv);
             ObjClass *klass = inst->klass;
+            if (slot < 0 || slot >= klass->vtable_size)
+            {
+                RT_ERROR("INVOKE_VT slot out of range: class=%s slot=%d vtable_size=%d", klass->name->chars, slot, klass->vtable_size);
+            }
             Value mval = klass->vtable[slot];
 
             if (is_closure(mval))
@@ -2860,8 +2879,30 @@ namespace zen
             /* word1: GETFIELD_IDX  R[A] = R[B].fields[C]
                word2: MUL           R[A] = R[B] * R[C]    */
             uint32_t i1 = *ip;
-            ObjInstance *inst = as_instance(R[ZEN_B(i1)]);
-            R[ZEN_A(i1)] = inst->fields[ZEN_C(i1)];
+            Value fobj = R[ZEN_B(i1)];
+            const int fidx = ZEN_C(i1);
+            if (is_instance(fobj))
+            {
+                ObjInstance *inst = as_instance(fobj);
+                if (fidx < 0 || fidx >= inst->klass->num_fields)
+                {
+                    RT_ERROR("GETFIELD_MUL out of bounds: receiver=R%d class=%s field_index=%d field_count=%d", ZEN_B(i1), inst->klass->name->chars, fidx, inst->klass->num_fields);
+                }
+                R[ZEN_A(i1)] = inst->fields[fidx];
+            }
+            else if (is_struct(fobj))
+            {
+                ObjStruct *st = as_struct(fobj);
+                if (fidx < 0 || fidx >= st->def->num_fields)
+                {
+                    RT_ERROR("GETFIELD_MUL out of bounds: receiver=R%d struct=%s field_index=%d field_count=%d", ZEN_B(i1), st->def->name->chars, fidx, st->def->num_fields);
+                }
+                R[ZEN_A(i1)] = st->fields[fidx];
+            }
+            else
+            {
+                RT_ERROR("GETFIELD_MUL expected instance/struct: dst=R%d receiver=R%d receiver_type=%s field_index=%d", ZEN_A(i1), ZEN_B(i1), value_debug_type(fobj), fidx);
+            }
             ++ip;
             uint32_t i2 = *ip;
             Value vb = R[ZEN_B(i2)], vc = R[ZEN_C(i2)];
@@ -2896,8 +2937,30 @@ namespace zen
             /* word1: GETFIELD_IDX  R[A] = R[B].fields[C]
                word2: SUB           R[A] = R[B] - R[C]    */
             uint32_t i1 = *ip;
-            ObjInstance *inst = as_instance(R[ZEN_B(i1)]);
-            R[ZEN_A(i1)] = inst->fields[ZEN_C(i1)];
+            Value fobj = R[ZEN_B(i1)];
+            const int fidx = ZEN_C(i1);
+            if (is_instance(fobj))
+            {
+                ObjInstance *inst = as_instance(fobj);
+                if (fidx < 0 || fidx >= inst->klass->num_fields)
+                {
+                    RT_ERROR("GETFIELD_SUB out of bounds: receiver=R%d class=%s field_index=%d field_count=%d", ZEN_B(i1), inst->klass->name->chars, fidx, inst->klass->num_fields);
+                }
+                R[ZEN_A(i1)] = inst->fields[fidx];
+            }
+            else if (is_struct(fobj))
+            {
+                ObjStruct *st = as_struct(fobj);
+                if (fidx < 0 || fidx >= st->def->num_fields)
+                {
+                    RT_ERROR("GETFIELD_SUB out of bounds: receiver=R%d struct=%s field_index=%d field_count=%d", ZEN_B(i1), st->def->name->chars, fidx, st->def->num_fields);
+                }
+                R[ZEN_A(i1)] = st->fields[fidx];
+            }
+            else
+            {
+                RT_ERROR("GETFIELD_SUB expected instance/struct: dst=R%d receiver=R%d receiver_type=%s field_index=%d", ZEN_A(i1), ZEN_B(i1), value_debug_type(fobj), fidx);
+            }
             ++ip;
             uint32_t i2 = *ip;
             Value vb = R[ZEN_B(i2)], vc = R[ZEN_C(i2)];
