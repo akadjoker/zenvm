@@ -62,6 +62,7 @@ namespace zen
         /* --- Fused compare+jump (2-word superinstructions) --- */
         int emit_lt_jmpifnot(int b, int c, int line); /* retorna offset do sBx word */
         int emit_le_jmpifnot(int b, int c, int line);
+        int emit_cmp_jmpifnot(OpCode op, int b, int c, int line);
         void patch_fused_jump(int sbx_offset); /* patch the sBx word */
 
         /* --- Fused global call (2-word: CALLGLOBAL + global_idx) --- */

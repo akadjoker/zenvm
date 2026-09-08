@@ -637,7 +637,7 @@ namespace zen
         {
             Instruction ins = e.instruction_at(off);
             OpCode op = (OpCode)ZEN_OP(ins);
-            if ((op == OP_LT || op == OP_LE) && ZEN_A(ins) == cond_reg)
+            if ((op == OP_LT || op == OP_LE || op == OP_EQ) && ZEN_A(ins) == cond_reg)
             {
                 int b = ZEN_B(ins), c = ZEN_C(ins);
                 /* The operands must outlive the comparison we are deleting.
@@ -647,8 +647,27 @@ namespace zen
                 e.rewind_to(off);
                 fused = true;
                 free_reg(cond_reg);
+                if (op == OP_EQ)
+                    return e.emit_cmp_jmpifnot(OP_EQJMPIFNOT, b, c, line);
                 return op == OP_LT ? e.emit_lt_jmpifnot(b, c, line)
                                    : e.emit_le_jmpifnot(b, c, line);
+            }
+
+            /* `a != b` is EQ then NOT on the same register — the only shape
+            ** that produces it — so the pair collapses into NEJMPIFNOT.
+            ** off-1 must be the EQ's own word: NOT is one word, so the
+            ** instruction before it starts there. */
+            if (op == OP_NOT && ZEN_A(ins) == cond_reg && ZEN_B(ins) == cond_reg && off >= 1)
+            {
+                Instruction cmp = e.instruction_at(off - 1);
+                if (ZEN_OP(cmp) == OP_EQ && ZEN_A(cmp) == cond_reg)
+                {
+                    int b = ZEN_B(cmp), c = ZEN_C(cmp);
+                    e.rewind_to(off - 1);
+                    fused = true;
+                    free_reg(cond_reg);
+                    return e.emit_cmp_jmpifnot(OP_NEJMPIFNOT, b, c, line);
+                }
             }
         }
 

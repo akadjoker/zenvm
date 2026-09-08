@@ -384,6 +384,15 @@ namespace zen
         return emit(ZEN_ENCODE_SBX(OP_JMP, 0, 0), line);
     }
 
+    /* Same 2-word shape as the two above, for any compare-and-jump opcode:
+    ** word 1 carries the operands, word 2 is the sBx placeholder that
+    ** patch_fused_jump() fills in. */
+    int Emitter::emit_cmp_jmpifnot(OpCode op, int b, int c, int line)
+    {
+        emit(ZEN_ENCODE(op, 0, b, c), line);
+        return emit(ZEN_ENCODE_SBX(OP_JMP, 0, 0), line);
+    }
+
     void Emitter::patch_fused_jump(int sbx_offset)
     {
         /* The sBx word is at sbx_offset. Jump distance = from (sbx_offset+1) to current. */
