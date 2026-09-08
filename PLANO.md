@@ -165,6 +165,53 @@ O que daqui se tira, para não repetir:
   quente? Se são dez, tirar uma vale 10% no melhor caso, e só se o resto
   não mudar.
 
+## TODO: strings são bytes, não caracteres (ambos os VMs)
+
+**Não é bug do zenvm em particular — os dois fazem o mesmo, e ambos divergem
+do Python.** Fica aqui porque a decisão é a mesma para os dois.
+
+```
+var s = "héllo";
+print(len(s));        // 6  — CPython diz 5
+print(s.char_at(1));  // meio byte UTF-8, imprime lixo
+```
+
+`len()`, indexação, `sub()`, `char_at()`, `find()` e tudo o que trabalha por
+posição contam **bytes**. Em ASCII coincide; com acentos não.
+
+O zenvm tem módulo `utf8` (`libzen/src/builtin_utf8.cpp`) e esse acerta:
+`utf8.len("héllo")` dá 5, e há `codepoints`, `encode`, `decode`, `offset`,
+`valid`. Não tem `sub`. **O zenpy não tem o módulo de todo** — nem sequer a
+saída de emergência.
+
+### A decisão, que ainda não está tomada
+
+**Manter bytes e documentar.** É o que o Lua faz. Rápido, previsível, zero
+trabalho. Custa a compatibilidade: qualquer script Python com acentos
+comporta-se de outra forma, silenciosamente.
+
+**Passar a caracteres.** Necessário se o objectivo do zenpy é correr código
+Python existente. É caro: `1 byte = 1 char` está assumido em 93 sítios só no
+`invoke_string.inl` do zenpy, e 18 dos 44 métodos de string dependem de
+posição (`sub`, `find`, `index`, `char_at`, `pad_left`, `center`, `split`,
+`partition`, `reverse`, ...).
+
+Três formas de o fazer, medidas:
+
+1. **`char_length` no ObjString** — `len()` fica O(1), custa +4 bytes por
+   string e recalcular em cada mutação. A indexação continua O(n).
+2. **Contar quando é preciso** — sem custo de memória, `len()` passa a O(n).
+   Medido: `len()` de uma string de 1000 bytes, 500k vezes, custa 0.02s hoje;
+   a percorrer seria ~1000x isso. Num ciclo de frame é inaceitável.
+3. **Bit "ASCII puro" no `Obj::flags`** (há bits livres) — marcado na
+   criação. Strings ASCII, que são a esmagadora maioria em código de jogo,
+   continuam O(1) e byte-a-byte como hoje; só as que têm bytes altos entram
+   no caminho lento. Zero custo de memória, zero regressão no caso comum.
+
+Se se avançar, (3) é a única que não torna o caso comum mais lento. E o
+zenpy precisa do módulo `utf8` de qualquer forma — portar do zenvm é
+independente desta decisão e é trabalho pequeno.
+
 ## O método que funcionou hoje, para repetir
 
 Falhei três hipóteses antes de encontrar o `Value` de 24 bytes. Achei que era
