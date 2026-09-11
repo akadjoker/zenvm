@@ -383,7 +383,7 @@ namespace zen
         int external_call_stop_depth_; /* return to C++ when nested script call unwinds here */
         bool had_error_;          /* runtime error occurred */
         int protected_depth_;     /* >0 while inside pcall(): suppress abort/print, trap the error */
-        char error_msg_[256];     /* text of the last runtime_error, for pcall() to return */
+        char error_msg_[512];     /* text of the last runtime_error, for pcall() to return */
 
         /* Search paths for include/import */
         static const int MAX_SEARCH_PATHS = 16;

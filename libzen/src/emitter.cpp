@@ -346,6 +346,8 @@ namespace zen
     void Emitter::patch_jump(int offset)
     {
         /* Calcula distância: de (offset+1) até current */
+        if (func_->code_count > last_patched_target_)
+            last_patched_target_ = func_->code_count;
         int jump = func_->code_count - (offset + 1);
         uint32_t instr = func_->code[offset];
         uint8_t op = ZEN_OP(instr);
@@ -355,6 +357,8 @@ namespace zen
 
     void Emitter::patch_jump_to(int offset, int target)
     {
+        if (target > last_patched_target_)
+            last_patched_target_ = target;
         int jump = target - (offset + 1);
         uint32_t instr = func_->code[offset];
         uint8_t op = ZEN_OP(instr);
@@ -381,6 +385,15 @@ namespace zen
     int Emitter::emit_le_jmpifnot(int b, int c, int line)
     {
         emit(ZEN_ENCODE(OP_LEJMPIFNOT, 0, b, c), line);
+        return emit(ZEN_ENCODE_SBX(OP_JMP, 0, 0), line);
+    }
+
+    /* Same 2-word shape as the two above, for any compare-and-jump opcode:
+    ** word 1 carries the operands, word 2 is the sBx placeholder that
+    ** patch_fused_jump() fills in. */
+    int Emitter::emit_cmp_jmpifnot(OpCode op, int b, int c, int line)
+    {
+        emit(ZEN_ENCODE(op, 0, b, c), line);
         return emit(ZEN_ENCODE_SBX(OP_JMP, 0, 0), line);
     }
 

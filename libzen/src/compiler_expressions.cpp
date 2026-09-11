@@ -821,7 +821,13 @@ namespace zen
                     int rhs = expression(-1);
                     if (rhs != local_reg)
                     {
-                        emit_move(local_reg, rhs);
+                        /* If the value came straight out of an arithmetic
+                        ** instruction, point that instruction at the local
+                        ** instead of copying afterwards. It has already read
+                        ** its operands, so writing to the local is safe even
+                        ** when the local was one of them (`s = s + i`). */
+                        if (!retarget_last_producer(rhs, local_reg))
+                            emit_move(local_reg, rhs);
                     }
                     /* Restore next_reg — we don't want to permanently consume
                        a temp register (if rhs was a temp) or accidentally free
@@ -1431,8 +1437,41 @@ namespace zen
             state_->emitter.emit_abc(opcode, reg, left, right, op.line);
         }
 
+        /* Peephole: `x + 1` loads the 1 into a register and then adds it.
+        ** OP_ADDI/OP_SUBI carry the constant in C as a signed byte, so drop
+        ** the LOADI when the right operand is a small integer literal that
+        ** was loaded into a temporary immediately before this instruction. */
+        bool folded_immediate = false;
+        if ((opcode == OP_ADD || opcode == OP_SUB) && !use_obj_op)
+        {
+            Emitter &e = state_->emitter;
+            int arith_off = e.current_offset() - 1;
+            if (arith_off >= 1)
+            {
+                Instruction load = e.instruction_at(arith_off - 1);
+                /* The word before the LOADI must not be the head of a 2-word
+                ** instruction, and the GETFIELD_MUL/SUB peepholes below want
+                ** to rewrite a plain GETFIELD_IDX + MUL/SUB pair — leave that
+                ** shape to them rather than folding half of it away. */
+                if (ZEN_OP(load) == OP_LOADI && ZEN_A(load) == right &&
+                    right != left && !is_local_reg(right))
+                {
+                    int imm = ZEN_SBX(load);
+                    if (imm >= -128 && imm <= 127)
+                    {
+                        int line = op.line;
+                        e.rewind_to(arith_off - 1);
+                        e.emit_abc(opcode == OP_ADD ? OP_ADDI : OP_SUBI,
+                                   reg, left, (uint8_t)(int8_t)imm, line);
+                        free_reg(right);
+                        folded_immediate = true;
+                    }
+                }
+            }
+        }
+
         /* Peephole: fuse GETFIELD_IDX + MUL → OP_GETFIELD_MUL (2-word) */
-        if (opcode == OP_MUL)
+        if (opcode == OP_MUL && !folded_immediate)
         {
             int mul_off = state_->emitter.current_offset() - 1;
             if (mul_off >= 1)
@@ -1450,7 +1489,7 @@ namespace zen
         }
 
         /* Peephole: fuse GETFIELD_IDX + SUB → OP_GETFIELD_SUB (2-word) */
-        if (opcode == OP_SUB)
+        if (opcode == OP_SUB && !folded_immediate)
         {
             int sub_off = state_->emitter.current_offset() - 1;
             if (sub_off >= 1)
@@ -1892,6 +1931,8 @@ namespace zen
                 /* a[i] += expr — load, operate, store */
                 int cur_reg = alloc_reg();
                 state_->emitter.emit_abc(OP_GETINDEX, cur_reg, obj_reg, idx_reg, previous_.line);
+                if (cur_reg >= 0 && cur_reg < 256)
+                    state_->reg_class_hints[cur_reg] = nullptr;
                 int rhs_reg = alloc_reg();
                 expression(rhs_reg);
                 OpCode op;
@@ -1942,6 +1983,12 @@ namespace zen
         /* Not assignment — emit GETINDEX */
         int reg = dest >= 0 ? dest : alloc_reg();
         state_->emitter.emit_abc(OP_GETINDEX, reg, obj_reg, idx_reg, previous_.line);
+        /* An index read yields a raw element value, never a known class
+           instance. Clear any stale class hint on the destination register so
+           later operators (e.g. `var t = buf[i]; t <= n`) don't wrongly dispatch
+           through the object-operator path. */
+        if (reg >= 0 && reg < 256)
+            state_->reg_class_hints[reg] = nullptr;
         free_reg(idx_reg);
         if (obj_reg != reg)
             free_reg(obj_reg);
@@ -2196,7 +2243,17 @@ namespace zen
             state_->next_reg = save_next > base + 1 ? save_next : base + 1;
             int result_reg = dest >= 0 ? dest : base;
             if (result_reg != base)
+            {
                 emit_move(result_reg, base);
+                /* The result moved down to dest, so the registers the invoke
+                ** used above it are free again. Release them: a call on this
+                ** result — m.get("f")(1, 2) — allocates its arguments from
+                ** next_reg and OP_CALL requires them directly above the
+                ** callee. Leaving next_reg above dest put the arguments one
+                ** slot too high and the callee read a stale register. */
+                if (result_reg < base && state_->next_reg > result_reg + 1)
+                    state_->next_reg = result_reg + 1;
+            }
 
             /* Propagate return type hint from vtable method if available */
             ObjClass *ret_class_hint = nullptr;
@@ -2566,8 +2623,7 @@ namespace zen
         block();
 
         /* Implicit return nil */
-        state_->emitter.emit_abc(OP_LOADNIL, 0, 0, 0, previous_.line);
-        state_->emitter.emit_abc(OP_RETURN, 0, 1, 0, previous_.line);
+        state_->emitter.emit_abc(OP_RETURNNIL, 0, 1, 0, previous_.line);
 
         ObjFunc *fn = state_->emitter.end(state_->max_reg);
         fn->arity = arity;
@@ -2679,8 +2735,7 @@ namespace zen
         if (match(TOK_LBRACE))
         {
             block();
-            state_->emitter.emit_abc(OP_LOADNIL, 0, 0, 0, previous_.line);
-            state_->emitter.emit_abc(OP_RETURN, 0, 1, 0, previous_.line);
+            state_->emitter.emit_abc(OP_RETURNNIL, 0, 1, 0, previous_.line);
         }
         else
         {

@@ -261,6 +261,14 @@ namespace zen
         if (!function_nesting_ok())
             return;
 
+        /* Local functions: declare the name in the enclosing scope BEFORE
+           compiling the body, so the function can call itself recursively (the
+           self-reference becomes an upvalue). Global functions already resolve
+           forward via the global slot. */
+        int predeclared_local_reg = -1;
+        if (state_->scope_depth > 0)
+            predeclared_local_reg = add_local(name);
+
         /* Create function in a new compiler state */
         CompilerState fn_state;
         fn_state.parent = state_;
@@ -330,8 +338,7 @@ namespace zen
         block();
 
         /* Implicit return nil */
-        state_->emitter.emit_abc(OP_LOADNIL, 0, 0, 0, previous_.line);
-        state_->emitter.emit_abc(OP_RETURN, 0, 1, 0, previous_.line);
+        state_->emitter.emit_abc(OP_RETURNNIL, 0, 1, 0, previous_.line);
 
         ObjFunc *fn = state_->emitter.end(state_->max_reg);
         fn->arity = arity;
@@ -359,8 +366,8 @@ namespace zen
 
         if (state_->scope_depth > 0)
         {
-            /* Local function */
-            int reg = add_local(name);
+            /* Local function — already declared above; emit into that slot. */
+            int reg = predeclared_local_reg;
             state_->emitter.emit_abx(OP_CLOSURE, reg, ki, name.line);
         }
         else
@@ -457,8 +464,7 @@ namespace zen
         block();
 
         /* Implicit return nil */
-        state_->emitter.emit_abc(OP_LOADNIL, 0, 0, 0, previous_.line);
-        state_->emitter.emit_abc(OP_RETURN, 0, 1, 0, previous_.line);
+        state_->emitter.emit_abc(OP_RETURNNIL, 0, 1, 0, previous_.line);
 
         ObjFunc *fn = state_->emitter.end(state_->max_reg);
         fn->arity = arity;
@@ -591,6 +597,11 @@ namespace zen
             }
             parent_class = as_class(vm_->get_global(pidx));
             /* Copy parent field names into cfi */
+            if (parent_class->num_fields > 64)
+            {
+                error("Parent class has too many fields (max 64).");
+                return;
+            }
             for (int i = 0; i < parent_class->num_fields; i++)
             {
                 int flen = parent_class->field_names[i]->length;
@@ -626,6 +637,11 @@ namespace zen
                 {
                     consume(TOK_IDENTIFIER, "Expected static variable name.");
                     int slen = previous_.length < 63 ? previous_.length : 63;
+                    if (static_var_count >= 64)
+                    {
+                        error("Too many static variables in class (max 64).");
+                        return;
+                    }
                     memcpy(static_names[static_var_count], previous_.start, slen);
                     static_names[static_var_count][slen] = '\0';
                     Value sv = val_nil();
@@ -642,6 +658,11 @@ namespace zen
                 do
                 {
                     consume(TOK_IDENTIFIER, "Expected field name.");
+                    if (field_count >= 64 || cfi.count >= 64)
+                    {
+                        error("Too many fields in class (max 64, including inherited).");
+                        return;
+                    }
                     int flen = previous_.length < 63 ? previous_.length : 63;
                     memcpy(fields[field_count], previous_.start, flen);
                     fields[field_count][flen] = '\0';
@@ -783,8 +804,7 @@ namespace zen
                 }
                 else
                 {
-                    state_->emitter.emit_abc(OP_LOADNIL, 0, 0, 0, previous_.line);
-                    state_->emitter.emit_abc(OP_RETURN, 0, 1, 0, previous_.line);
+                    state_->emitter.emit_abc(OP_RETURNNIL, 0, 1, 0, previous_.line);
                 }
 
                 ObjFunc *fn = state_->emitter.end(state_->max_reg);
@@ -1022,6 +1042,11 @@ namespace zen
         while (!check(TOK_RBRACE) && !check(TOK_EOF))
         {
             consume(TOK_IDENTIFIER, "Expected field name.");
+            if (field_count >= 64)
+            {
+                error("Too many fields in struct (max 64).");
+                return;
+            }
             int flen = previous_.length < 63 ? previous_.length : 63;
             memcpy(fields[field_count], previous_.start, flen);
             fields[field_count][flen] = '\0';
@@ -1367,18 +1392,20 @@ namespace zen
         int cond_reg = expression(-1);
         consume(TOK_RPAREN, "Expected ')' after condition.");
 
-        /* Jump over 'then' body if false */
-        int then_jump = state_->emitter.emit_jump(OP_JMPIFNOT, cond_reg, previous_.line);
-        free_reg(cond_reg);
+        /* Jump over 'then' body if false. Fuses the comparison into the
+        ** branch when it is the instruction just emitted and nothing already
+        ** jumps here — the same win while() has had. */
+        bool then_fused = false;
+        int then_jump = emit_cond_false_jump(cond_reg, previous_.line, then_fused);
 
         /* Then body */
         scoped_body();
 
         /* Collect all "skip to end" jumps — one per if/elif branch */
-        int end_jumps[64];
+        int end_jumps[kMaxBranchJumps];
         int end_jump_count = 0;
         end_jumps[end_jump_count++] = state_->emitter.emit_jump(OP_JMP, 0, previous_.line);
-        state_->emitter.patch_jump(then_jump);
+        patch_cond_jump(then_jump, then_fused);
 
         /* elif chain */
         while (match(TOK_ELIF))
@@ -1387,13 +1414,18 @@ namespace zen
             cond_reg = expression(-1);
             consume(TOK_RPAREN, "Expected ')' after elif condition.");
 
-            int elif_jump = state_->emitter.emit_jump(OP_JMPIFNOT, cond_reg, previous_.line);
-            free_reg(cond_reg);
+            bool elif_fused = false;
+            int elif_jump = emit_cond_false_jump(cond_reg, previous_.line, elif_fused);
 
             scoped_body();
 
+            if (end_jump_count >= kMaxBranchJumps)
+            {
+                error("Too many 'elif' branches in one chain (max 255).");
+                return;
+            }
             end_jumps[end_jump_count++] = state_->emitter.emit_jump(OP_JMP, 0, previous_.line);
-            state_->emitter.patch_jump(elif_jump);
+            patch_cond_jump(elif_jump, elif_fused);
         }
 
         /* else */
@@ -1427,14 +1459,14 @@ namespace zen
         int cond_reg = expression(-1);
         consume(TOK_RPAREN, "Expected ')' after condition.");
 
-        int exit_jump = state_->emitter.emit_jump(OP_JMPIFNOT, cond_reg, previous_.line);
-        free_reg(cond_reg);
+        bool cond_fused = false;
+        int exit_jump = emit_cond_false_jump(cond_reg, previous_.line, cond_fused);
 
         scoped_body();
 
         /* Loop back */
         state_->emitter.emit_loop(loop_start, 0, previous_.line);
-        state_->emitter.patch_jump(exit_jump);
+        patch_cond_jump(exit_jump, cond_fused);
 
         /* Patch breaks */
         for (int i = 0; i < loop.break_count; i++)
@@ -1458,6 +1490,23 @@ namespace zen
         Token saved_previous = previous_;
         int saved_next_reg = state_->next_reg;
         int saved_local_count = state_->local_count;
+        int saved_code_offset = state_->emitter.current_offset();
+
+        /* Full rollback to the state at entry — restores the lexer, tokens,
+           register/local allocation AND any bytecode emitted by the (now
+           abandoned) fast path. Lets the caller fall back to the general for
+           loop. Used both for pattern misses in phase 1 (nothing emitted yet)
+           and for shapes we can't specialize discovered in phase 2 (e.g. the
+           condition is `i < a and ...`, or a non-trivial step) — those must
+           NOT be compile errors; the general for handles them correctly. */
+        auto rollback = [&]() {
+            lexer_.restore_state(saved_lex);
+            current_ = saved_current;
+            previous_ = saved_previous;
+            state_->next_reg = saved_next_reg;
+            state_->local_count = saved_local_count;
+            state_->emitter.rewind_to(saved_code_offset);
+        };
 
         /* --- Phase 1: Pattern matching (can rollback) --- */
         Token loop_var;
@@ -1598,14 +1647,19 @@ namespace zen
         /* Emit init value into counter reg */
         state_->emitter.emit_asbx(OP_LOADI, base_reg, init_val, loop_var.line);
 
-        /* Parse limit expression into limit_reg */
-        expression(limit_reg);
+        /* Parse the limit at additive precedence so a compound condition like
+           `i < n and X` or `i < a or b` does NOT get swallowed as the limit.
+           The limit must then be immediately followed by ';'; anything else
+           (a logical/relational continuation) means this isn't a simple
+           numeric for — roll back and let the general path compile it. */
+        parse_precedence(PREC_TERM, limit_reg);
 
-        if (!match(TOK_SEMICOLON))
+        if (!check(TOK_SEMICOLON))
         {
-            error_at_current("Expected ';' after for condition in numeric for.");
-            return true;
+            rollback();
+            return false;
         }
+        advance(); /* consume ';' */
 
         /* Step 3: check step — IDENT = IDENT + INT or IDENT += INT */
         int32_t step_val = 1;
@@ -1614,8 +1668,8 @@ namespace zen
             current_.length != loop_var.length ||
             memcmp(current_.start, loop_var.start, loop_var.length) != 0)
         {
-            error_at_current("Expected loop variable in for step.");
-            return true;
+            rollback();
+            return false;
         }
         advance(); /* consume loop var */
 
@@ -1630,8 +1684,8 @@ namespace zen
             }
             if (!check(TOK_INT))
             {
-                error_at_current("Numeric for step must be integer literal.");
-                return true;
+                rollback();
+                return false;
             }
             advance();
             step_val = (int32_t)strtol(previous_.start, nullptr, 10);
@@ -1645,8 +1699,8 @@ namespace zen
                 current_.length != loop_var.length ||
                 memcmp(current_.start, loop_var.start, loop_var.length) != 0)
             {
-                error_at_current("Expected loop variable in for step.");
-                return true;
+                rollback();
+                return false;
             }
             advance(); /* consume 'i' on RHS */
 
@@ -1660,8 +1714,8 @@ namespace zen
                 }
                 if (!check(TOK_INT))
                 {
-                    error_at_current("Numeric for step must be integer literal.");
-                    return true;
+                    rollback();
+                    return false;
                 }
                 advance();
                 step_val = (int32_t)strtol(previous_.start, nullptr, 10);
@@ -1672,22 +1726,22 @@ namespace zen
             {
                 if (!check(TOK_INT))
                 {
-                    error_at_current("Numeric for step must be integer literal.");
-                    return true;
+                    rollback();
+                    return false;
                 }
                 advance();
                 step_val = -(int32_t)strtol(previous_.start, nullptr, 10);
             }
             else
             {
-                error_at_current("Expected '+' or '-' in for step.");
-                return true;
+                rollback();
+                return false;
             }
         }
         else
         {
-            error_at_current("Expected '+=' or '=' in for step.");
-            return true;
+            rollback();
+            return false;
         }
 
         consume(TOK_RPAREN, "Expected ')' after for clauses.");
@@ -1876,17 +1930,21 @@ namespace zen
             if (has_index)
                 error("foreach over a range 'A..B' takes a single variable.");
 
-            int start_reg = iterable_reg;      /* holds A */
-            int end_expr = expression(-1);     /* holds B */
+            /* A is in iterable_reg (a temp, or a variable's own register), B in
+               end_expr. Allocate the loop counter + a hidden end bound as two
+               fresh locals and MOVE A/B into them. The counter/end being proper
+               locals (not bare temps) is what keeps a nested loop from clobbering
+               them; the source temps below are dead (like the collection form). */
+            int a_reg = iterable_reg;           /* A */
+            int end_expr = expression(-1);      /* B */
             consume(TOK_RPAREN, "Expected ')' after foreach range.");
 
-            /* Stable copy of the end bound (evaluated once). */
-            int end_reg = alloc_reg();
+            int var_reg = add_local(first_name); /* loop counter (local) */
+            static const char hidden_end[] = "(end)";
+            Token end_tok = {TOK_IDENTIFIER, hidden_end, 5, first_name.line};
+            int end_reg = add_local(end_tok);    /* end bound (hidden local) */
+            state_->emitter.emit_abc(OP_MOVE, var_reg, a_reg, 0, previous_.line);
             state_->emitter.emit_abc(OP_MOVE, end_reg, end_expr, 0, previous_.line);
-
-            /* Loop variable, initialised to A. */
-            int var_reg = add_local(first_name);
-            state_->emitter.emit_abc(OP_MOVE, var_reg, start_reg, 0, previous_.line);
 
             int loop_start = state_->emitter.current_offset();
             LoopCtx &loop = state_->loops[state_->loop_depth++];
@@ -1915,8 +1973,7 @@ namespace zen
                 state_->emitter.patch_jump(loop.breaks[i]);
             state_->loop_depth--;
 
-            free_reg(end_reg);
-            free_reg(iterable_reg);
+            (void)end_reg; /* var_reg and end_reg are locals — end_scope frees them */
             end_scope();
             return;
         }
@@ -2064,14 +2121,21 @@ namespace zen
     void Compiler::switch_statement()
     {
         consume(TOK_LPAREN, "Expected '(' after 'switch'.");
-        int expr_reg = expression(-1);
+        /* Evaluate the switch value into a FRESH temp above all live locals.
+           (Using expression(-1) could return a local's own register — e.g.
+           switch(x) — and then base_reg = expr_reg+1 would reset the allocator
+           below live locals, so case-body `var`s clobbered them.) */
+        int saved_next = state_->next_reg;
+        int expr_reg = alloc_reg();
+        expression(expr_reg);
+        state_->next_reg = expr_reg + 1;
         consume(TOK_RPAREN, "Expected ')' after switch expression.");
         consume(TOK_LBRACE, "Expected '{' after switch.");
 
-        /* Protect the switch expression register throughout */
+        /* Case bodies allocate above the protected expression register. */
         int base_reg = expr_reg + 1;
 
-        int end_jumps[64];
+        int end_jumps[kMaxBranchJumps];
         int end_count = 0;
 
         while (match(TOK_CASE))
@@ -2098,8 +2162,12 @@ namespace zen
             end_scope();
 
             /* Jump to end of switch */
-            if (end_count < 64)
-                end_jumps[end_count++] = state_->emitter.emit_jump(OP_JMP, 0, previous_.line);
+            if (end_count >= kMaxBranchJumps)
+            {
+                error("Too many 'case' branches in one switch (max 255).");
+                return;
+            }
+            end_jumps[end_count++] = state_->emitter.emit_jump(OP_JMP, 0, previous_.line);
 
             state_->emitter.patch_jump(skip_jump);
         }
@@ -2121,8 +2189,8 @@ namespace zen
         for (int i = 0; i < end_count; i++)
             state_->emitter.patch_jump(end_jumps[i]);
 
-        /* Release switch expression register */
-        state_->next_reg = expr_reg;
+        /* Release the switch expression temp (back to the live-locals top). */
+        state_->next_reg = saved_next;
     }
 
     /* =========================================================
@@ -2134,8 +2202,7 @@ namespace zen
         if (match(TOK_SEMICOLON))
         {
             /* return; → return nil */
-            state_->emitter.emit_abc(OP_LOADNIL, 0, 0, 0, previous_.line);
-            state_->emitter.emit_abc(OP_RETURN, 0, 1, 0, previous_.line);
+            state_->emitter.emit_abc(OP_RETURNNIL, 0, 1, 0, previous_.line);
             return;
         }
 
@@ -2150,6 +2217,23 @@ namespace zen
         } while (match(TOK_COMMA));
 
         consume(TOK_SEMICOLON, "Expected ';' after return value.");
+
+        /* Tail-call optimization: `return f(args);` where the single return value
+           is a direct call (the last emitted op is OP_CALL writing to `base`).
+           Rewrite that OP_CALL to OP_TAILCALL. For a script closure it reuses the
+           current frame (unbounded tail recursion); for any other callee it runs
+           normally and the OP_RETURN below returns the result. Conservative: if a
+           MOVE or anything else came after the call, we leave a normal return. */
+        if (count == 1)
+        {
+            int off = state_->emitter.current_offset();
+            if (off > 0)
+            {
+                uint32_t last = state_->emitter.instruction_at(off - 1);
+                if (ZEN_OP(last) == OP_CALL && ZEN_A(last) == base)
+                    state_->emitter.rewrite_opcode_at(off - 1, OP_TAILCALL);
+            }
+        }
 
         state_->emitter.emit_abc(OP_RETURN, base, count, 0, previous_.line);
         state_->next_reg = base; /* free temps */

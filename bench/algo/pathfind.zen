@@ -1,0 +1,165 @@
+// A* and Dijkstra on a grid. Port of the zenpy algo_bench pathfind.py.
+var W = 128;
+var H = 128;
+var N = W * H;
+var BIG = 1000000000;
+var QUERIES = 40;
+var WALL_PCT = 30;
+
+var seed = 42;
+def rnd() {
+    seed = (seed * 16807) % 2147483647;
+    return seed;
+}
+
+def iabs(x) {
+    if (x < 0) { return -x; }
+    return x;
+}
+
+class Heap {
+    var keys;
+    var vals;
+    var n;
+    def init() {
+        self.keys = [];
+        self.vals = [];
+        self.n = 0;
+    }
+    def push(key, val) {
+        var keys = self.keys;
+        var vals = self.vals;
+        var i = self.n;
+        self.n = i + 1;
+        keys.push(key);
+        vals.push(val);
+        while (i > 0) {
+            var p = (i - 1) div 2;
+            if (keys[p] <= key) { break; }
+            keys[i] = keys[p];
+            vals[i] = vals[p];
+            i = p;
+        }
+        keys[i] = key;
+        vals[i] = val;
+    }
+    def pop() {
+        var keys = self.keys;
+        var vals = self.vals;
+        var top = vals[0];
+        var last_key = keys.pop();
+        var last_val = vals.pop();
+        var n = self.n - 1;
+        self.n = n;
+        if (n > 0) {
+            var i = 0;
+            loop {
+                var l = 2 * i + 1;
+                if (l >= n) { break; }
+                var r = l + 1;
+                var m = l;
+                if (r < n && keys[r] < keys[l]) { m = r; }
+                if (keys[m] >= last_key) { break; }
+                keys[i] = keys[m];
+                vals[i] = vals[m];
+                i = m;
+            }
+            keys[i] = last_key;
+            vals[i] = last_val;
+        }
+        return top;
+    }
+}
+
+def make_grid() {
+    var blocked = [];
+    for (var i = 0; i < N; i = i + 1) { blocked.push(0); }
+    for (var i = 0; i < N; i = i + 1) {
+        if (rnd() % 100 < WALL_PCT) { blocked[i] = 1; }
+    }
+    return blocked;
+}
+
+def search(blocked, start, goal, use_heur) {
+    var gx = goal % W;
+    var gy = goal div W;
+    var dist = [];
+    var closed = [];
+    for (var i = 0; i < N; i = i + 1) { dist.push(BIG); closed.push(0); }
+    var heap = Heap();
+    dist[start] = 0;
+    heap.push(0, start);
+    var expanded = 0;
+    while (heap.n > 0) {
+        var cur = heap.pop();
+        if (closed[cur] != 0) { continue; }
+        closed[cur] = 1;
+        expanded = expanded + 1;
+        if (cur == goal) { return dist[cur]; }
+        var cx = cur % W;
+        var cy = cur div W;
+        var d = dist[cur] + 1;
+        if (cx > 0) {
+            var nb = cur - 1;
+            if (blocked[nb] == 0 && d < dist[nb]) {
+                dist[nb] = d;
+                if (use_heur) { heap.push(d + iabs(cx - 1 - gx) + iabs(cy - gy), nb); }
+                else { heap.push(d, nb); }
+            }
+        }
+        if (cx < W - 1) {
+            var nb = cur + 1;
+            if (blocked[nb] == 0 && d < dist[nb]) {
+                dist[nb] = d;
+                if (use_heur) { heap.push(d + iabs(cx + 1 - gx) + iabs(cy - gy), nb); }
+                else { heap.push(d, nb); }
+            }
+        }
+        if (cy > 0) {
+            var nb = cur - W;
+            if (blocked[nb] == 0 && d < dist[nb]) {
+                dist[nb] = d;
+                if (use_heur) { heap.push(d + iabs(cx - gx) + iabs(cy - 1 - gy), nb); }
+                else { heap.push(d, nb); }
+            }
+        }
+        if (cy < H - 1) {
+            var nb = cur + W;
+            if (blocked[nb] == 0 && d < dist[nb]) {
+                dist[nb] = d;
+                if (use_heur) { heap.push(d + iabs(cx - gx) + iabs(cy + 1 - gy), nb); }
+                else { heap.push(d, nb); }
+            }
+        }
+    }
+    return -1;
+}
+
+def run(use_heur) {
+    seed = 42;
+    var blocked = make_grid();
+    var total = 0;
+    var found = 0;
+    for (var q = 0; q < QUERIES; q = q + 1) {
+        var s = rnd() % N;
+        var g = rnd() % N;
+        while (blocked[s] != 0) { s = rnd() % N; }
+        while (blocked[g] != 0) { g = rnd() % N; }
+        var r = search(blocked, s, g, use_heur);
+        if (r >= 0) {
+            found = found + 1;
+            total = total + r;
+        }
+    }
+    return total * 1000 + found;
+}
+
+var t0 = clock();
+var a = run(true);
+var t1 = clock();
+var b = run(false);
+var t2 = clock();
+print("astar checksum", a);
+print("dijkstra checksum", b);
+print("astar", t1 - t0);
+print("dijkstra", t2 - t1);

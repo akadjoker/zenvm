@@ -7,7 +7,7 @@ var x = 10;
 var y = 3.14;
 var nome = "BuLang";
 var activo = true;
-var nada = null;
+var nada = nil;
 
 print(x);        // 10
 print(y);        // 3.14

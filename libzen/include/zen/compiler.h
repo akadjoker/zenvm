@@ -228,6 +228,15 @@ namespace zen
         void free_reg(int reg);
         void set_next_reg(int reg); /* reset temp reg to a specific point */
         bool is_local_reg(int reg);
+        /* Emit the false-branch jump for a condition, fusing a `<`/`<=` that
+        ** was just emitted into OP_LTJMPIFNOT/OP_LEJMPIFNOT. Sets `fused`,
+        ** which patch_cond_jump() needs to pick the right patcher. */
+        int emit_cond_false_jump(int cond_reg, int line, bool &fused);
+        /* If the value in `src` was just produced by a single arithmetic
+        ** instruction writing to that temporary, make it write to `dest`
+        ** instead and report success — saves the MOVE that would follow. */
+        bool retarget_last_producer(int src, int dest);
+        void patch_cond_jump(int offset, bool fused);
         Local *find_local_by_reg(int reg); /* find local owning a register */
         ObjClass *class_hint_for_reg(int reg);
 
@@ -246,6 +255,8 @@ namespace zen
         const char *current_file_; /* path of file being compiled */
 
         /* Include file memory management */
+        /* if/elif chain: one "jump to end" per branch. */
+        static const int kMaxBranchJumps = 256;
         static const int MAX_INCLUDES = 64;
         static const int MAX_INCLUDE_DEPTH = 16;
         char *include_sources_[MAX_INCLUDES];

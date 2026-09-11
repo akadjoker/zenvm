@@ -19,3 +19,20 @@ test_raylib_types.zen
 test_raylib_window.zen
 test_zen_gl.zen
 triangle.zen
+
+# Reason: needs a runner with graphics/native modules linked in (zen_game,
+# zen_gl) or an optional module that a core `zen` build does not carry.
+# Run these against the matching runner binary, not the plain CLI.
+bunnymark.zen
+mini_engine.zen
+mini_engine_intern.zen
+test_process.zen
+test_gif.zen
+test_nn.zen
+test_sqlite.zen
+test_plugin.zen
+
+# Reason: these call Color(), a native struct that no host in this repo
+# registers — the scripts have never run. Kept as a reminder, not a gate.
+struct_test.zen
+struct_native_binding.zen

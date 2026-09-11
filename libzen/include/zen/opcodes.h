@@ -161,6 +161,18 @@ namespace zen
         OP_DELINDEX,  /* del R[A][R[B]]                                   */
         OP_GETSLICE,  /* R[A] = R[B][R[C] : R[C+1] : R[C+2]]             */
         OP_IS,        /* R[A] = (R[B] is an instance of class R[C])      */
+        OP_TAILCALL,  /* return R[A](R[A+1..]) — reuse frame (tail call)  */
+
+        /* --- Ported from zenpy (PLANO.md, item 1) ---
+        ** Appended before OP_HALT so every existing opcode keeps its number
+        ** and previously dumped bytecode still decodes. */
+        OP_RETURNNIL,    /* return with no value — nil straight to the caller */
+        OP_JMPIFNIL,     /* if R[A] is nil: pc += sBx(next_word)              */
+        OP_LTIJMPIFNOT,  /* if !(R[B] < C): pc += sBx(next_word)   (imm C)    */
+        OP_GTIJMPIFNOT,  /* if !(R[B] > C): pc += sBx(next_word)   (imm C)    */
+        OP_EQJMPIFNOT,   /* if !(R[B] == R[C]): pc += sBx(next_word)          */
+        OP_NEJMPIFNOT,   /* if !(R[B] != R[C]): pc += sBx(next_word)          */
+        OP_INVOKE_VT_FAST, /* vtable invoke, arity already checked at compile */
 
         OP_HALT,
     };

@@ -14,8 +14,11 @@ include(SystemRaylib)
 add_compile_options(-Wall -Wextra -Wno-unused-parameter)
 
 # --- Build types ---
+# Default to Release: a bare `cmake -B build` used to select Debug, which
+# turns on ASan+UBSan below — anyone benchmarking without passing an explicit
+# build type was measuring a sanitised -O0 binary. Ask for Debug to get it.
 if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Debug)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
 # Sanitizer flags for Debug builds

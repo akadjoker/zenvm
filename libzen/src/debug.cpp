@@ -18,6 +18,7 @@ namespace zen
         "MUL",
         "DIV",
         "MOD",
+        "IDIV",
         "NEG",
         "ADD_OBJ",
         "SUB_OBJ",
@@ -72,9 +73,7 @@ namespace zen
         "SETINDEX",
         "INVOKE",
         "INVOKE_VT",
-        "NEWCLASS",
-        "NEWINSTANCE",
-        "GETMETHOD",
+        "SUPER_INVOKE",
         "CONCAT",
         "STRADD",
         "TOSTRING",
@@ -105,8 +104,25 @@ namespace zen
         "GETFIELD_MUL",
         "GETFIELD_SUB",
         "ITER_ELEM",
+        "CONTAINS",
+        "DELINDEX",
+        "GETSLICE",
+        "IS",
+        "TAILCALL",
+        "RETURNNIL",
+        "JMPIFNIL",
+        "LTIJMPIFNOT",
+        "GTIJMPIFNOT",
+        "EQJMPIFNOT",
+        "NEJMPIFNOT",
+        "INVOKE_VT_FAST",
         "HALT",
     };
+
+    /* The table is indexed by OpCode: keep it in lockstep with the enum.
+    ** OP_HALT is the last opcode, so its index + 1 is the expected size. */
+    static_assert(sizeof(s_opnames) / sizeof(s_opnames[0]) == (size_t)OP_HALT + 1,
+                  "s_opnames is out of sync with the OpCode enum");
 
     const char *opcode_name(OpCode op)
     {

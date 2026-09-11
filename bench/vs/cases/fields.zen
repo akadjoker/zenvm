@@ -1,0 +1,5 @@
+class P { var x; var y; def init() { self.x = 1; self.y = 2; } def step() { self.x = self.x + self.y; } }
+var p = P();
+var i = 0;
+while (i < 2000000) { p.step(); i = i + 1; }
+print(p.x);

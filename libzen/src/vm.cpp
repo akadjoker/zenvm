@@ -106,7 +106,7 @@ namespace zen
         num_selectors_ = 0;
 
         /* Criar main fiber */
-        main_fiber_ = new_fiber(nullptr, kMaxRegs * 4);
+        main_fiber_ = new_fiber(nullptr, kMainStackSlots);
         current_fiber_ = main_fiber_;
     }
 
@@ -964,6 +964,13 @@ namespace zen
         if (func->arity >= 0 && nargs != func->arity)
         {
             runtime_error("expected %d args but got %d", func->arity, nargs);
+            return false;
+        }
+
+        /* Register-stack bounds: the frame needs num_regs slots. */
+        if ((fiber->stack_top - nargs) + func->num_regs > fiber->stack + fiber->stack_capacity)
+        {
+            runtime_error("stack overflow");
             return false;
         }
 

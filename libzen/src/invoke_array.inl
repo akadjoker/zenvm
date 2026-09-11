@@ -228,17 +228,93 @@ if (ARRAY_METHOD("sort"))
         RT_ERROR("sort() expects 0 or 1 argument");
     }
     bool descending = false;
+    Value keyfn = val_nil();
     if (arg_count == 1)
     {
-        if (!is_string(args[0]))
+        if (is_string(args[0]))
         {
-            RT_ERROR("sort() argument must be a string (\"asc\" or \"desc\")");
+            ObjString *order = as_string(args[0]);
+            if (order->length == 4 && memcmp(order->chars, "desc", 4) == 0)
+                descending = true;
         }
-        ObjString *order = as_string(args[0]);
-        if (order->length == 4 && memcmp(order->chars, "desc", 4) == 0)
-            descending = true;
+        else if (is_closure(args[0]) || is_native(args[0]))
+        {
+            /* arr.sort(f) — f(element) produces the value to order by, the
+            ** decorate-sort-undecorate shape. A comparator taking two
+            ** elements would have to run inside the sort's own comparison,
+            ** which means re-entering the VM from qsort; keys are called
+            ** once per element up front instead, which is both cheaper and
+            ** safe against the collector moving nothing under us. */
+            keyfn = args[0];
+        }
+        else
+        {
+            RT_ERROR("sort() argument must be \"asc\"/\"desc\" or a key function");
+        }
     }
     int32_t count = arr_count(arr);
+
+    if (!is_nil(keyfn) && count > 1)
+    {
+        SAVE_IP();
+        /* Keys first, in one pass. Any error from the key function aborts
+        ** the sort with the array untouched. */
+        Value *keys = (Value *)malloc(sizeof(Value) * (size_t)count);
+        if (!keys)
+        {
+            RT_ERROR("out of memory in sort()");
+        }
+        for (int32_t k = 0; k < count; k++)
+        {
+            bool ok = true;
+            Value arg = arr->data[k];
+            keys[k] = call_protected(keyfn, &arg, 1, &ok);
+            if (!ok || had_error_)
+            {
+                free(keys);
+                LOAD_STATE();
+                RT_ERROR("sort() key function failed");
+            }
+        }
+        LOAD_STATE();
+
+        /* Insertion sort over (key, value) pairs: stable, no reentry into
+        ** the VM during comparison, and the arrays a game sorts per frame
+        ** are already near-sorted from the previous frame. */
+        for (int32_t i2 = 1; i2 < count; i2++)
+        {
+            Value kv = keys[i2];
+            Value vv = arr->data[i2];
+            double kd = is_int(kv) ? (double)kv.as.integer
+                                   : (is_float(kv) ? kv.as.number : 0.0);
+            int32_t j2 = i2 - 1;
+            while (j2 >= 0)
+            {
+                Value pk = keys[j2];
+                double pd = is_int(pk) ? (double)pk.as.integer
+                                       : (is_float(pk) ? pk.as.number : 0.0);
+                if (!(pd > kd)) break;
+                keys[j2 + 1] = keys[j2];
+                arr->data[j2 + 1] = arr->data[j2];
+                j2--;
+            }
+            keys[j2 + 1] = kv;
+            arr->data[j2 + 1] = vv;
+        }
+        if (descending)
+        {
+            for (int32_t k = 0; k < count / 2; k++)
+            {
+                Value t = arr->data[k];
+                arr->data[k] = arr->data[count - 1 - k];
+                arr->data[count - 1 - k] = t;
+            }
+        }
+        free(keys);
+        R[base] = receiver;
+        break;
+    }
+
     if (count > 1)
     {
         /* qsort with static comparator — store direction in a thread-local (ok for single-threaded VM) */

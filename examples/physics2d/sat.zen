@@ -1,0 +1,163 @@
+// ============================================================
+// physics2d / sat — convex polygon shapes + Separating Axis
+// Theorem collision (polygon-polygon), returning the minimum
+// translation vector (normal + penetration depth). Self-checking.
+// ============================================================
+include "vec2.zen";
+
+class Hit {
+    var normal;   // Vec2, minimum translation axis (points A -> B)
+    var depth;    // penetration along normal
+    def init(n, d) { self.normal = n; self.depth = d; }
+}
+
+class Polygon {
+    var verts;    // array of Vec2 (world space, CCW)
+    def init(verts) { self.verts = verts; }
+
+    def center() {
+        var c = Vec2(0.0, 0.0);
+        foreach (v in self.verts) { c = c + v; }
+        return c.scaled(1.0 / self.verts.len());
+    }
+
+    // Outward edge normals (one per edge).
+    def axes() {
+        var n = self.verts.len();
+        var out = [];
+        for (var i = 0; i < n; i += 1) {
+            var a = self.verts[i];
+            var b = self.verts[(i + 1) % n];
+            out.push((b - a).perp().normalized());
+        }
+        return out;
+    }
+
+    // Project all vertices onto axis -> [min, max].
+    def project(axis) {
+        var mn = self.verts[0].dot(axis);
+        var mx = mn;
+        foreach (v in self.verts) {
+            var p = v.dot(axis);
+            if (p < mn) { mn = p; }
+            if (p > mx) { mx = p; }
+        }
+        return [mn, mx];
+    }
+}
+
+// Box helper: axis-aligned, centered at (cx,cy), half extents hw,hh.
+def box(cx, cy, hw, hh) {
+    return Polygon([Vec2(cx - hw, cy - hh), Vec2(cx + hw, cy - hh),
+                    Vec2(cx + hw, cy + hh), Vec2(cx - hw, cy + hh)]);
+}
+
+// SAT: return a Hit if A and B overlap, else nil.
+def sat(A, B) {
+    var axes = [];
+    foreach (ax in A.axes()) { axes.push(ax); }
+    foreach (ax in B.axes()) { axes.push(ax); }
+
+    var min_overlap = 1.0e30;
+    var mtv = Vec2(0.0, 0.0);
+    foreach (ax in axes) {
+        var pa = A.project(ax);
+        var pb = B.project(ax);
+        if (pa[1] < pb[0] or pb[1] < pa[0]) { return nil; }   // separating axis -> no collision
+        var hi = pa[1] < pb[1] ? pa[1] : pb[1];
+        var lo = pa[0] > pb[0] ? pa[0] : pb[0];
+        var overlap = hi - lo;
+        if (overlap < min_overlap) { min_overlap = overlap; mtv = ax; }
+    }
+    // orient the normal from A to B
+    var dir = B.center() - A.center();
+    if (dir.dot(mtv) < 0.0) { mtv = mtv.scaled(-1.0); }
+    return Hit(mtv, min_overlap);
+}
+
+class Circle {
+    var c;    // center Vec2
+    var r;
+    def init(cx, cy, r) { self.c = Vec2(cx, cy); self.r = r; }
+}
+
+// Circle vs convex polygon SAT. Axes = polygon edge normals + the axis from the
+// nearest polygon vertex to the circle center (this extra axis is what makes
+// corner/vertex cases correct — without it, corners give false positives).
+// Returns a Hit (normal points poly -> circle) or nil.
+def circle_poly(circle, poly) {
+    var axes = poly.axes();
+    // nearest vertex axis
+    var nearest = poly.verts[0];
+    var best = (nearest - circle.c).len2();
+    foreach (v in poly.verts) {
+        var d = (v - circle.c).len2();
+        if (d < best) { best = d; nearest = v; }
+    }
+    var va = (nearest - circle.c);
+    if (va.len2() > 0.0000001) { axes.push(va.normalized()); }
+
+    var min_overlap = 1.0e30;
+    var mtv = Vec2(0.0, 0.0);
+    foreach (ax in axes) {
+        var pp = poly.project(ax);
+        var cp = circle.c.dot(ax);
+        var cmin = cp - circle.r;
+        var cmax = cp + circle.r;
+        if (pp[1] < cmin or cmax < pp[0]) { return nil; }   // separated
+        var hi = pp[1] < cmax ? pp[1] : cmax;
+        var lo = pp[0] > cmin ? pp[0] : cmin;
+        var overlap = hi - lo;
+        if (overlap < min_overlap) { min_overlap = overlap; mtv = ax; }
+    }
+    var dir = circle.c - poly.center();       // orient poly -> circle
+    if (dir.dot(mtv) < 0.0) { mtv = mtv.scaled(-1.0); }
+    return Hit(mtv, min_overlap);
+}
+
+def approx(a, b, tol) { return abs(a - b) < tol; }
+def eq(cond, m) { if (cond) { print("PASS " + m); } else { print("FAIL " + m); } }
+
+// --- overlapping boxes: A [-1,1], B centered at 1.5 -> x overlap 0.5 ---
+var A = box(0.0, 0.0, 1.0, 1.0);
+var B = box(1.5, 0.0, 1.0, 1.0);
+var h = sat(A, B);
+eq(h != nil, "overlap detected");
+eq(approx(h.depth, 0.5, 0.0001), "penetration depth 0.5");
+eq(approx(abs(h.normal.x), 1.0, 0.0001) and approx(h.normal.y, 0.0, 0.0001), "normal along x");
+eq(h.normal.x > 0.0, "normal points A->B (+x)");
+
+// --- separated boxes -> nil ---
+eq(sat(box(0.0, 0.0, 1.0, 1.0), box(3.0, 0.0, 1.0, 1.0)) == nil, "no overlap when separated");
+
+// --- vertical overlap ---
+var v = sat(box(0.0, 0.0, 2.0, 1.0), box(0.0, 1.5, 2.0, 1.0));
+eq(v != nil and approx(abs(v.normal.y), 1.0, 0.0001), "vertical contact normal along y");
+
+// --- rotated (diamond) polygon vs box ---
+var diamond = Polygon([Vec2(0.0, -1.4), Vec2(1.4, 0.0), Vec2(0.0, 1.4), Vec2(-1.4, 0.0)]);
+eq(sat(diamond, box(1.0, 0.0, 1.0, 1.0)) != nil, "diamond overlaps box");
+eq(sat(diamond, box(4.0, 0.0, 1.0, 1.0)) == nil, "diamond clear of far box");
+
+// --- deep overlap (concentric) picks smallest axis ---
+var d = sat(box(0.0, 0.0, 3.0, 1.0), box(0.0, 0.0, 1.0, 1.0));
+eq(d != nil and approx(d.depth, 2.0, 0.0001), "concentric min-overlap = 2 (y axis)");
+
+// --- circle vs polygon ---
+// box(0,0,1,1) spans [-1,1]^2.
+// face hit: circle centered on +x face, overlaps.
+var cf = circle_poly(Circle(1.5, 0.0, 1.0), box(0.0, 0.0, 1.0, 1.0));
+eq(cf != nil, "circle-face overlap");
+eq(cf != nil and approx(abs(cf.normal.x), 1.0, 0.0001) and approx(cf.normal.y, 0.0, 0.0001), "circle-face normal along x");
+eq(cf != nil and approx(cf.depth, 0.5, 0.0001), "circle-face depth 0.5");   // circle left edge at 0.5, box right at 1 -> 0.5
+
+// corner hit: circle near corner (1,1), center (1.5,1.5), dist to corner ~0.707 < 1.
+eq(circle_poly(Circle(1.5, 1.5, 1.0), box(0.0, 0.0, 1.0, 1.0)) != nil, "circle-corner overlap");
+// corner MISS: center (2,2), dist to corner (1,1) ~1.414 > 1 -> nil (the vertex axis catches it)
+eq(circle_poly(Circle(2.0, 2.0, 1.0), box(0.0, 0.0, 1.0, 1.0)) == nil, "circle clears corner (vertex axis)");
+// far miss
+eq(circle_poly(Circle(5.0, 0.0, 1.0), box(0.0, 0.0, 1.0, 1.0)) == nil, "circle far miss");
+// circle inside polygon
+eq(circle_poly(Circle(0.0, 0.0, 0.2), box(0.0, 0.0, 1.0, 1.0)) != nil, "circle inside box");
+
+print("=== sat OK ===");

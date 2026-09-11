@@ -71,16 +71,30 @@ if command -v cygpath >/dev/null 2>&1; then
     ROOT_WIN="$(cygpath -m "$ROOT")"
 fi
 
-# Normalisation: make ROOT-relative paths, rstrip each line, drop trailing
-# blank lines. Path rewriting keeps snapshots portable across machines/CI.
+# Normalisation, so a snapshot is comparable across machines and checkouts:
+#   - make ROOT-relative paths (and the Windows-form ROOT, if any), since the
+#     snapshot may have been recorded from a different working directory
+#     (or on a different machine entirely)
+#   - rewrite the path inside File "..." to just the basename, and the same
+#     for ", in <path>" traceback lines
+#   - rstrip each line
+#   - mask timing values (seconds=..., or a bare high-precision float on
+#     its own line), which differ on every run and every machine
+#   - drop leading and trailing blank lines
 normalize() {
     local script='s|'"$ROOT"'/||g'
     if [[ -n "$ROOT_WIN" ]]; then
         script+=$'\n''s|'"$ROOT_WIN"'/||g'
     fi
-    sed -e "$script" | sed -E 's/[[:space:]]+$//' | awk '
-        { buf[NR] = $0; lastnonblank = ($0 == "" ? lastnonblank : NR) }
-        END { for (i = 1; i <= lastnonblank; i++) print buf[i] }
+    sed -e "$script" | sed -E \
+           -e 's/[[:space:]]+$//' \
+           -e 's|File "[^"]*/([^"/]+)"|File "\1"|g' \
+           -e 's|, in [^ ]*/([^/ ]+)$|, in \1|' \
+           -e 's/(seconds|elapsed|time)=[0-9]+\.?[0-9]*(e[-+]?[0-9]+)?/\1=<T>/gI' \
+           -e 's/^[0-9]+\.[0-9]{4,}([eE][-+]?[0-9]+)?$/<T>/' | awk '
+        { buf[NR] = $0
+          if ($0 != "") { lastnonblank = NR; if (!firstnonblank) firstnonblank = NR } }
+        END { if (firstnonblank) for (i = firstnonblank; i <= lastnonblank; i++) print buf[i] }
     '
 }
 

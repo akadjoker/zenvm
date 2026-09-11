@@ -1,6 +1,7 @@
 #ifndef ZEN_VALUE_H
 #define ZEN_VALUE_H
 
+#include <cmath>
 #include "common.h"
 
 namespace zen
@@ -26,6 +27,12 @@ namespace zen
         VAL_OBJ, /* qualquer objecto no heap (string, func, array...) */
         VAL_PTR, /* raw pointer (não gerido pelo GC) */
     };
+
+    /* Float predicates without <cmath>: isnan/isinf/isfinite only exist as
+    ** std:: names, and libzen does not pull in the STL. */
+    inline bool zen_isnan(double d) { return d != d; }
+    inline bool zen_isinf(double d) { return d == HUGE_VAL || d == -HUGE_VAL; }
+    inline bool zen_isfinite(double d) { return d == d && d != HUGE_VAL && d != -HUGE_VAL; }
 
     struct Value
     {

@@ -1,3 +1,8 @@
+#ifdef ZEN_OPCODE_PROFILE
+#include <x86intrin.h>
+#include <cstdlib>
+#include <cstdio>
+#endif
 #include "vm.h"
 #include "debug.h"
 #include "name_tables.h"
@@ -12,6 +17,72 @@
 
 namespace zen
 {
+#ifdef ZEN_OPCODE_PROFILE
+    /* Per-opcode cycle profile (build with -DZEN_OPCODE_PROFILE). Every
+    ** dispatch charges the cycles since the previous one to the opcode that
+    ** just ran, so the table shows where the interpreter's time goes without
+    ** perf or valgrind. rdtsc adds a constant per dispatch, so compare
+    ** opcodes against each other, never against wall-clock. */
+    static uint64_t g_prof_cycles[256];
+    static uint64_t g_prof_count[256];
+    static int g_prof_prev = -1;
+    static uint64_t g_prof_t0 = 0;
+    static bool g_prof_registered = false;
+
+    static void zen_prof_dump()
+    {
+        int order[256];
+        int n = 0;
+        uint64_t total = 0;
+        for (int i = 0; i < 256; i++)
+        {
+            if (g_prof_count[i])
+            {
+                order[n++] = i;
+                total += g_prof_cycles[i];
+            }
+        }
+        for (int a = 1; a < n; a++) /* insertion sort by cycles, descending */
+        {
+            int key = order[a], b = a - 1;
+            while (b >= 0 && g_prof_cycles[order[b]] < g_prof_cycles[key])
+            {
+                order[b + 1] = order[b];
+                b--;
+            }
+            order[b + 1] = key;
+        }
+        fprintf(stderr, "\n%-18s %12s %14s %7s %8s\n", "opcode", "count", "cycles", "%", "avg");
+        for (int k = 0; k < n && k < 40; k++)
+        {
+            int i = order[k];
+            fprintf(stderr, "%-18s %12llu %14llu %6.1f%% %8.1f\n", opcode_name((OpCode)i),
+                    (unsigned long long)g_prof_count[i], (unsigned long long)g_prof_cycles[i],
+                    100.0 * (double)g_prof_cycles[i] / (double)(total ? total : 1),
+                    (double)g_prof_cycles[i] / (double)g_prof_count[i]);
+        }
+        uint64_t c = 0;
+        for (int i = 0; i < 256; i++)
+            c += g_prof_count[i];
+        fprintf(stderr, "total dispatches: %llu\n", (unsigned long long)c);
+    }
+
+    static inline void zen_prof_tick(int op)
+    {
+        uint64_t now = __rdtsc();
+        if (g_prof_prev >= 0)
+            g_prof_cycles[g_prof_prev] += now - g_prof_t0;
+        else if (!g_prof_registered)
+        {
+            g_prof_registered = true;
+            atexit(zen_prof_dump);
+        }
+        g_prof_count[op]++;
+        g_prof_prev = op;
+        g_prof_t0 = now;
+    }
+#endif
+
 
     static inline void copy_native_results(Value *dst, Value *src, int nret, int nresults)
     {
@@ -251,6 +322,7 @@ namespace zen
         Value *R = frame->base;
         Value *K = frame->func->constants;
         ObjUpvalue **UV = frame->closure ? frame->closure->upvalues : nullptr;
+        bool tail_flag = false; /* set by OP_TAILCALL, consumed in the OP_CALL body */
 
 /* Macro para reload após CALL/RETURN (frame mudou) */
 #define LOAD_STATE()                                \
@@ -393,10 +465,35 @@ namespace zen
             &&lbl_OP_DELINDEX,
             &&lbl_OP_GETSLICE,
             &&lbl_OP_IS,
+            &&lbl_OP_TAILCALL,
+            &&lbl_OP_RETURNNIL,
+            &&lbl_OP_JMPIFNIL,
+            &&lbl_OP_LTIJMPIFNOT,
+            &&lbl_OP_GTIJMPIFNOT,
+            &&lbl_OP_EQJMPIFNOT,
+            &&lbl_OP_NEJMPIFNOT,
+            &&lbl_OP_INVOKE_VT_FAST,
             &&lbl_OP_HALT,
         };
 
+        /* Indexed by OpCode, like s_opnames in debug.cpp. An opcode added to
+        ** the enum without a slot here shifts every later entry, so dispatch
+        ** silently jumps to the wrong handler — no crash at the edit, just a
+        ** VM that runs the wrong instruction. s_opnames had this guard and
+        ** caught the same mistake; this table did not. */
+        static_assert(sizeof(dispatch_table) / sizeof(dispatch_table[0]) == (size_t)OP_HALT + 1,
+                      "dispatch_table is out of sync with the OpCode enum");
+
+#ifdef ZEN_OPCODE_PROFILE
+#define DISPATCH()                         \
+    do                                     \
+    {                                      \
+        zen_prof_tick(ZEN_OP(*ip));        \
+        goto *dispatch_table[ZEN_OP(*ip)]; \
+    } while (0)
+#else
 #define DISPATCH() goto *dispatch_table[ZEN_OP(*ip)]
+#endif
 #define CASE(op) lbl_##op:
 #define NEXT()      \
     do              \
@@ -909,8 +1006,15 @@ namespace zen
             SAVE_IP();
             if (!try_unary_operator(this, R[ZEN_B(i)], SLOT_NEG, &result))
             {
+                /* Stale class hint on a numeric value: negate numerically
+                   instead of erroring. */
                 LOAD_STATE();
-                RT_ERROR("object does not implement unary operator -");
+                Value vb = R[ZEN_B(i)];
+                if (vb.type == VAL_INT)
+                    R[dst] = val_int(-vb.as.integer);
+                else
+                    R[dst] = val_float(-to_number(vb));
+                NEXT();
             }
             if (had_error_) return;
             LOAD_STATE();
@@ -942,8 +1046,16 @@ namespace zen
             SAVE_IP();
             if (!try_binary_operator(this, R[ZEN_B(i)], R[ZEN_C(i)], SLOT_LT, -1, &result))
             {
+                /* Operand wasn't an instance with operator< (e.g. a stale class
+                   hint on a numeric/string value). Fall back like OP_LT rather
+                   than erroring, so a wrong compile-time hint stays harmless. */
                 LOAD_STATE();
-                RT_ERROR("object does not implement operator <");
+                Value vb = R[ZEN_B(i)], vc = R[ZEN_C(i)];
+                if (is_string(vb) && is_string(vc))
+                    R[dst] = val_bool(strcmp(as_cstring(vb), as_cstring(vc)) < 0);
+                else
+                    R[dst] = val_bool(to_number(vb) < to_number(vc));
+                NEXT();
             }
             if (had_error_) return;
             LOAD_STATE();
@@ -958,8 +1070,16 @@ namespace zen
             SAVE_IP();
             if (!try_binary_operator(this, R[ZEN_B(i)], R[ZEN_C(i)], SLOT_LE, -1, &result))
             {
+                /* See OP_LT_OBJ: fall back to numeric/string instead of erroring
+                   when the hinted operand isn't actually an operator-bearing
+                   instance. */
                 LOAD_STATE();
-                RT_ERROR("object does not implement operator <=");
+                Value vb = R[ZEN_B(i)], vc = R[ZEN_C(i)];
+                if (is_string(vb) && is_string(vc))
+                    R[dst] = val_bool(strcmp(as_cstring(vb), as_cstring(vc)) <= 0);
+                else
+                    R[dst] = val_bool(to_number(vb) <= to_number(vc));
+                NEXT();
             }
             if (had_error_) return;
             LOAD_STATE();
@@ -975,6 +1095,23 @@ namespace zen
             int8_t imm = (int8_t)ZEN_C(i);
             if (vb.type == VAL_INT)
                 R[ZEN_A(i)] = val_int((int64_t)((uint64_t)vb.as.integer + (int64_t)imm));
+            else if (__builtin_expect(is_string(vb), 0))
+            {
+                /* Fix: the immediate fold must not silently swallow a string
+                   left operand — OP_ADD concatenates "x" + 1 into "x1"; this
+                   deoptimizes back to that same behaviour instead of
+                   coercing the string to 0.0 via to_number(). */
+                char buf[32];
+                int lb = int_to_cstr(imm, buf);
+                int la = as_string(vb)->length;
+                int len = la + lb;
+                char tmp[256];
+                char *p = (len <= 256) ? tmp : (char *)malloc(len);
+                memcpy(p, as_cstring(vb), la);
+                memcpy(p + la, buf, lb);
+                R[ZEN_A(i)] = val_obj((Obj *)new_string(&gc_, p, len));
+                if (p != tmp) free(p);
+            }
             else
                 R[ZEN_A(i)] = val_float(to_number(vb) + imm);
             NEXT();
@@ -1148,7 +1285,14 @@ namespace zen
         }
 
         /* --- Funções --- */
+        CASE(OP_TAILCALL)
+            /* `return f(args)` in tail position. Falls into OP_CALL with the tail
+               flag set — only the script-closure branch differs (reuse frame). */
+            tail_flag = true;
+            goto call_shared;
         CASE(OP_CALL)
+            tail_flag = false;
+        call_shared:
         {
             uint32_t i = *ip;
             int a = ZEN_A(i);
@@ -1173,7 +1317,30 @@ namespace zen
                     DISPATCH();
                 }
 
-                if (fiber->frame_count >= kMaxFrames)
+                /* Tail call to a script closure: reuse the current frame so the
+                   register/frame stacks don't grow → unbounded tail recursion. */
+                if (tail_flag)
+                {
+                    if (fn->arity >= 0 && nargs != fn->arity)
+                    {
+                        RT_ERROR("expected %d args but got %d", fn->arity, nargs);
+                    }
+                    if (fiber->open_upvalues && fiber->open_upvalues->location >= frame->base)
+                        close_upvalues(fiber, frame->base);
+                    Value *nb = frame->base;
+                    for (int k = 0; k < nargs; k++)
+                        nb[k] = R[a + 1 + k]; /* dst k < src a+1+k → safe */
+                    frame->closure = cl;
+                    frame->func = fn;
+                    frame->ip = fn->code;
+                    /* base/ret_reg/ret_count preserved → returns to original caller */
+                    fiber->stack_top = nb + fn->num_regs;
+                    LOAD_STATE();
+                    DISPATCH();
+                }
+
+                if (fiber->frame_count >= kMaxFrames ||
+                    &R[a + 1] + fn->num_regs > fiber->stack + fiber->stack_capacity)
                 {
                     RT_ERROR("stack overflow");
                 }
@@ -1278,7 +1445,8 @@ namespace zen
                         RT_ERROR("init() expects %d args but got %d", fn->arity, nargs);
                     }
                     /* Set up frame: R[a] = instance (self), args at R[a+1..] */
-                    if (fiber->frame_count >= kMaxFrames)
+                    if (fiber->frame_count >= kMaxFrames ||
+                        &R[a] + fn->num_regs > fiber->stack + fiber->stack_capacity)
                     {
                         RT_ERROR("stack overflow");
                     }
@@ -1320,7 +1488,8 @@ namespace zen
             {
                 ObjClosure *cl = as_closure(callee);
                 ObjFunc *fn = cl->func;
-                if (fiber->frame_count >= kMaxFrames)
+                if (fiber->frame_count >= kMaxFrames ||
+                    &R[a + 1] + fn->num_regs > fiber->stack + fiber->stack_capacity)
                 {
                     RT_ERROR("stack overflow");
                 }
@@ -1344,6 +1513,64 @@ namespace zen
                 DISPATCH();
             }
             RT_ERROR("attempt to call non-function (got %s)", val_type_str(callee));
+        }
+
+        CASE(OP_RETURNNIL)
+        {
+            /* `return` with no value, and the implicit return the compiler
+            ** appends to every function. The returned value is the nil
+            ** constant, so the general OP_RETURN work — reading R[a],
+            ** counting results, nil-filling — is all known in advance.
+            ** Falls through to OP_RETURN's path for the cases that are not
+            ** a plain script-to-script return. */
+            if (fiber->open_upvalues && fiber->open_upvalues->location >= frame->base)
+                close_upvalues(fiber, frame->base);
+
+            if (__builtin_expect(fiber->frame_count > 1 && frame->ret_count == 1 &&
+                                     external_call_stop_depth_ < 0, 1))
+            {
+                int ret_reg = frame->ret_reg;
+                fiber->frame_count--;
+                CallFrame *caller_frame = &fiber->frames[fiber->frame_count - 1];
+                caller_frame->base[ret_reg] = val_nil();
+                fiber->stack_top = caller_frame->base + caller_frame->func->num_regs;
+                LOAD_STATE();
+                DISPATCH();
+            }
+
+            /* Anything else — top-level return, a native waiting at a stop
+            ** depth, a multi-value caller — takes the general path below.
+            ** Upvalues are already closed, so this repeats only the result
+            ** handling, with the returned value known to be nil. */
+            {
+                int ret_reg = frame->ret_reg;
+                int ret_count = frame->ret_count;
+                fiber->frame_count--;
+                if (fiber->frame_count == 0)
+                {
+                    fiber->state = FIBER_DONE;
+                    if (fiber->caller)
+                    {
+                        fiber->caller->transfer_value = val_nil();
+                        fiber->caller->state = FIBER_RUNNING;
+                        current_fiber_ = fiber->caller;
+                    }
+                    return;
+                }
+                CallFrame *caller_frame = &fiber->frames[fiber->frame_count - 1];
+                Value *caller_base = caller_frame->base;
+                /* One value produced (nil); nil-fill whatever else was asked for. */
+                for (int j = 0; j < ret_count; j++)
+                    caller_base[ret_reg + j] = val_nil();
+                fiber->stack_top = caller_base + caller_frame->func->num_regs;
+                if (external_call_stop_depth_ >= 0 &&
+                    fiber->frame_count <= external_call_stop_depth_)
+                {
+                    return;
+                }
+                LOAD_STATE();
+                DISPATCH();
+            }
         }
 
         CASE(OP_RETURN)
@@ -1521,20 +1748,14 @@ namespace zen
             int field = ZEN_C(i);
             ProcessSlot *target = nullptr;
 
+            /* current_slot() is O(1): the scheduler records the running
+            ** slot index. find_slot() is a linear scan over the pool, so
+            ** only father/son (which need another process) pay for it. */
+            ProcessSlot *self = current_slot();
             if (mode == 0) /* self */
-            {
-                target = find_slot(current_process_id_);
-            }
-            else if (mode == 1) /* father */
-            {
-                ProcessSlot *self = find_slot(current_process_id_);
-                if (self) target = find_slot(self->parent_id);
-            }
-            else /* son */
-            {
-                ProcessSlot *self = find_slot(current_process_id_);
-                if (self) target = find_slot(self->last_child_id);
-            }
+                target = self;
+            else if (self) /* father / son */
+                target = find_slot(mode == 1 ? self->parent_id : self->last_child_id);
 
             if (target && field < MAX_PRIVATES)
                 R[a] = target->privates[field];
@@ -1553,20 +1774,14 @@ namespace zen
             int field = ZEN_C(i);
             ProcessSlot *target = nullptr;
 
+            /* current_slot() is O(1): the scheduler records the running
+            ** slot index. find_slot() is a linear scan over the pool, so
+            ** only father/son (which need another process) pay for it. */
+            ProcessSlot *self = current_slot();
             if (mode == 0) /* self */
-            {
-                target = find_slot(current_process_id_);
-            }
-            else if (mode == 1) /* father */
-            {
-                ProcessSlot *self = find_slot(current_process_id_);
-                if (self) target = find_slot(self->parent_id);
-            }
-            else /* son */
-            {
-                ProcessSlot *self = find_slot(current_process_id_);
-                if (self) target = find_slot(self->last_child_id);
-            }
+                target = self;
+            else if (self) /* father / son */
+                target = find_slot(mode == 1 ? self->parent_id : self->last_child_id);
 
             if (target && field < MAX_PRIVATES)
                 target->privates[field] = R[a];
@@ -1733,7 +1948,12 @@ namespace zen
         CASE(OP_APPEND)
         {
             uint32_t i = *ip;
-            ObjArray *arr = as_array(R[ZEN_A(i)]);
+            Value aval = R[ZEN_A(i)];
+            if (!is_array(aval))
+            {
+                RT_ERROR("APPEND expected array: receiver=R%d receiver_type=%s", ZEN_A(i), value_debug_type(aval));
+            }
+            ObjArray *arr = as_array(aval);
             array_push(&gc_, arr, R[ZEN_B(i)]);
             NEXT();
         }
@@ -1741,7 +1961,12 @@ namespace zen
         CASE(OP_SETADD)
         {
             uint32_t i = *ip;
-            ObjSet *set = as_set(R[ZEN_A(i)]);
+            Value sval = R[ZEN_A(i)];
+            if (!is_set(sval))
+            {
+                RT_ERROR("SETADD expected set: receiver=R%d receiver_type=%s", ZEN_A(i), value_debug_type(sval));
+            }
+            ObjSet *set = as_set(sval);
             set_add(&gc_, set, R[ZEN_B(i)]);
             NEXT();
         }
@@ -2132,7 +2357,8 @@ namespace zen
                     {
                         RT_ERROR("%s.%s() expects %d args but got %d", klass->name->chars, mname, fn->arity, arg_count);
                     }
-                    if (fiber->frame_count >= kMaxFrames)
+                    if (fiber->frame_count >= kMaxFrames ||
+                        &R[base] + fn->num_regs > fiber->stack + fiber->stack_capacity)
                     {
                         RT_ERROR("stack overflow");
                     }
@@ -2182,7 +2408,8 @@ namespace zen
                     {
                         RT_ERROR("%s.%s() expects %d args but got %d", cls->name->chars, mname, fn->arity, arg_count);
                     }
-                    if (fiber->frame_count >= kMaxFrames)
+                    if (fiber->frame_count >= kMaxFrames ||
+                        &R[base + 1] + fn->num_regs > fiber->stack + fiber->stack_capacity)
                     {
                         RT_ERROR("stack overflow");
                     }
@@ -2225,8 +2452,17 @@ namespace zen
             uint8_t arg_count = ZEN_B(i);
             uint8_t slot = ZEN_C(i);
 
-            ObjInstance *inst = as_instance(R[base]);
+            Value recv = R[base];
+            if (!is_instance(recv))
+            {
+                RT_ERROR("INVOKE_VT expected instance: receiver=R%d receiver_type=%s slot=%d", base, value_debug_type(recv), slot);
+            }
+            ObjInstance *inst = as_instance(recv);
             ObjClass *klass = inst->klass;
+            if (slot < 0 || slot >= klass->vtable_size)
+            {
+                RT_ERROR("INVOKE_VT slot out of range: class=%s slot=%d vtable_size=%d", klass->name->chars, slot, klass->vtable_size);
+            }
             Value mval = klass->vtable[slot];
 
             if (is_closure(mval))
@@ -2266,6 +2502,43 @@ namespace zen
             NEXT();
         }
 
+        CASE(OP_INVOKE_VT_FAST)
+        {
+            /* The compiler proved the receiver is an annotated instance, the
+            ** slot holds a script closure in its sealed vtable, and the
+            ** signature takes exactly arg_count values — so OP_INVOKE_VT's
+            ** type test, slot range check and closure/native branch are all
+            ** already decided. Only the frame push remains.
+            **
+            ** The guarantee is the compiler's: emit this ONLY where all
+            ** three hold, or the as_instance()/as_closure() below are the
+            ** same unchecked casts that made the fused opcodes segfault. */
+            uint32_t i = *ip;
+            uint8_t base = ZEN_A(i);
+            uint8_t arg_count = ZEN_B(i);
+            uint8_t slot = ZEN_C(i);
+            (void)arg_count;
+            ObjInstance *inst = as_instance(R[base]);
+            ObjClosure *cl = as_closure(inst->klass->vtable[slot]);
+            ObjFunc *fn = cl->func;
+            if (fiber->frame_count >= kMaxFrames)
+            {
+                RT_ERROR("stack overflow");
+            }
+            ++ip;
+            SAVE_IP();
+            CallFrame *new_frame = &fiber->frames[fiber->frame_count++];
+            new_frame->closure = cl;
+            new_frame->func = fn;
+            new_frame->ip = fn->code;
+            new_frame->base = &R[base]; /* base[0]=self, base[1..]=args */
+            new_frame->ret_reg = base;
+            new_frame->ret_count = 1;
+            fiber->stack_top = new_frame->base + fn->num_regs;
+            LOAD_STATE();
+            DISPATCH();
+        }
+
         CASE(OP_SUPER_INVOKE)
         {
             /* 3-word: word1=[OP|base|argc|0], word2=(sel<<16|name_ki), word3=parent_ki */
@@ -2300,7 +2573,8 @@ namespace zen
                     const char *mname = as_string(frame->func->constants[name_ki])->chars;
                     RT_ERROR("super.%s() expects %d args but got %d", mname, fn->arity, arg_count);
                 }
-                if (fiber->frame_count >= kMaxFrames)
+                if (fiber->frame_count >= kMaxFrames ||
+                    &R[base] + fn->num_regs > fiber->stack + fiber->stack_capacity)
                 {
                     RT_ERROR("stack overflow");
                 }
@@ -2716,6 +2990,118 @@ namespace zen
             NEXT();
         }
 
+        /* --- Ported from zenpy (PLANO.md item 1) ---
+        ** Same shape as OP_LTJMPIFNOT/OP_LEJMPIFNOT above: compare, step to
+        ** the sBx word, jump when the condition does not hold. */
+
+        CASE(OP_EQJMPIFNOT)
+        {
+            uint32_t i = *ip;
+            Value vb = R[ZEN_B(i)], vc = R[ZEN_C(i)];
+            bool eq;
+            if (__builtin_expect(is_instance(vb) || is_instance(vc), 0))
+            {
+                ++ip; /* operator overload may re-enter; be at the sBx word */
+                Value result;
+                SAVE_IP();
+                if (try_binary_operator(this, vb, vc, SLOT_EQ, SLOT_EQ, &result))
+                {
+                    if (had_error_) return;
+                    LOAD_STATE();
+                    eq = is_truthy(result);
+                }
+                else
+                {
+                    LOAD_STATE();
+                    eq = values_equal(vb, vc);
+                }
+                if (!eq)
+                    ip += ZEN_SBX(*ip);
+                NEXT();
+            }
+            eq = values_equal(vb, vc);
+            ++ip;
+            if (!eq)
+                ip += ZEN_SBX(*ip);
+            NEXT();
+        }
+
+        CASE(OP_NEJMPIFNOT)
+        {
+            uint32_t i = *ip;
+            Value vb = R[ZEN_B(i)], vc = R[ZEN_C(i)];
+            bool ne;
+            if (__builtin_expect(is_instance(vb) || is_instance(vc), 0))
+            {
+                ++ip;
+                Value result;
+                SAVE_IP();
+                if (try_binary_operator(this, vb, vc, SLOT_EQ, SLOT_EQ, &result))
+                {
+                    if (had_error_) return;
+                    LOAD_STATE();
+                    ne = !is_truthy(result);
+                }
+                else
+                {
+                    LOAD_STATE();
+                    ne = !values_equal(vb, vc);
+                }
+                if (!ne)
+                    ip += ZEN_SBX(*ip);
+                NEXT();
+            }
+            ne = !values_equal(vb, vc);
+            ++ip;
+            if (!ne)
+                ip += ZEN_SBX(*ip);
+            NEXT();
+        }
+
+        /* C is a signed 8-bit immediate, so `i < 10` needs no register for
+        ** the literal and no constant load before the compare. */
+        CASE(OP_LTIJMPIFNOT)
+        {
+            uint32_t i = *ip;
+            Value vx = R[ZEN_B(i)];
+            int64_t imm = (int8_t)ZEN_C(i);
+            bool less;
+            if (__builtin_expect(vx.type == VAL_INT, 1))
+                less = vx.as.integer < imm;
+            else
+                less = to_number(vx) < (double)imm;
+            ++ip;
+            if (!less)
+                ip += ZEN_SBX(*ip);
+            NEXT();
+        }
+
+        CASE(OP_GTIJMPIFNOT)
+        {
+            uint32_t i = *ip;
+            Value vx = R[ZEN_B(i)];
+            int64_t imm = (int8_t)ZEN_C(i);
+            bool greater;
+            if (__builtin_expect(vx.type == VAL_INT, 1))
+                greater = vx.as.integer > imm;
+            else
+                greater = to_number(vx) > (double)imm;
+            ++ip;
+            if (!greater)
+                ip += ZEN_SBX(*ip);
+            NEXT();
+        }
+
+        CASE(OP_JMPIFNIL)
+        {
+            uint32_t i = *ip;
+            bool isnil = is_nil(R[ZEN_A(i)]);
+            ++ip;
+            if (isnil)
+                ip += ZEN_SBX(*ip);
+            NEXT();
+        }
+
         CASE(OP_FORPREP)
         {
             /* R[A]=counter, R[A+1]=limit, R[A+2]=step
@@ -2747,15 +3133,56 @@ namespace zen
             /* word1: GETFIELD_IDX  R[A] = R[B].fields[C]
                word2: MUL           R[A] = R[B] * R[C]    */
             uint32_t i1 = *ip;
-            ObjInstance *inst = as_instance(R[ZEN_B(i1)]);
-            R[ZEN_A(i1)] = inst->fields[ZEN_C(i1)];
+            Value fobj = R[ZEN_B(i1)];
+            const int fidx = ZEN_C(i1);
+            if (is_instance(fobj))
+            {
+                ObjInstance *inst = as_instance(fobj);
+                if (fidx < 0 || fidx >= inst->klass->num_fields)
+                {
+                    RT_ERROR("GETFIELD_MUL out of bounds: receiver=R%d class=%s field_index=%d field_count=%d", ZEN_B(i1), inst->klass->name->chars, fidx, inst->klass->num_fields);
+                }
+                R[ZEN_A(i1)] = inst->fields[fidx];
+            }
+            else if (is_struct(fobj))
+            {
+                ObjStruct *st = as_struct(fobj);
+                if (fidx < 0 || fidx >= st->def->num_fields)
+                {
+                    RT_ERROR("GETFIELD_MUL out of bounds: receiver=R%d struct=%s field_index=%d field_count=%d", ZEN_B(i1), st->def->name->chars, fidx, st->def->num_fields);
+                }
+                R[ZEN_A(i1)] = st->fields[fidx];
+            }
+            else
+            {
+                RT_ERROR("GETFIELD_MUL expected instance/struct: dst=R%d receiver=R%d receiver_type=%s field_index=%d", ZEN_A(i1), ZEN_B(i1), value_debug_type(fobj), fidx);
+            }
             ++ip;
             uint32_t i2 = *ip;
             Value vb = R[ZEN_B(i2)], vc = R[ZEN_C(i2)];
-            if (vb.type == VAL_INT && vc.type == VAL_INT)
-                R[ZEN_A(i2)] = val_int((int64_t)((uint64_t)vb.as.integer * (uint64_t)vc.as.integer));
+            if (__builtin_expect(!is_obj(vb) && !is_obj(vc), 1))
+            {
+                if (vb.type == VAL_INT && vc.type == VAL_INT)
+                    R[ZEN_A(i2)] = val_int((int64_t)((uint64_t)vb.as.integer * (uint64_t)vc.as.integer));
+                else
+                    R[ZEN_A(i2)] = val_float(to_number(vb) * to_number(vc));
+            }
+            else if (is_instance(vb) || is_instance(vc))
+            {
+                Value result;
+                SAVE_IP();
+                if (try_binary_operator(this, vb, vc, SLOT_MUL, SLOT_RMUL, &result))
+                {
+                    if (had_error_) return;
+                    LOAD_STATE();
+                    R[ZEN_A(i2)] = result;
+                }
+                else { LOAD_STATE(); R[ZEN_A(i2)] = val_float(to_number(vb) * to_number(vc)); }
+            }
             else
+            {
                 R[ZEN_A(i2)] = val_float(to_number(vb) * to_number(vc));
+            }
             NEXT();
         }
 
@@ -2764,15 +3191,56 @@ namespace zen
             /* word1: GETFIELD_IDX  R[A] = R[B].fields[C]
                word2: SUB           R[A] = R[B] - R[C]    */
             uint32_t i1 = *ip;
-            ObjInstance *inst = as_instance(R[ZEN_B(i1)]);
-            R[ZEN_A(i1)] = inst->fields[ZEN_C(i1)];
+            Value fobj = R[ZEN_B(i1)];
+            const int fidx = ZEN_C(i1);
+            if (is_instance(fobj))
+            {
+                ObjInstance *inst = as_instance(fobj);
+                if (fidx < 0 || fidx >= inst->klass->num_fields)
+                {
+                    RT_ERROR("GETFIELD_SUB out of bounds: receiver=R%d class=%s field_index=%d field_count=%d", ZEN_B(i1), inst->klass->name->chars, fidx, inst->klass->num_fields);
+                }
+                R[ZEN_A(i1)] = inst->fields[fidx];
+            }
+            else if (is_struct(fobj))
+            {
+                ObjStruct *st = as_struct(fobj);
+                if (fidx < 0 || fidx >= st->def->num_fields)
+                {
+                    RT_ERROR("GETFIELD_SUB out of bounds: receiver=R%d struct=%s field_index=%d field_count=%d", ZEN_B(i1), st->def->name->chars, fidx, st->def->num_fields);
+                }
+                R[ZEN_A(i1)] = st->fields[fidx];
+            }
+            else
+            {
+                RT_ERROR("GETFIELD_SUB expected instance/struct: dst=R%d receiver=R%d receiver_type=%s field_index=%d", ZEN_A(i1), ZEN_B(i1), value_debug_type(fobj), fidx);
+            }
             ++ip;
             uint32_t i2 = *ip;
             Value vb = R[ZEN_B(i2)], vc = R[ZEN_C(i2)];
-            if (vb.type == VAL_INT && vc.type == VAL_INT)
-                R[ZEN_A(i2)] = val_int(vb.as.integer - vc.as.integer);
+            if (__builtin_expect(!is_obj(vb) && !is_obj(vc), 1))
+            {
+                if (vb.type == VAL_INT && vc.type == VAL_INT)
+                    R[ZEN_A(i2)] = val_int(vb.as.integer - vc.as.integer);
+                else
+                    R[ZEN_A(i2)] = val_float(to_number(vb) - to_number(vc));
+            }
+            else if (is_instance(vb) || is_instance(vc))
+            {
+                Value result;
+                SAVE_IP();
+                if (try_binary_operator(this, vb, vc, SLOT_SUB, SLOT_RSUB, &result))
+                {
+                    if (had_error_) return;
+                    LOAD_STATE();
+                    R[ZEN_A(i2)] = result;
+                }
+                else { LOAD_STATE(); R[ZEN_A(i2)] = val_float(to_number(vb) - to_number(vc)); }
+            }
             else
+            {
                 R[ZEN_A(i2)] = val_float(to_number(vb) - to_number(vc));
+            }
             NEXT();
         }
 
