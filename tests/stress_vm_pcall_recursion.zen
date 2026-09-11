@@ -5,8 +5,13 @@ def rec(n) {
 }
 print("rec200:", rec(200));
 
-// unbounded recursion must fail gracefully under pcall, not segfault
-def infinite(n) { return infinite(n + 1); }
+// Unbounded NON-tail recursion must fail gracefully under pcall, not
+// segfault. `return infinite(n + 1);` alone (no arithmetic around the call)
+// is a tail call — OP_TAILCALL reuses the current frame instead of growing
+// the stack, so that shape runs forever by design (same as Lua/Scheme TCO)
+// and must NOT be used here. The `1 + ...` forces a non-tail call so the
+// frame stack actually grows and the depth limit kicks in.
+def infinite(n) { return 1 + infinite(n + 1); }
 var (ok, err) = pcall(infinite, 0);
 print("deep-rec caught:", ok == false, err != nil);
 
