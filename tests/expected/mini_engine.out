@@ -1,5 +1,0 @@
-File "tests/mini_engine.zen", line 61
-          draw_sprite(self.x, self.y, self.scale, self.r, self.g, self.b, 220);
-          ^^^^^^^^^^^
-Error at 'draw_sprite': undefined variable (never declared with var/def/class)
-zen: compilation failed.

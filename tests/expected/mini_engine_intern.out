@@ -1,5 +1,0 @@
-File "tests/mini_engine_intern.zen", line 19
-      gui_rect(x, y, w, h, fill, r, g, b, a);
-      ^^^^^^^^
-Error at 'gui_rect': undefined variable (never declared with var/def/class)
-zen: compilation failed.

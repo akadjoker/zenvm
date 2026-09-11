@@ -12,24 +12,10 @@ bench_num.zen
 bench_struct_nofuse.zen
 bench_struct_nofuse2.zen
 
-# Windowed tests — need glfw/gl/raylib modules and a display; run manually
-# with the full build (they would open a window or fail headless).
-test_raylib_texture.zen
-test_raylib_types.zen
-test_raylib_window.zen
-test_zen_gl.zen
-triangle.zen
-
-# Reason: needs a runner with graphics/native modules linked in (zen_game,
-# zen_gl) or an optional module that a core `zen` build does not carry.
-# Run these against the matching runner binary, not the plain CLI.
-bunnymark.zen
-mini_engine.zen
-mini_engine_intern.zen
+# Reason: needs something the plain `zen` CLI does not carry — the process
+# runner loop (zen_game, now in zenvm-modules) or a loadable plugin built
+# from plugins/. Run these against the matching binary, not the plain CLI.
 test_process.zen
-test_gif.zen
-test_nn.zen
-test_sqlite.zen
 test_plugin.zen
 
 # Reason: these call Color(), a native struct that no host in this repo

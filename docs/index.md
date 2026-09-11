@@ -5,19 +5,13 @@
 - [Quick Reference](quick-reference.md)
 - [Standard Library & Native Modules](standard-library.md)
 
-## Native modules (`zen_gl`)
+## Native modules
 
-| Module | `import` | Descrição |
-|---|---|---|
-| image | `import image` | Load/save/encode/flip pixel data (stb_image) |
-| noise | `import noise` | Perlin/fbm/ridge/turbulence (stb_perlin) |
-| rectpack | `import rectpack` | Rectangle bin-packing (stb_rect_pack) |
-| font | `import font` | TTF rasterisation (stb_truetype) |
-| audio | `import audio` | Playback + synthesis (miniaudio) |
-| gl | `import gl` | Raw OpenGL 3.3 / GLES 3.0 bindings |
-| sdl2 | `import sdl2` | Window, GL context, 2D renderer, events |
-| glfw | `import glfw` | GLFW window + input (desktop only) |
-
+`image`, `noise`, `rectpack`, `font`, `audio`, `gl`, `sdl2`, `glfw`, `raylib`,
+`sqlite`, `nn`, `gif` and `canvas` — together with the `zen_game` / `zen_gl`
+runners and the batteries-included `zen` — are documented and built in the
+separate [zenvm-modules](https://github.com/akadjoker/zenvm-modules)
+repository. This repository is the core VM and the plain `zen` CLI only.
 
 ## Tutorials
 

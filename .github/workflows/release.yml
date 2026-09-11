@@ -5,8 +5,9 @@ name: release
 # workflow_dispatch does the same dry: it ends in a DRAFT prerelease you can
 # inspect and delete, and creates no tag.
 #
-# Headless only for now, same as ci.yml: no raylib/SDL2/GLFW/audio. Those
-# need system libs and a display that aren't set up in this workflow yet.
+# These are the core-only `zen` binaries. Runners with native/graphics
+# modules (zen_game, zen_gl, batteries-included zen) are zenvm-modules'
+# to release.
 on:
   push:
     tags:
@@ -16,16 +17,6 @@ on:
 permissions:
   contents: write
 
-env:
-  ZEN_CI_CMAKE_FLAGS: >-
-    -DZEN_ENABLE_GLFW=OFF
-    -DZEN_ENABLE_SDL2=OFF
-    -DZEN_ENABLE_RAYLIB_MODULE=OFF
-    -DZEN_ENABLE_GL_MODULE=OFF
-    -DZEN_ENABLE_AUDIO=OFF
-    -DZEN_BUILD_VISUAL=OFF
-    -DZEN_BUILD_GFX=OFF
-
 jobs:
   linux:
     name: linux-x86_64
@@ -33,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release $ZEN_CI_CMAKE_FLAGS
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build --target zen -j"$(nproc)"
       - name: Snapshot tests
@@ -66,9 +57,7 @@ jobs:
             mingw-w64-ucrt-x86_64-ninja
 
       - name: Configure
-        run: >-
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-          $ZEN_CI_CMAKE_FLAGS
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
         run: cmake --build build --target zen -j"$(nproc)"

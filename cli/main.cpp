@@ -12,23 +12,16 @@
 #include "memory.h"
 #include "debug.h"
 #include "bytecode.h"
-#ifdef ZEN_ENABLE_STB_IMAGE
-#include "zen/module_image.h"
-#endif
-#ifdef ZEN_ENABLE_GLFW
-#include "zen/module_glfw.h"
-#endif
-#ifdef ZEN_ENABLE_SDL2
-#include "zen/module_sdl2.h"
-#endif
-#ifdef ZEN_ENABLE_NN
-#include "zen/module_dnn.h"
-#endif
-#ifdef ZEN_ENABLE_SQLITE
-#include "zen/module_sqlite.h"
-#endif
-#ifdef ZEN_ENABLE_GIF
-/* gif module is part of module.h (builtin), no separate header needed */
+/* Native modules (graphics, audio, sqlite, dnn, ...) live in the separate
+   zenvm-modules repo. It builds its own `zen` from this very file rather
+   than keeping a second copy: compile with
+       -DZEN_CLI_EXTRA_LIBS_HEADER='"zen_modules_libs.h"'
+   and that header must declare
+       void zen_cli_register_extra_libs(zen::VM &vm);
+   which register_default_libs() calls after the core libs. Plain builds of
+   this repo never define the macro and get the core-only CLI. */
+#ifdef ZEN_CLI_EXTRA_LIBS_HEADER
+#include ZEN_CLI_EXTRA_LIBS_HEADER
 #endif
 #include <cstdio>
 #include <cstdlib>
@@ -105,12 +98,6 @@ static void register_default_libs(VM &vm)
 #ifdef ZEN_ENABLE_CRYPTO
     vm.register_lib(&zen_lib_crypto);
 #endif
-#ifdef ZEN_ENABLE_NN
-    vm.register_lib(&zen_lib_nn);  /* modules/dnn */
-#endif
-#ifdef ZEN_ENABLE_SQLITE
-    vm.register_lib(&zen_lib_sqlite);
-#endif
 #ifdef ZEN_ENABLE_JSON
     vm.register_lib(&zen_lib_json);
 #endif
@@ -123,20 +110,8 @@ static void register_default_libs(VM &vm)
     vm.register_lib(&zen_lib_xml);
     vm.register_lib(&zen_lib_ini);
     vm.register_lib(&zen_lib_log);
-#ifdef ZEN_ENABLE_GIF
-    vm.register_lib(&zen_lib_gif);
-#endif
-#ifdef ZEN_ENABLE_CANVAS
-    vm.register_lib(&zen_lib_canvas);
-#endif
-#ifdef ZEN_ENABLE_STB_IMAGE
-    vm.register_lib(&zen_lib_image);
-#endif
-#ifdef ZEN_ENABLE_GLFW
-    vm.register_lib(&zen_lib_glfw);
-#endif
-#ifdef ZEN_ENABLE_SDL2
-    vm.register_lib(&zen_lib_sdl2);
+#ifdef ZEN_CLI_EXTRA_LIBS_HEADER
+    zen_cli_register_extra_libs(vm); /* zenvm-modules: image, sdl2, sqlite, ... */
 #endif
     for (int i = 0; i < g_num_search_paths; i++)
         vm.add_search_path(g_search_paths[i]);
