@@ -163,9 +163,7 @@ namespace zen
         OP_IS,        /* R[A] = (R[B] is an instance of class R[C])      */
         OP_TAILCALL,  /* return R[A](R[A+1..]) — reuse frame (tail call)  */
 
-        /* --- Ported from zenpy (PLANO.md, item 1) ---
-        ** Appended before OP_HALT so every existing opcode keeps its number
-        ** and previously dumped bytecode still decodes. */
+        /* --- Ported from zenpy (PLANO.md, item 1) --- */
         OP_RETURNNIL,    /* return with no value — nil straight to the caller */
         OP_JMPIFNIL,     /* if R[A] is nil: pc += sBx(next_word)              */
         OP_LTIJMPIFNOT,  /* if !(R[B] < C): pc += sBx(next_word)   (imm C)    */
@@ -174,6 +172,28 @@ namespace zen
         OP_NEJMPIFNOT,   /* if !(R[B] != R[C]): pc += sBx(next_word)          */
         OP_INVOKE_VT_FAST, /* vtable invoke, arity already checked at compile */
 
+        /* --- Reified generics: f<T,U>(args) / obj.m<T>(args) ---
+        ** Type args and value args are counted separately, so f<T>(x) is not
+        ** the same call as f(T, x). Registers stay contiguous with no extra
+        ** allocation: [T0,T1,...,arg0,arg1,...] right after the callee (or
+        ** after 'self' for a method). See ObjFunc::generic_arity. */
+        OP_CALL_GENERIC,   /* word1: R[A] = R[A]<types>(args) ABC=base,nargs,nresults
+                           ** word2: ngeneric (low 16 bits); nargs = ngeneric+nvalue */
+        OP_INVOKE_GENERIC, /* like OP_INVOKE, plus a 3rd word carrying ngeneric */
+
+        /* OP_HALT MUST stay the last entry in this enum, always. Every prior
+           attempt to "append before OP_HALT to keep old opcodes stable" got
+           this backwards: OP_HALT terminates every compiled program, so it's
+           exactly the one opcode that shifting *does* break — every existing
+           .zbc file's trailing HALT silently decodes as whatever new opcode
+           took its old number, up to and including a heap-buffer-overflow
+           read past the code buffer when the "new" instruction is wider than
+           1 word (found via ASAN when this was still OP_CALL_GENERIC's slot).
+           New opcodes go immediately ABOVE this line, never below it. A
+           reader on an older bytecode minor version still sees the same
+           OP_HALT it always did. See ZEN_BYTECODE_VERSION_MAJOR in
+           bytecode.h — bumped when OP_HALT's number changes, so an old file
+           is rejected cleanly instead of misdecoded. */
         OP_HALT,
     };
 

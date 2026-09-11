@@ -473,6 +473,8 @@ namespace zen
             &&lbl_OP_EQJMPIFNOT,
             &&lbl_OP_NEJMPIFNOT,
             &&lbl_OP_INVOKE_VT_FAST,
+            &&lbl_OP_CALL_GENERIC,
+            &&lbl_OP_INVOKE_GENERIC,
             &&lbl_OP_HALT,
         };
 
@@ -610,8 +612,22 @@ namespace zen
                 else
                 {
                     LOAD_STATE();
-                    /* Instance in string context: coerce via __str__ */
+                    /* Instance in string context: coerce via __str__.
+                       Fix: a naive fix here once parked each coercion result
+                       into a register to make it a GC root — but ZEN_A(i)/
+                       ZEN_C(i) are NOT reliably scratch: binary()'s dest<0
+                       path (compiler_expressions.cpp) deliberately returns a
+                       bare local/parameter's OWN register instead of
+                       MOVE-ing it into a temp, so C can be a live user
+                       variable's home register — writing to it there
+                       silently corrupted that variable. Pausing the GC for
+                       this whole two-sided coercion instead: no allocation
+                       in this window can trigger a collection, so neither
+                       coercion result ever needs to be a root, and no
+                       register gets written that the compiler didn't
+                       already intend for this instruction. */
                     Value sv = vb, sc = vc;
+                    gc_pause(&gc_);
                     if (!is_string(sv))
                     {
                         Value str_result;
@@ -619,7 +635,8 @@ namespace zen
                             sv = str_result;
                         else
                             sv = default_to_string(&gc_, sv);
-                        if (had_error_) return;
+                        if (had_error_) { gc_resume(&gc_); return; }
+                        LOAD_STATE();
                     }
                     if (!is_string(sc))
                     {
@@ -628,11 +645,12 @@ namespace zen
                             sc = str_result;
                         else
                             sc = default_to_string(&gc_, sc);
-                        if (had_error_) return;
+                        if (had_error_) { gc_resume(&gc_); return; }
+                        LOAD_STATE();
                     }
-                    LOAD_STATE();
                     /* Fix: string_append_inplace em vez de new_string_concat */
                     R[ZEN_A(i)] = val_obj((Obj *)string_append_inplace(&gc_, as_string(sv), as_string(sc)));
+                    gc_resume(&gc_);
                 }
             }
             else if (is_string(vb) || is_string(vc))
@@ -883,8 +901,20 @@ namespace zen
             /* Fallback: string concat with __str__ coercion for instances */
             if (is_string(vb) || is_string(vc) || is_instance(vb) || is_instance(vc))
             {
-                /* Coerce both sides to string, calling __str__ on instances */
+                /* Coerce both sides to string, calling __str__ on instances.
+                   Fix: a naive fix here once parked each coercion result into
+                   a register (dst, then C) to make it a GC root — but ZEN_C(i)
+                   is NOT reliably scratch: binary()'s dest<0 path
+                   (compiler_expressions.cpp) deliberately returns a bare
+                   local/parameter's OWN register instead of MOVE-ing it into
+                   a temp before choosing OP_ADD_OBJ over OP_ADD, so C can be
+                   a live user variable's home register — writing to it there
+                   silently corrupted that variable. Pausing the GC for this
+                   whole two-sided coercion instead: no allocation in this
+                   window can trigger a collection, so neither coercion
+                   result ever needs to be a root. */
                 Value sv = vb, sc = vc;
+                gc_pause(&gc_);
                 if (!is_string(sv))
                 {
                     Value str_result;
@@ -892,7 +922,8 @@ namespace zen
                         sv = str_result;
                     else
                         sv = default_to_string(&gc_, sv);
-                    if (had_error_) return;
+                    if (had_error_) { gc_resume(&gc_); return; }
+                    LOAD_STATE();
                 }
                 if (!is_string(sc))
                 {
@@ -901,10 +932,11 @@ namespace zen
                         sc = str_result;
                     else
                         sc = default_to_string(&gc_, sc);
-                    if (had_error_) return;
+                    if (had_error_) { gc_resume(&gc_); return; }
+                    LOAD_STATE();
                 }
-                LOAD_STATE();
                 R[dst] = val_obj((Obj *)string_append_inplace(&gc_, as_string(sv), as_string(sc)));
+                gc_resume(&gc_);
             }
             else
             {
@@ -1112,6 +1144,50 @@ namespace zen
                 R[ZEN_A(i)] = val_obj((Obj *)new_string(&gc_, p, len));
                 if (p != tmp) free(p);
             }
+            else if (__builtin_expect(is_instance(vb), 0))
+            {
+                /* Fix: same reasoning as the string case above — this fold
+                   only fires when the compiler couldn't statically prove vb
+                   is numeric (an untyped parameter, e.g.), so a left operand
+                   that turns out to be a class instance must still honour
+                   __add__/__radd__ instead of silently reading garbage via
+                   to_number() (which returns 0.0 for any object). Deoptimize
+                   back to OP_ADD's own instance path, immediate re-boxed as
+                   an int Value so try_binary_operator sees a normal operand. */
+                Value result;
+                SAVE_IP();
+                if (try_binary_operator(this, vb, val_int(imm), SLOT_ADD, SLOT_RADD, &result))
+                {
+                    if (had_error_) return;
+                    LOAD_STATE();
+                    R[ZEN_A(i)] = result;
+                }
+                else
+                {
+                    LOAD_STATE();
+                    /* No __add__/__radd__: fall back to __str__ concat, same
+                       as OP_ADD's own fallback for an instance with no
+                       overload — never silently reads the pointer as 0.0. */
+                    Value str_result;
+                    char buf[32];
+                    int lb = int_to_cstr(imm, buf);
+                    Value coerced;
+                    if (try_string_operator(this, vb, &str_result))
+                        coerced = str_result;
+                    else
+                        coerced = default_to_string(&gc_, vb);
+                    if (had_error_) return;
+                    LOAD_STATE();
+                    int la = as_string(coerced)->length;
+                    int len = la + lb;
+                    char tmp[256];
+                    char *p = (len <= 256) ? tmp : (char *)malloc(len);
+                    memcpy(p, as_cstring(coerced), la);
+                    memcpy(p + la, buf, lb);
+                    R[ZEN_A(i)] = val_obj((Obj *)new_string(&gc_, p, len));
+                    if (p != tmp) free(p);
+                }
+            }
             else
                 R[ZEN_A(i)] = val_float(to_number(vb) + imm);
             NEXT();
@@ -1123,6 +1199,25 @@ namespace zen
             int8_t imm = (int8_t)ZEN_C(i);
             if (vb.type == VAL_INT)
                 R[ZEN_A(i)] = val_int((int64_t)((uint64_t)vb.as.integer - (int64_t)imm));
+            else if (__builtin_expect(is_instance(vb), 0))
+            {
+                /* Fix: mirror OP_SUB's own instance path — __sub__/__rsub__
+                   first, numeric fallback (never string concat: '-' has no
+                   string form, matching OP_SUB) if there's no overload. */
+                Value result;
+                SAVE_IP();
+                if (try_binary_operator(this, vb, val_int(imm), SLOT_SUB, SLOT_RSUB, &result))
+                {
+                    if (had_error_) return;
+                    LOAD_STATE();
+                    R[ZEN_A(i)] = result;
+                }
+                else
+                {
+                    LOAD_STATE();
+                    R[ZEN_A(i)] = val_float(to_number(vb) - imm);
+                }
+            }
             else
                 R[ZEN_A(i)] = val_float(to_number(vb) - imm);
             NEXT();
@@ -1308,6 +1403,16 @@ namespace zen
                 ObjClosure *cl = as_closure(callee);
                 ObjFunc *fn = cl->func;
 
+                /* A generic function called without <...> must not silently
+                ** treat its first value argument(s) as the type parameter(s):
+                ** OP_CALL_GENERIC is the only opcode that knows how to split
+                ** the two. Covers OP_TAILCALL too — it shares this body. */
+                if (fn->generic_arity > 0)
+                {
+                    RT_ERROR("'%s' is generic and must be called with <...> type arguments",
+                             fn->name ? fn->name->chars : "?");
+                }
+
                 /* Process? Spawn instead of call */
                 if (fn->is_process)
                 {
@@ -1358,6 +1463,13 @@ namespace zen
             if (is_native(callee))
             {
                 ObjNative *nat = as_native(callee);
+                /* Reading `fn` while `generic_fn` is the live union member is
+                ** UB, not merely a wrong result — see ObjNative. */
+                if (nat->generic_arity > 0)
+                {
+                    RT_ERROR("'%s' is a generic native function and must be called with <...> type arguments",
+                             nat->name ? nat->name->chars : "?");
+                }
                 int nret = nat->fn(this, &R[a + 1], nargs);
                 if (had_error_) return;
                 copy_native_results(&R[a], &R[a + 1], nret, nresults);
@@ -1439,6 +1551,16 @@ namespace zen
                 {
                     ObjClosure *cl = as_closure(init_method);
                     ObjFunc *fn = cl->func;
+                    /* A generic init<T> constructed via plain ClassName(x) —
+                    ** same failure mode as a generic function called without
+                    ** <...>, just reached through construction. `Foo<T>(x)` is
+                    ** itself unsupported (OP_CALL_GENERIC needs a closure
+                    ** callee), so this is a rejection, not a redirect. */
+                    if (fn->generic_arity > 0)
+                    {
+                        RT_ERROR("'%s.init' is generic and cannot be constructed — generic constructors are not supported",
+                                 klass->name->chars);
+                    }
                     /* Check arity (init's arity = user params, self is implicit) */
                     if (fn->arity >= 0 && nargs != fn->arity)
                     {
@@ -1472,6 +1594,83 @@ namespace zen
             RT_ERROR("attempt to call non-function (got %s)", val_type_str(R[a]));
         }
 
+        CASE(OP_CALL_GENERIC)
+        {
+            /* 2-word: word1=[OP|base|nargs|nresults] where nargs = ngeneric +
+            ** nvalue over contiguous registers, exactly like OP_CALL;
+            ** word2 = ngeneric (low 16 bits). */
+            uint32_t i = *ip;
+            int a = ZEN_A(i);
+            int nargs = ZEN_B(i);
+            int nresults = ZEN_C(i);
+            ++ip;
+            int ngeneric = (int)(*ip & 0xFFFF);
+            ++ip;
+            SAVE_IP();
+
+            Value callee = R[a];
+            /* Closure-only: `Foo<T>(x)` construction syntax is not supported
+            ** (no generic constructors), and a native free function has no
+            ** way to be declared generic today. */
+            if (!is_closure(callee))
+            {
+                RT_ERROR("generic call target must be a script function (got %s)", val_type_str(callee));
+            }
+            ObjClosure *cl = as_closure(callee);
+            ObjFunc *fn = cl->func;
+
+            if (fn->generic_arity == 0)
+            {
+                RT_ERROR("'%s' is not generic — called with <...> but takes no type arguments",
+                         fn->name ? fn->name->chars : "?");
+            }
+            if (ngeneric != fn->generic_arity)
+            {
+                RT_ERROR("'%s' expects %d type argument%s but got %d",
+                         fn->name ? fn->name->chars : "?", fn->generic_arity,
+                         fn->generic_arity == 1 ? "" : "s", ngeneric);
+            }
+            for (int gi = 0; gi < ngeneric; gi++)
+            {
+                if (!is_class(R[a + 1 + gi]))
+                {
+                    RT_ERROR("'%s': type argument %d is not a type",
+                             fn->name ? fn->name->chars : "?", gi + 1);
+                }
+            }
+
+            int nvalue = nargs - ngeneric;
+            if (fn->arity >= 0 && nvalue != fn->arity)
+            {
+                RT_ERROR("%s() expects %d args but got %d",
+                         fn->name ? fn->name->chars : "?", fn->arity, nvalue);
+            }
+            /* A process body is spawned, never called — and it has no way to
+            ** receive type arguments once spawned. */
+            if (fn->is_process)
+            {
+                RT_ERROR("'%s' is a process and cannot be called with type arguments",
+                         fn->name ? fn->name->chars : "?");
+            }
+
+            if (fiber->frame_count >= kMaxFrames ||
+                &R[a + 1] + fn->num_regs > fiber->stack + fiber->stack_capacity)
+            {
+                RT_ERROR("stack overflow");
+            }
+            CallFrame *new_frame = &fiber->frames[fiber->frame_count++];
+            new_frame->closure = cl;
+            new_frame->func = fn;
+            new_frame->ip = fn->code;
+            /* base[0..ngeneric-1] = types, base[ngeneric..] = values */
+            new_frame->base = &R[a + 1];
+            new_frame->ret_reg = a;
+            new_frame->ret_count = nresults;
+            fiber->stack_top = new_frame->base + fn->num_regs;
+            LOAD_STATE();
+            DISPATCH();
+        }
+
         CASE(OP_CALLGLOBAL)
         {
             uint32_t i = *ip;
@@ -1488,6 +1687,11 @@ namespace zen
             {
                 ObjClosure *cl = as_closure(callee);
                 ObjFunc *fn = cl->func;
+                if (fn->generic_arity > 0)
+                {
+                    RT_ERROR("'%s' is generic and must be called with <...> type arguments",
+                             fn->name ? fn->name->chars : "?");
+                }
                 if (fiber->frame_count >= kMaxFrames ||
                     &R[a + 1] + fn->num_regs > fiber->stack + fiber->stack_capacity)
                 {
@@ -1507,6 +1711,11 @@ namespace zen
             if (is_native(callee))
             {
                 ObjNative *nat = as_native(callee);
+                if (nat->generic_arity > 0)
+                {
+                    RT_ERROR("'%s' is a generic native function and must be called with <...> type arguments",
+                             nat->name ? nat->name->chars : "?");
+                }
                 int nret = nat->fn(this, &R[a + 1], nargs);
                 if (had_error_) return;
                 copy_native_results(&R[a], &R[a + 1], nret, nresults);
@@ -1718,7 +1927,10 @@ namespace zen
                 RT_ERROR("spawn expects a function");
             }
             ObjClosure *cl = as_closure(R[ZEN_B(i)]);
+            SAVE_IP();
             ObjFiber *f = new_fiber(cl, 256);
+            if (!f)
+                return; /* new_fiber already raised (e.g. a generic body) */
             R[ZEN_A(i)] = val_obj((Obj *)f);
             NEXT();
         }
@@ -2353,6 +2565,14 @@ namespace zen
                 {
                     ObjClosure *cl = as_closure(mval);
                     ObjFunc *fn = cl->func;
+                    /* Same reasoning as OP_CALL: a generic method invoked
+                    ** through plain OP_INVOKE (no <...>) must not silently
+                    ** bind a value argument into a type-parameter register. */
+                    if (fn->generic_arity > 0)
+                    {
+                        RT_ERROR("'%s.%s' is generic and must be called with <...> type arguments",
+                                 klass->name->chars, mname);
+                    }
                     if (fn->arity >= 0 && arg_count != fn->arity)
                     {
                         RT_ERROR("%s.%s() expects %d args but got %d", klass->name->chars, mname, fn->arity, arg_count);
@@ -2378,6 +2598,11 @@ namespace zen
                 else if (is_native(mval))
                 {
                     ObjNative *nat = as_native(mval);
+                    if (nat->generic_arity > 0)
+                    {
+                        RT_ERROR("'%s.%s' is a generic native method and must be called with <...> type arguments",
+                                 klass->name->chars, mname);
+                    }
                     int nret = nat->fn(this, &R[base], arg_count + 1); /* +1 for self */
                     if (nret > 0)
                         R[base] = R[base];
@@ -2404,6 +2629,11 @@ namespace zen
                 {
                     ObjClosure *cl = as_closure(mval);
                     ObjFunc *fn = cl->func;
+                    if (fn->generic_arity > 0)
+                    {
+                        RT_ERROR("'%s.%s' is generic and must be called with <...> type arguments",
+                                 cls->name->chars, mname);
+                    }
                     if (fn->arity >= 0 && arg_count != fn->arity)
                     {
                         RT_ERROR("%s.%s() expects %d args but got %d", cls->name->chars, mname, fn->arity, arg_count);
@@ -2429,6 +2659,11 @@ namespace zen
                 else if (is_native(mval))
                 {
                     ObjNative *nat = as_native(mval);
+                    if (nat->generic_arity > 0)
+                    {
+                        RT_ERROR("'%s.%s' is a generic native method and must be called with <...> type arguments",
+                                 cls->name->chars, mname);
+                    }
                     int nret = nat->fn(this, &R[base + 1], arg_count);
                     R[base] = (nret > 0) ? R[base + 1] : val_nil();
                 }
@@ -2469,6 +2704,15 @@ namespace zen
             {
                 ObjClosure *cl = as_closure(mval);
                 ObjFunc *fn = cl->func;
+                /* The compiler only emits OP_INVOKE_VT for a plain `obj.m(...)`
+                ** call; a generic method reached this way carries no type
+                ** arguments at all. (fn->name is already qualified with the
+                ** declaring class, so don't prefix it again.) */
+                if (fn->generic_arity > 0)
+                {
+                    RT_ERROR("'%s' is generic and must be called with <...> type arguments",
+                             fn->name ? fn->name->chars : "?");
+                }
                 if (fiber->frame_count >= kMaxFrames)
                 {
                     RT_ERROR("stack overflow");
@@ -2489,6 +2733,11 @@ namespace zen
             else if (is_native(mval))
             {
                 ObjNative *nat = as_native(mval);
+                if (nat->generic_arity > 0)
+                {
+                    RT_ERROR("'%s.%s' is a generic native method and must be called with <...> type arguments",
+                             klass->name->chars, nat->name ? nat->name->chars : "?");
+                }
                 int nret = nat->fn(this, &R[base], arg_count + 1);
                 if (nret > 0)
                     R[base] = R[base];
@@ -2512,7 +2761,12 @@ namespace zen
             **
             ** The guarantee is the compiler's: emit this ONLY where all
             ** three hold, or the as_instance()/as_closure() below are the
-            ** same unchecked casts that made the fused opcodes segfault. */
+            ** same unchecked casts that made the fused opcodes segfault.
+            **
+            ** A fourth clause since reified generics: the method must have
+            ** generic_arity == 0. There is no room here for the ngeneric
+            ** operand and no split between type and value registers, so a
+            ** generic method must go through OP_INVOKE_GENERIC instead. */
             uint32_t i = *ip;
             uint8_t base = ZEN_A(i);
             uint8_t arg_count = ZEN_B(i);
@@ -2568,6 +2822,14 @@ namespace zen
             {
                 ObjClosure *cl = as_closure(mval);
                 ObjFunc *fn = cl->func;
+                /* There is no super().method<T>(...) syntax yet, so a generic
+                ** parent method reached through plain super() is rejected
+                ** rather than silently miscalled. */
+                if (fn->generic_arity > 0)
+                {
+                    const char *mname = as_string(frame->func->constants[name_ki])->chars;
+                    RT_ERROR("'%s' is generic and cannot be called via super() yet", mname);
+                }
                 if (fn->arity >= 0 && arg_count != fn->arity)
                 {
                     const char *mname = as_string(frame->func->constants[name_ki])->chars;
@@ -2594,6 +2856,11 @@ namespace zen
             else if (is_native(mval))
             {
                 ObjNative *nat = as_native(mval);
+                if (nat->generic_arity > 0)
+                {
+                    const char *mname = as_string(frame->func->constants[name_ki])->chars;
+                    RT_ERROR("'%s' is a generic native method and cannot be called via super()", mname);
+                }
                 int nret = nat->fn(this, &R[base], arg_count + 1);
                 if (nret > 0)
                     R[base] = R[base];
@@ -2607,6 +2874,157 @@ namespace zen
             }
             ip += 2; /* skip word2+word3 */
             NEXT();
+        }
+
+        CASE(OP_INVOKE_GENERIC)
+        {
+            /* 3-word: word1=[OP|base|nargs|nresults] (nargs = ngeneric+nvalue);
+            ** word2=(sel_slot<<16|name_ki) like OP_INVOKE; word3=ngeneric.
+            **
+            ** `ip` deliberately still points at word1 here: word2/word3 are
+            ** read through non-advancing peeks, and each branch below advances
+            ** by exactly 3 words in total, matched to how it leaves the
+            ** dispatch loop. The native branch falls through to NEXT() (which
+            ** adds 1 itself), so it advances by 2 first; the closure branch
+            ** exits via DISPATCH() into the callee and never reaches NEXT(),
+            ** so it advances by all 3 before SAVE_IP(). Advancing by the wrong
+            ** amount leaves the caller's saved resume ip mid-instruction, and
+            ** on return the VM decodes a raw operand word as an opcode,
+            ** silently corrupting the caller's registers. OP_SUPER_INVOKE
+            ** above uses this same split for its own 3-word shape. */
+            uint32_t i = *ip;
+            uint8_t base = ZEN_A(i);
+            uint8_t nargs = ZEN_B(i);
+            uint8_t nresults = ZEN_C(i);
+            if (nresults == 0)
+                nresults = 1;
+            uint32_t word2 = ip[1];
+            int sel_slot = (int)(word2 >> 16);
+            int name_ki = (int)(word2 & 0xFFFF);
+            int ngeneric = (int)ip[2];
+
+            /* ip still points at word1 here — SAVE_IP() now so frame->ip is
+            ** correct for a traceback/GC walk from any error path below,
+            ** including the native branch's bare `if (had_error_) return;`,
+            ** which (like OP_CALL's equivalent) relies on this having already
+            ** run rather than saving again itself. */
+            SAVE_IP();
+
+            Value receiver = R[base];
+            ObjString *method = as_string(K[name_ki]);
+            const char *mname = method->chars;
+
+            if (!is_instance(receiver))
+            {
+                RT_ERROR("generic methods are not supported on this type (got %s)", val_type_str(receiver));
+            }
+            ObjInstance *inst = as_instance(receiver);
+            ObjClass *klass = inst->klass;
+
+            /* Vtables are flattened at class-build time, so a single slot read
+            ** already covers inherited methods — no parent walk needed. */
+            Value mval = val_nil();
+            if (sel_slot < klass->vtable_size)
+                mval = klass->vtable[sel_slot];
+            if (is_nil(mval))
+            {
+                RT_ERROR("'%s' has no method '%s'", klass->name->chars, mname);
+            }
+
+            int nvalue = (int)nargs - ngeneric;
+            for (int gi = 0; gi < ngeneric; gi++)
+            {
+                if (!is_class(R[base + 1 + gi]))
+                {
+                    RT_ERROR("'%s.%s': type argument %d is not a type",
+                             klass->name->chars, mname, gi + 1);
+                }
+            }
+
+            if (is_native(mval))
+            {
+                /* Native generic method, e.g. entity.get_component<Transform>(),
+                ** registered via ClassBuilder::generic_method(). Type args and
+                ** value args reach C++ as two separate arrays — here that is
+                ** just two pointers into the same contiguous register block. */
+                ObjNative *nat = as_native(mval);
+                if (nat->generic_arity == 0)
+                {
+                    RT_ERROR("'%s.%s' is not generic — called with <...> but takes no type arguments",
+                             klass->name->chars, mname);
+                }
+                if (ngeneric != nat->generic_arity)
+                {
+                    RT_ERROR("'%s.%s' expects %d type argument%s but got %d",
+                             klass->name->chars, mname, nat->generic_arity,
+                             nat->generic_arity == 1 ? "" : "s", ngeneric);
+                }
+                if (nat->arity >= 0 && nvalue != nat->arity)
+                {
+                    RT_ERROR("%s.%s() expects %d args but got %d",
+                             klass->name->chars, mname, nat->arity, nvalue);
+                }
+
+                Value *type_args = &R[base + 1];
+                Value *value_args = &R[base + 1 + ngeneric];
+                int nret = nat->generic_fn(this, receiver, type_args, ngeneric, value_args, nvalue);
+                if (had_error_)
+                    return;
+                if (nret < 0)
+                {
+                    RT_ERROR("generic native method '%s' returned error", mname);
+                }
+                copy_native_results(&R[base], value_args, nret, nresults);
+                /* Past word2+word3 — NEXT() adds the third. */
+                ip += 2;
+                NEXT();
+            }
+
+            if (!is_closure(mval))
+            {
+                RT_ERROR("cannot invoke generic method '%s' on this type", mname);
+            }
+
+            {
+                ObjClosure *cl = as_closure(mval);
+                ObjFunc *fn = cl->func;
+                if (fn->generic_arity == 0)
+                {
+                    RT_ERROR("'%s.%s' is not generic — called with <...> but takes no type arguments",
+                             klass->name->chars, mname);
+                }
+                if (ngeneric != fn->generic_arity)
+                {
+                    RT_ERROR("'%s.%s' expects %d type argument%s but got %d",
+                             klass->name->chars, mname, fn->generic_arity,
+                             fn->generic_arity == 1 ? "" : "s", ngeneric);
+                }
+                if (fn->arity >= 0 && nvalue != fn->arity)
+                {
+                    RT_ERROR("%s.%s() expects %d args but got %d",
+                             klass->name->chars, mname, fn->arity, nvalue);
+                }
+                if (fiber->frame_count >= kMaxFrames ||
+                    &R[base] + fn->num_regs > fiber->stack + fiber->stack_capacity)
+                {
+                    RT_ERROR("stack overflow");
+                }
+                /* This branch never reaches NEXT(), so it must account for all
+                ** 3 words itself before saving ip for the eventual return. */
+                ip += 3;
+                SAVE_IP();
+                CallFrame *new_frame = &fiber->frames[fiber->frame_count++];
+                new_frame->closure = cl;
+                new_frame->func = fn;
+                new_frame->ip = fn->code;
+                /* base[0]=self, base[1..ngeneric]=types, base[1+ngeneric..]=values */
+                new_frame->base = &R[base];
+                new_frame->ret_reg = base;
+                new_frame->ret_count = nresults;
+                fiber->stack_top = new_frame->base + fn->num_regs;
+                LOAD_STATE();
+                DISPATCH();
+            }
         }
 
         /* --- Misc --- */
@@ -2661,6 +3079,65 @@ namespace zen
             {
                 ObjString *result = string_append_inplace(&gc_, as_string(va), as_string(vb));
                 R[a] = val_obj((Obj *)result);
+            }
+            else if (is_instance(va) || is_instance(vb))
+            {
+                /* `t += u` on a local always compiles to OP_STRADD (see
+                   compiler_expressions.cpp) regardless of what va/vb turn
+                   out to be at runtime, so this — like OP_ADD above — must
+                   not assume "not a string means numeric": reading an
+                   instance's object pointer as a float silently produced
+                   garbage here before this fix. Same object-operator +
+                   __str__ fallback as OP_ADD. */
+                Value result;
+                SAVE_IP();
+                if (try_binary_operator(this, va, vb, SLOT_ADD, SLOT_RADD, &result))
+                {
+                    if (had_error_) return;
+                    LOAD_STATE();
+                    R[a] = result;
+                }
+                else
+                {
+                    LOAD_STATE();
+                    /* Fix: pause the GC across this two-sided __str__
+                       coercion — no allocation in this window can trigger a
+                       collection, so neither intermediate result (held only
+                       in a C++ local, not a GC root) can be swept as a
+                       silent use-after-free. Deliberately not "parking"
+                       results into registers instead: OP_ADD's equivalent
+                       fallback learned the hard way that ZEN_C(i)-shaped
+                       operand registers aren't reliably scratch (they can be
+                       a bare local/parameter's own register — see OP_ADD
+                       above), and while OP_STRADD's B register genuinely is
+                       always a compiler temp (rhs_reg in
+                       compiler_expressions.cpp, freed right after this
+                       instruction), pausing the GC needs no such proof. */
+                    Value sv = va, sc = vb;
+                    gc_pause(&gc_);
+                    if (!is_string(sv))
+                    {
+                        Value str_result;
+                        if (try_string_operator(this, sv, &str_result))
+                            sv = str_result;
+                        else
+                            sv = default_to_string(&gc_, sv);
+                        if (had_error_) { gc_resume(&gc_); return; }
+                        LOAD_STATE();
+                    }
+                    if (!is_string(sc))
+                    {
+                        Value str_result;
+                        if (try_string_operator(this, sc, &str_result))
+                            sc = str_result;
+                        else
+                            sc = default_to_string(&gc_, sc);
+                        if (had_error_) { gc_resume(&gc_); return; }
+                        LOAD_STATE();
+                    }
+                    R[a] = val_obj((Obj *)string_append_inplace(&gc_, as_string(sv), as_string(sc)));
+                    gc_resume(&gc_);
+                }
             }
             else if (is_string(va) || is_string(vb))
             {

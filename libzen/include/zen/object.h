@@ -162,7 +162,10 @@ namespace zen
     struct ObjFunc
     {
         Obj obj;
-        int32_t arity;      /* número de params */
+        int32_t arity;      /* número de VALUE params — NÃO inclui type params */
+        int32_t generic_arity; /* número de type params: def f<T,U>(...) → 2. 0 = não genérico.
+                                ** Ocupam os registos logo a seguir ao 'self' (nos métodos) e
+                                ** ANTES dos value params. Ver OP_CALL_GENERIC/OP_INVOKE_GENERIC. */
         int32_t num_regs;   /* registos necessários (calculado pelo compiler) */
         int32_t code_count; /* número de instruções */
         int32_t code_capacity;
@@ -190,11 +193,34 @@ namespace zen
 
     typedef int (*NativeFn)(VM *vm, Value *args, int nargs);
 
+    /* Método/função nativa genérica: entity.get_component<Transform>().
+    ** Os type arguments e os value arguments chegam em dois arrays separados —
+    ** ao contrário dos generics de script (que partilham registos contíguos
+    ** para uma chamada sem alocação), um binding nativo recebe a mesma divisão
+    ** limpa que a linguagem expõe, para que o C++ nunca tenha de fatiar
+    ** `Value*` à mão para distinguir "T" de "valor". `receiver` é nil numa
+    ** função livre e a instância num método — repare-se que aqui o self NÃO
+    ** vai dobrado dentro de `args`, ao contrário da convenção do NativeFn. */
+    typedef int (*GenericNativeFn)(VM *vm, Value receiver,
+                                   Value *type_args, int ntype_args,
+                                   Value *args, int nargs);
+
     struct ObjNative
     {
         Obj obj;
-        NativeFn fn;
-        int32_t arity; /* -1 = variadic */
+        /* Exactamente um destes dois está vivo, seleccionado por generic_arity:
+        ** generic_arity == 0 -> `fn`, generic_arity > 0 -> `generic_fn`.
+        ** Todo o call site que não saiba de generics (OP_CALL, OP_INVOKE,
+        ** OP_INVOKE_VT, os .inl, init de classe, ...) tem de verificar
+        ** generic_arity == 0 antes de tocar em `fn` — ler a union pelo membro
+        ** errado é UB, não apenas um resultado errado. */
+        union
+        {
+            NativeFn fn;
+            GenericNativeFn generic_fn;
+        };
+        int32_t arity; /* -1 = variadic. Só value-arity, tal como ObjFunc::arity. */
+        int32_t generic_arity; /* 0 = não genérico (usa `fn`); >0 = usa `generic_fn`. */
         ObjString *name;
     };
 
@@ -611,12 +637,31 @@ namespace zen
     template <typename T>
     inline T *zen_instance_data(Value v) { return (T *)as_instance(v)->native_data; }
 
-    /* Check if value is instance of a specific class name */
+    /* Is `v` an instance of `target` or of any class derived from it?
+    ** Pointer identity up the parent chain — no string compares — the
+    ** same test OP_IS (the script-level `is` operator) performs. Prefer
+    ** this overload from native code: resolve the ObjClass* once (e.g.
+    ** vm->find_global()+as_class(), or keep the pointer ClassBuilder
+    ** handed back) and reuse it, instead of paying a strcmp per check. */
+    inline bool val_is_instance_of(Value v, const ObjClass *target)
+    {
+        if (!target || !is_instance(v)) return false;
+        for (const ObjClass *k = as_instance(v)->klass; k; k = k->parent)
+            if (k == target) return true;
+        return false;
+    }
+
+    /* By-name convenience for callers that only have the class name.
+    ** Walks the parent chain like the pointer overload (so a subclass
+    ** instance matches its base's name too — consistent with `is`), but
+    ** costs a strcmp per level; resolve to an ObjClass* and use the
+    ** overload above anywhere this runs hot. */
     inline bool val_is_instance_of(Value v, const char *name)
     {
-        if (!is_instance(v)) return false;
-        ObjInstance *inst = as_instance(v);
-        return inst->klass && inst->klass->name && strcmp(inst->klass->name->chars, name) == 0;
+        if (!name || !is_instance(v)) return false;
+        for (const ObjClass *k = as_instance(v)->klass; k; k = k->parent)
+            if (k->name && strcmp(k->name->chars, name) == 0) return true;
+        return false;
     }
 
 } /* namespace zen */

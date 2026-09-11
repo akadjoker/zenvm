@@ -442,6 +442,12 @@ namespace
             !write_optional_string(w, strip_debug ? nullptr : fn->source, stats, err, err_len))
             return false;
 
+        /* minor 2: reified generics — number of leading type params. Written
+        ** last so a minor-1 reader (which stops before this field) never sees
+        ** it; a minor-2 reader gates the read on `minor`. */
+        if (!w.write_i32(fn->generic_arity))
+            return false;
+
         return true;
     }
 
@@ -944,6 +950,19 @@ namespace
         if (!read_optional_string(vm, r, &fn->name, err, err_len) ||
             !read_optional_string(vm, r, &fn->source, err, err_len))
             return nullptr;
+
+        /* minor 2: reified generics — see write_func(). Older files simply
+        ** don't carry this field; new_func() already zeroed generic_arity, so
+        ** skipping the read entirely is correct for them. */
+        fn->generic_arity = 0;
+        if (minor >= 2)
+        {
+            if (!r.read_i32(&fn->generic_arity))
+            {
+                set_error(err, err_len, "truncated generic_arity");
+                return nullptr;
+            }
+        }
 
         return fn;
     }

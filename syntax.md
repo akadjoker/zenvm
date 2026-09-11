@@ -281,6 +281,116 @@ def fib(n) {
 
 ---
 
+## Generics
+
+Functions and methods can declare type parameters in angle brackets. Type
+arguments are **real runtime class values**, passed through their own channel —
+`f<T>(x)` is not sugar for `f(T, x)`: the two counts are validated separately,
+so `T` is usable as a value (`T()` constructs, `T == Some` compares) without
+consuming a value parameter.
+
+```zen
+class Transform {}
+class Sprite {}
+
+// 1 type param, 0 value params
+def create<T>() {
+    return T();               // T is a class value — call it to construct
+}
+var t = create<Transform>();
+
+// type params and value params are counted independently
+def pair<T, U>(a, b) {
+    return a + b;             // T == Transform, U == Sprite
+}
+print(pair<Transform, Sprite>(1, 2));   // 3
+
+// a type param can be forwarded straight into another generic call
+def relay<T>(v) {
+    return create<T>();
+}
+
+// generic methods — the get_component<T>() shape
+class Entity {
+    def get_component<T>() {
+        return T;
+    }
+}
+var e = Entity();
+print(e.get_component<Transform>() == Transform);   // true
+```
+
+Whitespace is load-bearing at exactly two boundaries, so that `<` and `>` stay
+usable as comparisons: `<` must be glued to the callee name and followed
+directly by an identifier, and the closing `>` must be glued to `(`. Spaces
+inside the list are fine.
+
+```zen
+create<Transform>()      // generic call
+f <T>(x)                 // NOT a generic call — comparison
+f<T> (x)                 // NOT a generic call — comparison
+pair<Transform, Sprite>(1, 2)   // fine: spaces inside the list are allowed
+```
+
+A `<...>` list is only ever read as type arguments when the callee is already
+known to be generic — a plain variable followed by `<X>(y)` stays a comparison.
+For a **method** call, that means the receiver's class must be known at compile
+time, which happens in two ways:
+
+```zen
+var e = Entity();                     // inferred from the constructor call
+print(e.get_component<Transform>());
+
+def component_of(ent: Entity) {       // or declared with a `: Type` hint
+    return ent.get_component<Transform>();
+}
+```
+
+A receiver whose class is *not* known — an unannotated parameter, or a method
+reached through a field read (`self.entity.get<T>()`) — is not recognised as a
+generic call, and the `<` is parsed as a comparison (usually a compile error at
+the `>(`, never a silent miscompile). Bind such a receiver to an inferred local
+or annotate the parameter.
+
+Calling a generic function or method **without** `<...>` is an error, never a
+silent misbinding of the first value argument into the type-parameter slot:
+
+```zen
+def make<T>(x) { return x; }
+make(5);       // error: 'make' is generic and must be called with <...> type arguments
+```
+
+Not supported: generic classes (`class Box<T>`), generic constructors
+(`Foo<T>(x)` and a generic `init<T>`), `super.method<T>(...)`, generic dunder
+operators, and generic process/fiber bodies — each is rejected with a clear
+error rather than miscompiled.
+
+### Native generic methods (C++)
+
+A C++ class can expose a generic method through `ClassBuilder::generic_method`.
+Type arguments and value arguments arrive as two separate arrays, and the
+receiver is explicit rather than folded into `args[0]`:
+
+```cpp
+static int get_component(VM *vm, Value receiver,
+                         Value *type_args, int ntype_args,
+                         Value *args, int nargs)
+{
+    ObjClass *wanted = as_class(type_args[0]);
+    /* ... look the component up by type ... */
+    return 1;               /* < 0 raises a runtime error */
+}
+
+vm.def_class("Entity")
+    .generic_method("get_component", get_component, /*generic_arity*/ 1, /*arity*/ 0)
+    .end();
+```
+
+`generic_arity` must be > 0 and `arity` >= 0 (variadic value arity is not
+supported for generics).
+
+---
+
 ## Fibers (Coroutines)
 
 ```zen

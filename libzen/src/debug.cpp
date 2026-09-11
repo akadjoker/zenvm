@@ -116,6 +116,8 @@ namespace zen
         "EQJMPIFNOT",
         "NEJMPIFNOT",
         "INVOKE_VT_FAST",
+        "CALL_GENERIC",
+        "INVOKE_GENERIC",
         "HALT",
     };
 
@@ -374,9 +376,28 @@ namespace zen
             return offset + 3;
         }
 
+        /* 3-word OP_INVOKE_GENERIC: OP_INVOKE's two words plus ngeneric */
+        if (op == OP_INVOKE_GENERIC)
+        {
+            uint32_t word2 = func->code[offset + 1];
+            uint32_t word3 = func->code[offset + 2];
+            int sel = (int)(word2 >> 16);
+            int nki = (int)(word2 & 0xFFFF);
+            printf("      %04d  (sel=%d, name_ki=%d", offset + 1, sel, nki);
+            if (nki < func->const_count)
+            {
+                printf(" = ");
+                print_value(func->constants[nki]);
+            }
+            printf(")\n");
+            printf("      %04d  (ngeneric=%d)\n", offset + 2, (int)word3);
+            return offset + 3;
+        }
+
         /* 2-word superinstructions: skip the operand word */
         if (op == OP_LTJMPIFNOT || op == OP_LEJMPIFNOT || op == OP_CALLGLOBAL ||
-            op == OP_INVOKE || op == OP_GETFIELD_MUL || op == OP_GETFIELD_SUB)
+            op == OP_INVOKE || op == OP_GETFIELD_MUL || op == OP_GETFIELD_SUB ||
+            op == OP_CALL_GENERIC)
         {
             uint32_t word2 = func->code[offset + 1];
             if (op == OP_INVOKE)
@@ -388,6 +409,10 @@ namespace zen
                     print_value(func->constants[word2]);
                 }
                 printf(")\n");
+            }
+            else if (op == OP_CALL_GENERIC)
+            {
+                printf("      %04d  (ngeneric=%d)\n", offset + 1, (int)(word2 & 0xFFFF));
             }
             return offset + 2;
         }

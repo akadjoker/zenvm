@@ -1317,57 +1317,115 @@ static bool test_raylib_pattern()
     return true;
 }
 
-static int nat_expect_type_arg(VM *, Value *args, int nargs)
+/* entity.get_component<Transform>(123) — a native generic method. Type args
+** and value args arrive as two separate arrays, and `receiver` is explicit
+** rather than folded into args[0] (see GenericNativeFn in object.h). */
+static int nat_get_component(VM *, Value receiver,
+                             Value *type_args, int ntype_args,
+                             Value *args, int nargs)
 {
-    bool ok = nargs == 1 &&
-              is_class(args[0]) &&
-              strcmp(as_class(args[0])->name->chars, "Transform") == 0;
+    bool ok = is_instance(receiver) &&
+              ntype_args == 1 &&
+              is_class(type_args[0]) &&
+              strcmp(as_class(type_args[0])->name->chars, "Transform") == 0 &&
+              nargs == 1 &&
+              is_int(args[0]) &&
+              args[0].as.integer == 123;
     args[0] = val_bool(ok);
     return 1;
 }
 
-static int nat_get_component_sugar(VM *, Value *args, int nargs)
+/* Two type parameters, zero value arguments — proves the two counts really
+** are independent, not one folded argument list. */
+static int nat_pair_of_types(VM *, Value,
+                             Value *type_args, int ntype_args,
+                             Value *args, int)
 {
-    bool ok = nargs == 3 &&
-              is_instance(args[0]) &&
-              is_class(args[1]) &&
-              strcmp(as_class(args[1])->name->chars, "Transform") == 0 &&
-              is_int(args[2]) &&
-              args[2].as.integer == 123;
+    bool ok = ntype_args == 2 &&
+              is_class(type_args[0]) && is_class(type_args[1]) &&
+              strcmp(as_class(type_args[0])->name->chars, "Transform") == 0 &&
+              strcmp(as_class(type_args[1])->name->chars, "Sprite") == 0;
     args[0] = val_bool(ok);
     return 1;
 }
 
-static bool test_generic_call_sugar()
+/* Signals failure the native way: a negative return must surface as a runtime
+** error, never be swallowed into a nil result. */
+static int nat_generic_fails(VM *, Value, Value *, int, Value *, int)
+{
+    return -1;
+}
+
+static bool test_native_generic_method()
 {
     VM vm;
 
-    vm.def_class("Transform")
-        .end();
+    vm.def_class("Transform").end();
+    vm.def_class("Sprite").end();
 
     vm.def_class("Holder")
-        .method("getComponent", nat_get_component_sugar, 2)
+        .generic_method("getComponent", nat_get_component, 1, 1)
+        .generic_method("pairOf", nat_pair_of_types, 2, 0)
         .end();
 
-    vm.def_native("expectType", nat_expect_type_arg, 1);
-
     const char *script = R"(
-        var ok_global = expectType<Transform>();
         var holder = Holder();
         var ok_method = holder.getComponent<Transform>(123);
+        var ok_pair = holder.pairOf<Transform, Sprite>();
         var comparison_still_works = 1 < 2;
     )";
 
     Compiler compiler;
-    ObjFunc *fn = compiler.compile(&vm.get_gc(), &vm, script, "<generic-call-sugar>");
-    CHECK(fn != nullptr, "generic call sugar compiled");
+    ObjFunc *fn = compiler.compile(&vm.get_gc(), &vm, script, "<native-generic>");
+    CHECK(fn != nullptr, "native generic method compiled");
     CHECK(!compiler.had_error(), "no compile errors");
     vm.run(fn);
     CHECK(!vm.had_error(), "no runtime error");
 
-    CHECK(vm.get_global("ok_global").as.boolean, "free function receives Transform class");
-    CHECK(vm.get_global("ok_method").as.boolean, "method receives Transform class first");
+    CHECK(vm.get_global("ok_method").as.boolean, "receiver, 1 type arg and 1 value arg arrive split");
+    CHECK(vm.get_global("ok_pair").as.boolean, "2 type args with 0 value args");
     CHECK(vm.get_global("comparison_still_works").as.boolean, "comparison still parses normally");
+
+    return true;
+}
+
+static bool test_native_generic_error_paths()
+{
+    /* A native returning < 0 must raise, not yield nil. */
+    {
+        VM vm;
+        vm.def_class("Transform").end();
+        vm.def_class("Boom").generic_method("go", nat_generic_fails, 1, 0).end();
+
+        const char *script = R"(
+            var b = Boom();
+            b.go<Transform>();
+        )";
+        Compiler compiler;
+        ObjFunc *fn = compiler.compile(&vm.get_gc(), &vm, script, "<native-generic-err>");
+        CHECK(fn != nullptr, "compiled");
+        CHECK(!compiler.had_error(), "no compile errors");
+        vm.run(fn);
+        CHECK(vm.had_error(), "a negative native return raises instead of being swallowed");
+    }
+
+    /* Calling a generic native through the plain (non-generic) path must be
+    ** rejected rather than reading the wrong union member. */
+    {
+        VM vm;
+        vm.def_class("Transform").end();
+        vm.def_class("Holder").generic_method("getComponent", nat_get_component, 1, 1).end();
+
+        const char *script = R"(
+            var holder = Holder();
+            holder.getComponent(123);
+        )";
+        Compiler compiler;
+        ObjFunc *fn = compiler.compile(&vm.get_gc(), &vm, script, "<native-generic-bypass>");
+        CHECK(fn != nullptr, "compiled");
+        vm.run(fn);
+        CHECK(vm.had_error(), "generic native reached without <...> is rejected");
+    }
 
     return true;
 }
@@ -1465,7 +1523,8 @@ int main()
     RUN_TEST(test_non_constructable);
     RUN_TEST(test_native_method_creates_instance);
     RUN_TEST(test_raylib_pattern);
-    RUN_TEST(test_generic_call_sugar);
+    RUN_TEST(test_native_generic_method);
+    RUN_TEST(test_native_generic_error_paths);
     RUN_TEST(test_class_operator_overloads);
 
     printf("\n=== %d / %d PASSED ===\n", tests_passed, tests_run);

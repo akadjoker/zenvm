@@ -374,6 +374,7 @@ namespace zen
     {
         ObjFunc *fn = (ObjFunc *)alloc_obj(gc, sizeof(ObjFunc), OBJ_FUNC);
         fn->arity = 0;
+        fn->generic_arity = 0;
         fn->num_regs = 0;
         fn->code_count = 0;
         fn->code_capacity = 0;
@@ -398,6 +399,17 @@ namespace zen
         ObjNative *nat = (ObjNative *)alloc_obj(gc, sizeof(ObjNative), OBJ_NATIVE);
         nat->fn = fn;
         nat->arity = arity;
+        nat->generic_arity = 0;
+        nat->name = name;
+        return nat;
+    }
+
+    ObjNative *new_native_generic(GC *gc, GenericNativeFn fn, int generic_arity, int arity, ObjString *name)
+    {
+        ObjNative *nat = (ObjNative *)alloc_obj(gc, sizeof(ObjNative), OBJ_NATIVE);
+        nat->generic_fn = fn;
+        nat->arity = arity;
+        nat->generic_arity = generic_arity;
         nat->name = name;
         return nat;
     }

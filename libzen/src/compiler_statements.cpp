@@ -253,13 +253,59 @@ namespace zen
     ** def name(params) { body }
     ** ========================================================= */
 
+    /* Parse an optional `<T, U>` type-parameter list after a def/method name.
+    ** The names are returned to the caller, which registers them as ordinary
+    ** locals ahead of the value params — so `T` resolves to a plain register
+    ** inside the body and `T()` is just a call on whatever class was passed. */
+    int Compiler::generic_param_list(Token *out_params)
+    {
+        if (!match(TOK_LT))
+            return 0;
+        int count = 0;
+        do
+        {
+            consume(TOK_IDENTIFIER, "Expected type parameter name.");
+            if (count < kMaxGenericParams)
+                out_params[count] = previous_;
+            else
+                error("Too many type parameters.");
+            count++;
+        } while (match(TOK_COMMA));
+        consume(TOK_GT, "Expected '>' after type parameters.");
+        return count < kMaxGenericParams ? count : kMaxGenericParams;
+    }
+
     void Compiler::fun_declaration()
     {
         consume(TOK_IDENTIFIER, "Expected function name.");
         Token name = previous_;
 
+        /* Optional type parameters: def f<T, U>(a, b) { ... }. Counted apart
+           from `arity` — a generic call validates the two independently. */
+        Token generic_params[kMaxGenericParams];
+        int generic_count = generic_param_list(generic_params);
+
         if (!function_nesting_ok())
             return;
+
+        /* Record the generic arity against the global slot right away, before
+           the body compiles: a generic def must be recognisable as generic
+           from inside its own body (recursion, forwarding a type param) and
+           from any later call site. A non-generic def is recorded too (as
+           kNonGenericDef) so `plain<A>(x)` can be diagnosed instead of quietly
+           degrading to a comparison — the slot itself still holds nil at
+           compile time, since the closure is only created at runtime. A local
+           def is never treated as generic: a local holds a value with no
+           compile-time signature. */
+        if (state_->scope_depth == 0)
+        {
+            char gname[256];
+            int gnlen = name.length < 255 ? name.length : 255;
+            memcpy(gname, name.start, gnlen);
+            gname[gnlen] = '\0';
+            set_global_generic_arity(require_global_slot(gname, &name),
+                                     generic_count > 0 ? generic_count : kNonGenericDef);
+        }
 
         /* Local functions: declare the name in the enclosing scope BEFORE
            compiling the body, so the function can call itself recursively (the
@@ -295,6 +341,12 @@ namespace zen
         state_ = &fn_state;
 
         begin_scope();
+
+        /* Type params occupy R[0..generic_count-1], ahead of the value params
+           — but count separately (ObjFunc::generic_arity), never folded into
+           `arity`. OP_CALL_GENERIC validates the two counts independently. */
+        for (int gi = 0; gi < generic_count; gi++)
+            add_local(generic_params[gi]);
 
         /* Parameters */
         consume(TOK_LPAREN, "Expected '(' after function name.");
@@ -342,6 +394,7 @@ namespace zen
 
         ObjFunc *fn = state_->emitter.end(state_->max_reg);
         fn->arity = arity;
+        fn->generic_arity = generic_count;
         fn->return_struct = ret_struct;
         fn->return_class = ret_class;
 
@@ -691,6 +744,12 @@ namespace zen
                 consume(TOK_IDENTIFIER, "Expected method name.");
                 Token method_name = previous_;
 
+                /* Optional type parameters: def m<T>(self, ...). They sit
+                   after `self` and before the value params — see
+                   fun_declaration for the register layout. */
+                Token generic_params[kMaxGenericParams];
+                int generic_count = generic_param_list(generic_params);
+
                 if (method_count >= method_capacity)
                 {
                     int new_capacity = method_capacity == 0 ? 16 : method_capacity * 2;
@@ -754,6 +813,10 @@ namespace zen
                     add_local(self_tok);
                 }
 
+                /* Type params come after self, before the value params. */
+                for (int gi = 0; gi < generic_count; gi++)
+                    add_local(generic_params[gi]);
+
                 /* Parse explicit parameters */
                 consume(TOK_LPAREN, "Expected '(' after method name.");
                 int arity = 0;
@@ -809,6 +872,7 @@ namespace zen
 
                 ObjFunc *fn = state_->emitter.end(state_->max_reg);
                 fn->arity = arity; /* does NOT count self — VM adds it implicitly */
+                fn->generic_arity = generic_count;
                 fn->return_struct = m_ret_struct;
                 fn->return_class = m_ret_class;
 
@@ -2198,7 +2262,10 @@ namespace zen
            thing distinguishing this from a real loop entry. */
         LoopCtx *swp = push_loop_ctx();
         if (!swp)
+        {
+            state_->next_reg = saved_next; /* compilation is aborting either way (push_loop_ctx already called error()), but leave next_reg as we found it rather than pinned at base_reg */
             return;
+        }
         LoopCtx &sw = *swp;
         sw.is_switch = true;
         sw.break_count = 0;
@@ -2233,6 +2300,7 @@ namespace zen
             {
                 error("Too many 'case' branches in one switch (max 256).");
                 state_->loop_depth--; /* pop the switch context pushed above */
+                state_->next_reg = saved_next;
                 return;
             }
             end_jumps[end_count++] = state_->emitter.emit_jump(OP_JMP, 0, previous_.line);

@@ -9,8 +9,20 @@ namespace zen
 {
 
     static constexpr uint8_t ZEN_BYTECODE_MAGIC[5] = {'Z', 'E', 'N', 'B', 'C'};
-    static constexpr uint16_t ZEN_BYTECODE_VERSION_MAJOR = 2;
-    static constexpr uint16_t ZEN_BYTECODE_VERSION_MINOR = 1;
+    /* major 3: OP_HALT's numeric value changed (opcodes.h) — it now sits
+    **          permanently last in the OpCode enum instead of getting
+    **          reshuffled by each new opcode appended "before OP_HALT".
+    **          Every file at major < 3 has a trailing HALT that would
+    **          silently decode as a different (and possibly wider)
+    **          instruction under the new numbering — a real corruption, not
+    **          just a version mismatch, so this must be a MAJOR bump: the
+    **          loader's `major != ZEN_BYTECODE_VERSION_MAJOR` check rejects
+    **          those files outright instead of misreading them. */
+    static constexpr uint16_t ZEN_BYTECODE_VERSION_MAJOR = 3;
+    /* minor 2: ObjFunc gained generic_arity (reified generics, f<T>(...)) —
+    **          written at the end of write_func(); read_func() defaults it to
+    **          0 for minor < 2. See read_func()/write_func() in bytecode.cpp. */
+    static constexpr uint16_t ZEN_BYTECODE_VERSION_MINOR = 2;
 
     struct BytecodeStats
     {

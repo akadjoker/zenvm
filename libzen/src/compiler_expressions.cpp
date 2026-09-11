@@ -125,50 +125,138 @@ namespace zen
         }
     }
 
-    bool Compiler::looks_like_generic_call()
+    /* Two tokens are "adjacent" when nothing — not even a space — separates
+    ** them in the source. Comparing the raw pointers avoids a whitespace-aware
+    ** lexer mode just for this. */
+    static inline bool tokens_adjacent(const Token &a, const Token &b)
     {
-        if (current_.type != TOK_LT)
-            return false;
-
-        LexerState saved = lexer_.save_state();
-        Token type_name = lexer_.next_token();
-        Token close = lexer_.next_token();
-        Token call = lexer_.next_token();
-        lexer_.restore_state(saved);
-
-        return type_name.type == TOK_IDENTIFIER &&
-               close.type == TOK_GT &&
-               call.type == TOK_LPAREN;
+        return b.start == a.start + a.length;
     }
 
-    int Compiler::generic_type_arg(int dest)
+    /* `f<T>(...)` is generic-call syntax ONLY when (a) `f` is already known to
+    ** be generic — the caller passes that in, having looked the callee's
+    ** generic arity up — and (b) the punctuation cannot also be a comparison:
+    ** the opening '<' glued to the callee and immediately followed by an
+    ** identifier (`f<T` yes, `f < T` no), and the closing '>' glued to '('
+    ** (`>(` yes, `> (` no). Both conditions are needed: adjacency alone still
+    ** reads `f<T, U>(h)` as generic syntax when `f` merely holds an int —
+    ** indistinguishable from two chained comparisons written without spaces.
+    ** Whitespace stays legal *inside* the list (`f<T, U>(...)` is normal
+    ** style); only the two boundary tokens that collide with comparison
+    ** syntax are held to strict adjacency. */
+    bool Compiler::looks_like_generic_call(bool callee_is_generic)
     {
-        if (check(TOK_LT))
-            advance();
-        else if (previous_.type != TOK_LT)
-            error("Expected '<' before generic type.");
-        consume(TOK_IDENTIFIER, "Expected type name in generic call.");
-        Token type_name = previous_;
-        consume(TOK_GT, "Expected '>' after generic type.");
+        if (!callee_is_generic)
+            return false;
+        if (current_.type != TOK_LT)
+            return false;
+        Token lt = current_;
 
-        char name_buf[256];
-        int len = type_name.length < 255 ? type_name.length : 255;
-        memcpy(name_buf, type_name.start, len);
-        name_buf[len] = '\0';
-
-        int reg = dest >= 0 ? dest : alloc_reg();
-        int gidx = require_global_slot(name_buf, &type_name);
-        if (gidx < 0)
+        LexerState saved = lexer_.save_state();
+        Token token = lexer_.next_token();
+        if (token.type != TOK_IDENTIFIER || !tokens_adjacent(lt, token))
         {
-            state_->emitter.emit_abc(OP_LOADNIL, reg, 0, 0, type_name.line);
+            lexer_.restore_state(saved);
+            return false;
+        }
+
+        for (;;)
+        {
+            token = lexer_.next_token();
+            if (token.type != TOK_COMMA)
+                break;
+            token = lexer_.next_token();
+            if (token.type != TOK_IDENTIFIER)
+            {
+                lexer_.restore_state(saved);
+                return false;
+            }
+        }
+
+        bool is_generic_call = false;
+        if (token.type == TOK_GT)
+        {
+            Token gt = token;
+            Token lparen = lexer_.next_token();
+            is_generic_call = lparen.type == TOK_LPAREN && tokens_adjacent(gt, lparen);
+        }
+        lexer_.restore_state(saved);
+        return is_generic_call;
+    }
+
+    /* Parse <T, U> after a callee, loading each type argument into the
+    ** consecutive registers R[base+1 ..]. Type arguments are ordinary runtime
+    ** values (classes, checked as such at runtime by OP_CALL_GENERIC /
+    ** OP_INVOKE_GENERIC) that sit before the value arguments — but, unlike the
+    ** old f<T>(x) == f(T,x) sugar, they are counted separately. Leaves '(' as
+    ** the current token for the caller's argument list. */
+    int Compiler::generic_type_args(int base)
+    {
+        consume(TOK_LT, "Expected '<' before generic type arguments.");
+
+        int ngeneric = 0;
+        do
+        {
+            consume(TOK_IDENTIFIER, "Expected type name in generic call.");
+            Token type_name = previous_;
+
+            if (ngeneric >= kMaxGenericParams)
+            {
+                error("Too many type arguments in a generic call.");
+                continue;
+            }
+
+            int arg_reg = base + 1 + ngeneric;
+            if (arg_reg >= kMaxRegs)
+            {
+                error("Too many generic arguments (expression too complex).");
+                return ngeneric;
+            }
+            /* Keep the block contiguous: the callee's registers must be
+               [callee][T0..Tn-1][arg0..] with no holes. */
+            state_->next_reg = arg_reg;
+            int reg = alloc_reg();
+
+            /* A type argument resolves like any other name: it may be a class
+               global (create<Transform>()) or an enclosing function's own type
+               parameter being forwarded (def relay<T>() { inner<T>(); }),
+               which is an ordinary local or upvalue by then. */
+            Token tok = type_name;
+            int local_reg = resolve_local(state_, &tok);
+            if (local_reg != -1)
+            {
+                emit_move(reg, local_reg);
+            }
+            else
+            {
+                int upval = resolve_upvalue(state_, &tok);
+                if (upval != -1)
+                {
+                    state_->emitter.emit_abc(OP_GETUPVAL, reg, upval, 0, type_name.line);
+                }
+                else
+                {
+                    char name_buf[256];
+                    int len = type_name.length < 255 ? type_name.length : 255;
+                    memcpy(name_buf, type_name.start, len);
+                    name_buf[len] = '\0';
+                    int gidx = require_global_slot(name_buf, &type_name);
+                    if (gidx < 0)
+                        state_->emitter.emit_abc(OP_LOADNIL, reg, 0, 0, type_name.line);
+                    else
+                    {
+                        mark_global_read(gidx, type_name);
+                        state_->emitter.emit_abx(OP_GETGLOBAL, reg, gidx, type_name.line);
+                    }
+                }
+            }
             if (reg >= 0 && reg < 256)
                 state_->reg_class_hints[reg] = nullptr;
-            last_call_struct_def_ = nullptr;
-            last_call_class_def_ = nullptr;
-            return reg;
-        }
-        state_->emitter.emit_abx(OP_GETGLOBAL, reg, gidx, type_name.line);
-        return reg;
+            ngeneric++;
+        } while (match(TOK_COMMA));
+
+        consume(TOK_GT, "Expected '>' after generic type arguments.");
+        return ngeneric;
     }
 
     /* =========================================================
@@ -216,6 +304,11 @@ namespace zen
         /* Prefix: parse the left-hand side */
         int reg = prefix_rule(token, dest, canAssign);
 
+        /* Only a bare identifier callee can name a generic def — once any
+           infix operator has run, `reg` holds a computed value with no
+           compile-time signature, so `<` after it is a comparison again. */
+        bool bare_name = (token.type == TOK_IDENTIFIER);
+
         /* Infix: keep consuming operators at this precedence or higher */
         for (;;)
         {
@@ -237,18 +330,42 @@ namespace zen
             }
 
             Precedence op_prec = get_precedence(current_.type);
-            bool is_generic_call = current_.type == TOK_LT && looks_like_generic_call();
+            int callee_generic_arity = 0;
+            bool is_generic_call = false;
+            if (current_.type == TOK_LT && bare_name)
+            {
+                callee_generic_arity = generic_arity_of_callee(token);
+                is_generic_call = looks_like_generic_call(callee_generic_arity > 0);
+                /* `plain<A>(5)` where `plain` is a known non-generic def: the
+                   punctuation is unambiguous generic-call shape, so silently
+                   reading it as a chain of comparisons would hide a real
+                   mistake. Only diagnosable for a name we can see a def for —
+                   for anything else `<` stays a comparison. */
+                if (!is_generic_call && callee_generic_arity == 0 &&
+                    callee_is_known_def(token) && looks_like_generic_call(true))
+                {
+                    error("Function is not generic — it takes no type arguments.");
+                    return reg;
+                }
+            }
             if (is_generic_call)
                 op_prec = PREC_CALL;
             if (prec > op_prec)
                 break;
 
             Token op = current_;
-            advance();
             if (is_generic_call)
-                reg = generic_call_expr(reg, dest);
+            {
+                /* '<' stays as the current token — generic_type_args()
+                   consumes it itself. */
+                reg = generic_call_expr(reg, dest, token, callee_generic_arity);
+            }
             else
+            {
+                advance();
                 reg = infix_rule(op, reg, dest, canAssign);
+            }
+            bare_name = false;
         }
 
         /* If we can assign but '=' is still sitting there, it's an error.
@@ -819,6 +936,21 @@ namespace zen
                        reference this same local (e.g. b = a % b). */
                     int save_reg = state_->next_reg;
                     int rhs = expression(-1);
+                    /* Reassigning a local must update what the compiler
+                       believes it holds — a stale class_type/struct_type
+                       from an earlier `var t = someInstance;` would still be
+                       attached after `t = 5;`, sending later operators on
+                       `t` down the (harmless but slower) object-operator
+                       fallback path. Read the RHS's known type the same way
+                       the global-assignment path below does, from whichever
+                       of last_call_*_def_ (a call/field-read result) or this
+                       register's own transient hint is live. */
+                    Local *lhs_local = find_local_by_reg(local_reg);
+                    if (lhs_local)
+                    {
+                        lhs_local->class_type = last_call_class_def_ ? last_call_class_def_ : class_hint_for_reg(rhs);
+                        lhs_local->struct_type = last_call_struct_def_;
+                    }
                     if (rhs != local_reg)
                     {
                         /* If the value came straight out of an arithmetic
@@ -931,6 +1063,21 @@ namespace zen
                 }
                 free_reg(rhs_reg);
 
+                /* A compound assignment's result is always a primitive
+                   ADD/SUB/.../STRADD, never a class instance — so if the
+                   local previously held one (`var t = someInstance;
+                   t += 5;`), that hint is now stale and must be cleared, the
+                   same reasoning as the simple-assignment path above. */
+                if (local_reg != -1)
+                {
+                    Local *lhs_local = find_local_by_reg(local_reg);
+                    if (lhs_local)
+                    {
+                        lhs_local->class_type = nullptr;
+                        lhs_local->struct_type = nullptr;
+                    }
+                }
+
                 /* Store back if not local */
                 if (local_reg == -1)
                 {
@@ -958,9 +1105,11 @@ namespace zen
                  MOVE R3, R1; GETFIELD R3, R3, x  →  GETFIELD R3, R1, x */
             if (reg >= 0 && reg != local_reg)
             {
+                /* '<' already carries PREC_COMPARISON, so a generic call on
+                   this local (were one possible — locals never name a generic
+                   def) would be covered by the precedence test anyway. */
                 Precedence next_prec = get_precedence(current_.type);
-                bool next_is_generic = current_.type == TOK_LT && looks_like_generic_call();
-                if (next_prec > PREC_NONE || next_is_generic)
+                if (next_prec > PREC_NONE)
                 {
                     /* Infix follows — don't MOVE, return the local's own register */
                     return local_reg;
@@ -1829,7 +1978,10 @@ namespace zen
         return result_reg;
     }
 
-    int Compiler::generic_call_expr(int func_reg, int dest)
+    /* f<T, U>(args) — the free-function form. Emits the 2-word
+    ** OP_CALL_GENERIC; `expected_generic` is the callee's declared arity, so a
+    ** mismatch is caught here rather than at runtime. */
+    int Compiler::generic_call_expr(int func_reg, int dest, const Token &callee, int expected_generic)
     {
         int base;
         int save_next = state_->next_reg;
@@ -1851,18 +2003,20 @@ namespace zen
         if (state_->next_reg <= base)
             state_->next_reg = base + 1;
 
-        int arg_count = 0;
-        int type_reg = alloc_reg();
-        if (type_reg != base + 1)
+        int ngeneric = generic_type_args(base);
+        if (ngeneric != expected_generic)
         {
-            /* Keep call arguments consecutive even if the allocator had moved. */
-            state_->next_reg = base + 1;
-            type_reg = alloc_reg();
+            char buf[160];
+            int len = callee.length < 64 ? callee.length : 64;
+            snprintf(buf, sizeof(buf),
+                     "'%.*s' expects %d type argument%s but got %d.",
+                     len, callee.start, expected_generic,
+                     expected_generic == 1 ? "" : "s", ngeneric);
+            error(buf);
         }
-        generic_type_arg(type_reg);
-        arg_count++;
 
-        consume(TOK_LPAREN, "Expected '(' after generic type.");
+        int arg_count = ngeneric;
+        consume(TOK_LPAREN, "Expected '(' after generic type arguments.");
         if (!check(TOK_RPAREN))
         {
             do
@@ -1875,8 +2029,17 @@ namespace zen
         }
         consume(TOK_RPAREN, "Expected ')' after arguments.");
 
+        /* B is a single byte in the ABC encoding, so the combined count has to
+           fit — the per-register checks bound each half but not their sum. */
+        if (arg_count > 0xFF)
+        {
+            error("Too many combined type and value arguments in a generic call.");
+            arg_count = 0xFF;
+        }
+
         int result_reg = dest >= 0 ? dest : base;
-        state_->emitter.emit_abc(OP_CALL, base, arg_count, 1, previous_.line);
+        state_->emitter.emit_abc(OP_CALL_GENERIC, base, arg_count, 1, previous_.line);
+        state_->emitter.emit((uint32_t)(ngeneric & 0xFFFF), previous_.line);
         state_->next_reg = save_next > base + 1 ? save_next : base + 1;
         last_call_struct_def_ = saved_struct_def;
         last_call_class_def_ = saved_class_def;
@@ -2154,8 +2317,24 @@ namespace zen
             return dest >= 0 ? dest : alloc_reg();
         }
 
+        /* Try vtable dispatch if we know the receiver's class at compile time.
+           Resolved before the argument list because a generic method call
+           (a.b<T>(args)) can only be told apart from a comparison by knowing
+           the method's declared generic arity — which lives in the class's
+           flattened vtable, for script and native methods alike. */
+        ObjClass *known_class = nullptr;
+        if (loc && loc->class_type)
+            known_class = loc->class_type;
+        else if (obj_reg >= 0 && obj_reg < 256 && state_->reg_class_hints[obj_reg])
+            known_class = state_->reg_class_hints[obj_reg];
+        /* self inside a method can't reach here: the class is built AFTER its
+           methods compile, so there is no ObjClass* to consult yet. Such calls
+           fall back to OP_INVOKE (and a generic one to OP_INVOKE_GENERIC via
+           the explicit annotation route). */
+
         /* Not assignment — check for method call: a.b(args) or a.b<T>(args) */
-        bool has_generic_arg = check(TOK_LT) && looks_like_generic_call();
+        int method_generic_arity = generic_arity_of_method(known_class, field_tok);
+        bool has_generic_arg = check(TOK_LT) && looks_like_generic_call(method_generic_arity > 0);
         if (has_generic_arg || check(TOK_LPAREN))
         {
             /* Method invocation — emit OP_INVOKE (2-word) */
@@ -2168,23 +2347,28 @@ namespace zen
 
             /* Parse arguments into consecutive registers after base */
             int arg_count = 0;
+            int ngeneric = 0;
             int save_next = state_->next_reg;
             if (state_->next_reg <= base)
                 state_->next_reg = base + 1;
 
             if (has_generic_arg)
             {
-                int type_reg = alloc_reg();
-                if (type_reg != base + 1)
+                ngeneric = generic_type_args(base);
+                if (ngeneric != method_generic_arity)
                 {
-                    state_->next_reg = base + 1;
-                    type_reg = alloc_reg();
+                    char buf[160];
+                    int len = field_tok.length < 64 ? field_tok.length : 64;
+                    snprintf(buf, sizeof(buf),
+                             "'%.*s' expects %d type argument%s but got %d.",
+                             len, field_tok.start, method_generic_arity,
+                             method_generic_arity == 1 ? "" : "s", ngeneric);
+                    error(buf);
                 }
-                generic_type_arg(type_reg);
-                arg_count++;
+                arg_count = ngeneric;
             }
 
-            consume(TOK_LPAREN, "Expected '(' after generic type.");
+            consume(TOK_LPAREN, "Expected '(' after method name.");
             if (!check(TOK_RPAREN))
             {
                 do
@@ -2197,23 +2381,24 @@ namespace zen
             }
             consume(TOK_RPAREN, "Expected ')' after arguments.");
 
-            /* Try vtable dispatch if we know the class at compile time */
-            ObjClass *known_class = nullptr;
-            if (loc && loc->class_type)
-                known_class = loc->class_type;
-            else if (obj_reg >= 0 && obj_reg < 256 && state_->reg_class_hints[obj_reg])
-                known_class = state_->reg_class_hints[obj_reg];
-            else if (current_class_fields_ && state_->is_method && obj_reg == 0)
+            if (has_generic_arg)
             {
-                /* self inside a method — find the class being compiled */
-                /* We look up the class by the method's enclosing class name */
-                /* For now, use the general approach: check if current_class_fields_ is set */
-                /* We need the actual ObjClass*. It's built AFTER methods, so we can't
-                   use it here. For self.method() inside methods, fall back to OP_INVOKE
-                   for now. The vtable win is for external calls (var c = C(); c.tick()). */
+                /* B is a single byte — bound the combined count. */
+                if (arg_count > 0xFF)
+                {
+                    error("Too many combined type and value arguments in a generic call.");
+                    arg_count = 0xFF;
+                }
+                /* 3-word OP_INVOKE_GENERIC. The OP_INVOKE_VT fast path is
+                   deliberately NOT used here: it carries no room for the
+                   ngeneric operand and its handler knows nothing about the
+                   type-argument register split. */
+                int sel_slot = vm_->intern_selector(field_tok.start, field_tok.length);
+                state_->emitter.emit_abc(OP_INVOKE_GENERIC, base, arg_count, 1, previous_.line);
+                state_->emitter.emit((uint32_t)((sel_slot << 16) | (name_ki & 0xFFFF)), previous_.line);
+                state_->emitter.emit((uint32_t)ngeneric, previous_.line);
             }
-
-            if (known_class)
+            else if (known_class)
             {
                 int slot = vm_->find_selector(field_tok.start, field_tok.length);
                 if (slot >= 0 && slot < known_class->vtable_size &&
@@ -2291,7 +2476,12 @@ namespace zen
         else
             state_->emitter.emit_abc(OP_GETFIELD, reg, obj_reg, name_ki, previous_.line);
 
-
+        /* A field read yields a raw field value, never a known class
+           instance (same reasoning as index_expr() above). Clear any stale
+           class hint on the destination register so later operators don't
+           wrongly dispatch through the object-operator path. */
+        if (reg >= 0 && reg < 256)
+            state_->reg_class_hints[reg] = nullptr;
 
         if (obj_reg != reg)
             free_reg(obj_reg);

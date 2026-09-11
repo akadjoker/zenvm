@@ -198,7 +198,7 @@ namespace zen
         int ternary_expr(int cond, int dest);
         int slice_expr(int obj, int dest, int start_reg);
         int call_expr(int func_reg, int dest);
-        int generic_call_expr(int func_reg, int dest);
+        int generic_call_expr(int func_reg, int dest, const Token &callee, int expected_generic);
         int index_expr(int obj_reg, int dest, bool canAssign);
         int dot_expr(int obj_reg, int dest, bool canAssign);
         int and_expr(int left, int dest);
@@ -217,12 +217,55 @@ namespace zen
         /* --- Helpers --- */
         Precedence get_precedence(TokenType type);
         bool is_prefix(TokenType type);
-        bool looks_like_generic_call();
+        /* `callee_is_generic` must already be known true — the callee's
+        ** generic arity was found via generic_arity_of_callee() (a def) or
+        ** generic_arity_of_method() (a script or native method). False always
+        ** returns false with no lookahead. This is what keeps a plain variable
+        ** followed by `<X>(y)` from ever being read as a generic call:
+        ** punctuation alone cannot tell it apart from chained comparisons
+        ** written without spaces. */
+        bool looks_like_generic_call(bool callee_is_generic);
         bool looks_like_lambda_params(); /* '(' already consumed: peek for  params ) => */
         bool looks_like_comprehension(); /* '[' consumed: peek for a top-level 'for' */
         void array_comprehension(int result_reg); /* [expr for x in it if cond] */
-        int generic_type_arg(int dest);
+        /* Parses <T,U> after a callee, loading each type argument into
+        ** R[base+1+i]. Returns the number of type arguments consumed. */
+        int generic_type_args(int base);
         int require_global_slot(const char *name, Token *token);
+
+        /* --- Reified generics (f<T>(x) / obj.m<T>(x)) ---
+        ** Generic arity of a callee known at compile time. Returns 0 when the
+        ** callee isn't generic (or isn't statically known), which is also what
+        ** tells looks_like_generic_call() to treat '<' as a comparison. */
+        int generic_arity_of_callee(const Token &name);
+        /* True when `name` is a global the compiler can see holds a function —
+        ** enough to say "this is a def, and it isn't generic" rather than
+        ** letting `<` quietly degrade to a comparison. */
+        bool callee_is_known_def(const Token &name);
+        int generic_arity_of_method(ObjClass *klass, const Token &method);
+        /* Compile-time generic arity of a global def, recorded by
+        ** fun_declaration() so a later call site can validate <...>. */
+        int global_generic_arity(int gidx) const;
+        /* Raw table read: kNonGenericDef distinguishes "a def that takes no
+        ** type params" from "a name we know nothing about" (both report 0
+        ** generic arity, but only the first can be diagnosed). */
+        int global_generic_arity_raw(int gidx) const;
+        void set_global_generic_arity(int gidx, int arity);
+        static const int kNonGenericDef = -1;
+        static const int kMaxGenericParams = 32;
+        /* Parses an optional `<T, U>` after a def/method name into out_params
+        ** (capacity kMaxGenericParams); returns how many were declared. */
+        int generic_param_list(Token *out_params);
+        /* Lightweight lexer-only pass over the whole source, run before the
+        ** real single-pass compile begins, that finds every top-level
+        ** `def NAME<...>` and records its arity via set_global_generic_arity()
+        ** — so a call site earlier in the file than the def (including mutual
+        ** recursion between two generics) still sees it as generic instead of
+        ** silently reading `<` as a comparison. Uses its own throwaway Lexer,
+        ** never touches lexer_/current_/previous_/had_error_: anything
+        ** malformed here is simply skipped, since the real parser below will
+        ** report the actual error when it gets there. */
+        void prescan_generic_defs(const char *source);
 
         /* --- Variable resolution --- */
         int resolve_local(CompilerState *state, Token *name);
@@ -313,6 +356,13 @@ namespace zen
         ObjClass **global_return_class_;
         int global_return_hints_capacity_;
         void set_global_return_hint(int gidx, ObjStructDef *s, ObjClass *c);
+
+        /* Generic arity of global defs (compile-time side table, same shape as
+           the return hints above). 0 = not generic. Populated by
+           fun_declaration(), read by the call site to decide whether `<` opens
+           a type-argument list or is just a comparison. */
+        int *global_generic_arity_;
+        int global_generic_arity_capacity_;
 
         /* Undefined-global detection (compile-time). A global that is read but
            never defined (var/def/class/assignment/builtin/import) is a typo. */

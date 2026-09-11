@@ -122,6 +122,8 @@ map_key_lookup:
     if (found && is_native(callable))
     {
         ObjNative *nat = as_native(callable);
+        if (nat->generic_arity > 0)
+            RT_ERROR("'%s' is a generic native function and must be called with <...> type arguments", mname);
         /* Module functions don't take receiver (no self) */
         int nret = nat->fn(this, args, arg_count);
         if (nret > 0)
@@ -137,6 +139,8 @@ map_key_lookup:
         /* Module-level closure — call without self */
         ObjClosure *cl = as_closure(callable);
         ObjFunc *fn = cl->func;
+        if (fn->generic_arity > 0)
+            RT_ERROR("'%s' is generic and must be called with <...> type arguments", mname);
         if (fn->arity >= 0 && arg_count != fn->arity)
             RT_ERROR("%s() expects %d args but got %d", mname, fn->arity, arg_count);
         if (fiber->frame_count >= kMaxFrames)

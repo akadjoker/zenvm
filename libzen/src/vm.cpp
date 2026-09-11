@@ -166,6 +166,16 @@ namespace zen
 
     ObjFiber *VM::new_fiber(ObjClosure *closure, int stack_size, int max_frames)
     {
+        /* A fiber is resumed with plain values, never with type arguments —
+        ** a generic body's type registers could never be filled. (closure is
+        ** null for the main fiber, which has no body yet.) */
+        if (closure && closure->func->generic_arity > 0)
+        {
+            runtime_error("'%s' is generic and cannot be used as a fiber body",
+                          closure->func->name ? closure->func->name->chars : "?");
+            return nullptr;
+        }
+
         /* Suppress GC during fiber construction.
         ** Problem: if zen_alloc triggers GC twice, the first cycle repaints
         ** our BLACK fiber to WHITE, and the second cycle sweeps it because
@@ -278,18 +288,33 @@ namespace zen
         if (is_native(callee))
         {
             ObjNative *nat = as_native(callee);
+            if (nat->generic_arity > 0)
+            {
+                runtime_error("'%s' is a generic native function and cannot be called this way",
+                              nat->name ? nat->name->chars : "?");
+                return val_nil();
+            }
             int nret = nat->fn(this, args, nargs);
             return (nret > 0) ? args[0] : val_nil();
         }
         if (is_closure(callee))
         {
+            ObjClosure *cl = as_closure(callee);
+            /* Same reasoning as the native branch: a generic script function
+            ** called through this C++ entry point has no channel for its type
+            ** arguments, so args[0] would land in T's register. */
+            if (cl->func->generic_arity > 0)
+            {
+                runtime_error("'%s' is generic and must be called with <...> type arguments",
+                              cl->func->name ? cl->func->name->chars : "?");
+                return val_nil();
+            }
             /* Place callee + args on main fiber stack, call, return result */
             ObjFiber *fiber = main_fiber_;
             Value *base = fiber->stack;
             for (int i = 0; i < nargs; i++)
                 base[i] = args[i];
 
-            ObjClosure *cl = as_closure(callee);
             fiber->frame_count = 1;
             CallFrame *frame = &fiber->frames[0];
             frame->closure = cl;
@@ -316,12 +341,18 @@ namespace zen
         /* Native callee: it signals errors cooperatively via had_error_. */
         if (is_native(fn))
         {
+            ObjNative *nat = as_native(fn);
+            if (nat->generic_arity > 0)
+            {
+                *out_ok = false;
+                return val_obj((Obj *)make_string("pcall: first argument is a generic native function"));
+            }
             Value call_args[17];
             int n = nargs < 16 ? nargs : 16;
             for (int i = 0; i < n; i++)
                 call_args[i] = args[i];
             protected_depth_++;
-            int nret = as_native(fn)->fn(this, call_args, n);
+            int nret = nat->fn(this, call_args, n);
             protected_depth_--;
             if (had_error_)
             {
@@ -340,6 +371,11 @@ namespace zen
         }
 
         ObjClosure *cl = as_closure(fn);
+        if (cl->func->generic_arity > 0)
+        {
+            *out_ok = false;
+            return val_obj((Obj *)make_string("pcall: first argument is generic and needs <...> type arguments"));
+        }
         if (cl->func->arity >= 0 && nargs != cl->func->arity)
         {
             *out_ok = false;
@@ -960,6 +996,14 @@ namespace zen
         }
 
         ObjFunc *func = closure->func;
+        /* Uma função genérica chamada por esta via não tem canal para os type
+        ** arguments — o primeiro valor iria parar ao registo de T. */
+        if (func->generic_arity > 0)
+        {
+            runtime_error("'%s' is generic and must be called with <...> type arguments",
+                          func->name ? func->name->chars : "?");
+            return false;
+        }
         /* Verificar arity */
         if (func->arity >= 0 && nargs != func->arity)
         {
@@ -1000,6 +1044,12 @@ namespace zen
             case OBJ_NATIVE:
             {
                 ObjNative *nat = as_native(callee);
+                if (nat->generic_arity > 0)
+                {
+                    runtime_error("'%s' is a generic native function and cannot be called this way",
+                                  nat->name ? nat->name->chars : "?");
+                    return false;
+                }
                 Value *args = fiber->stack_top - nargs;
                 int nret = nat->fn(this, args, nargs);
                 /* Coloca resultado onde estava o callable */
@@ -1130,6 +1180,24 @@ namespace zen
         return *this;
     }
 
+    /* Grow the vtable so `slot` is addressable, zero-filling the new tail.
+    ** Shared by method() and generic_method(). */
+    static void grow_vtable_for_slot(GC *gc, ObjClass *klass, int slot)
+    {
+        if (slot < klass->vtable_size)
+            return;
+        int new_size = slot + 1;
+        Value *new_vt = (Value *)zen_alloc(gc, sizeof(Value) * new_size);
+        for (int i = 0; i < klass->vtable_size; i++)
+            new_vt[i] = klass->vtable[i];
+        for (int i = klass->vtable_size; i < new_size; i++)
+            new_vt[i] = val_nil();
+        if (klass->vtable)
+            zen_free(gc, klass->vtable, sizeof(Value) * klass->vtable_size);
+        klass->vtable = new_vt;
+        klass->vtable_size = new_size;
+    }
+
     VM::ClassBuilder &VM::ClassBuilder::method(const char *name, NativeFn fn, int arity)
     {
         ObjString *s = intern_string(&vm_->gc_, name, (int)strlen(name),
@@ -1147,19 +1215,36 @@ namespace zen
 
         /* Also register in vtable */
         int slot = vm_->intern_selector(name, name_len);
-        if (slot >= klass_->vtable_size)
+        grow_vtable_for_slot(&vm_->gc_, klass_, slot);
+        klass_->vtable[slot] = val_obj((Obj *)nat);
+        return *this;
+    }
+
+    VM::ClassBuilder &VM::ClassBuilder::generic_method(const char *name, GenericNativeFn fn,
+                                                      int generic_arity, int arity)
+    {
+        /* A generic native with no type params would leave `generic_fn` live
+        ** while every reader picked `fn` off the union — reject instead of
+        ** registering something no call path can use safely. Variadic value
+        ** arity has no meaning here either: OP_INVOKE_GENERIC hands the native
+        ** an exact split of type args and value args. */
+        if (generic_arity <= 0 || arity < 0)
         {
-            int new_size = slot + 1;
-            Value *new_vt = (Value *)zen_alloc(&vm_->gc_, sizeof(Value) * new_size);
-            for (int i = 0; i < klass_->vtable_size; i++)
-                new_vt[i] = klass_->vtable[i];
-            for (int i = klass_->vtable_size; i < new_size; i++)
-                new_vt[i] = val_nil();
-            if (klass_->vtable)
-                zen_free(&vm_->gc_, klass_->vtable, sizeof(Value) * klass_->vtable_size);
-            klass_->vtable = new_vt;
-            klass_->vtable_size = new_size;
+            vm_->runtime_error("generic_method('%s'): generic_arity must be > 0 and arity >= 0", name);
+            return *this;
         }
+
+        int name_len = (int)strlen(name);
+        ObjString *s = intern_string(&vm_->gc_, name, name_len, hash_string(name, name_len));
+        ObjNative *nat = new_native_generic(&vm_->gc_, fn, generic_arity, arity, s);
+        map_set(&vm_->gc_, klass_->methods, val_obj((Obj *)s), val_obj((Obj *)nat));
+
+        /* Generic methods deliberately skip operator-slot registration: an
+        ** overload like __add__<T> has no calling convention (OP_ADD_OBJ never
+        ** carries type arguments), so only OP_INVOKE_GENERIC's name+vtable
+        ** path applies. VM::invoke_operator guards the union anyway. */
+        int slot = vm_->intern_selector(name, name_len);
+        grow_vtable_for_slot(&vm_->gc_, klass_, slot);
         klass_->vtable[slot] = val_obj((Obj *)nat);
         return *this;
     }
@@ -1289,19 +1374,33 @@ namespace zen
             if (is_native(method))
             {
                 ObjNative *nat = as_native(method);
+                if (nat->generic_arity > 0)
+                {
+                    runtime_error("'%s.init' is a generic native method and cannot be constructed this way",
+                                  klass->name ? klass->name->chars : "?");
+                    return self; /* return, not fall through — no half-built instance */
+                }
                 nat->fn(this, call_args, nargs + 1);
             }
             else if (is_closure(method))
             {
+                ObjClosure *cl = as_closure(method);
+                /* Generic constructors are unsupported; binding a value arg
+                ** into T's register would be silent corruption. */
+                if (cl->func->generic_arity > 0)
+                {
+                    runtime_error("'%s.init' is generic and cannot be constructed — generic constructors are not supported",
+                                  klass->name ? klass->name->chars : "?");
+                    return self;
+                }
                 /* Push args to fiber stack and call */
                 ObjFiber *fiber = current_fiber_;
                 Value *base = fiber->stack_top;
                 for (int i = 0; i <= nargs; i++)
                     base[i] = call_args[i];
-                fiber->stack_top = base + as_closure(method)->func->num_regs;
+                fiber->stack_top = base + cl->func->num_regs;
 
                 CallFrame *frame = &fiber->frames[fiber->frame_count++];
-                ObjClosure *cl = as_closure(method);
                 frame->closure = cl;
                 frame->func = cl->func;
                 frame->ip = cl->func->code;
@@ -1358,23 +1457,35 @@ namespace zen
         /* Set up call args: [self, arg0, arg1, ...] */
         if (is_native(method))
         {
+            ObjNative *nat = as_native(method);
+            if (nat->generic_arity > 0)
+            {
+                runtime_error("'%s' is a generic native method and cannot be invoked this way",
+                              nat->name ? nat->name->chars : "?");
+                return val_nil();
+            }
             Value call_args[17];
             call_args[0] = instance;
             for (int i = 0; i < nargs && i < 16; i++)
                 call_args[i + 1] = args[i];
-            ObjNative *nat = as_native(method);
             int nret = nat->fn(this, call_args, nargs + 1);
             return nret > 0 ? call_args[0] : val_nil();
         }
         else if (is_closure(method))
         {
+            ObjClosure *cl = as_closure(method);
+            if (cl->func->generic_arity > 0)
+            {
+                runtime_error("'%s' is generic and must be invoked with <...> type arguments",
+                              cl->func->name ? cl->func->name->chars : "?");
+                return val_nil();
+            }
             ObjFiber *fiber = current_fiber_;
             Value *base = fiber->stack_top;
             base[0] = instance; /* self */
             for (int i = 0; i < nargs; i++)
                 base[i + 1] = args[i];
 
-            ObjClosure *cl = as_closure(method);
             fiber->stack_top = base + cl->func->num_regs;
 
             CallFrame *frame = &fiber->frames[fiber->frame_count++];
@@ -1412,22 +1523,41 @@ namespace zen
 
         if (is_native(method))
         {
+            ObjNative *nat = as_native(method);
+            /* Unreachable today — generic_method() deliberately never fills an
+            ** operator slot — but reading `fn` through the union while
+            ** `generic_fn` is live is UB, so guard it like every other site. */
+            if (nat->generic_arity > 0)
+            {
+                runtime_error("'%s' is a generic native operator and cannot be called this way",
+                              nat->name ? nat->name->chars : "?");
+                return val_nil();
+            }
             Value call_args[17];
             call_args[0] = instance;
             for (int i = 0; i < nargs && i < 16; i++)
                 call_args[i + 1] = args[i];
-            return as_native(method)->fn(this, call_args, nargs + 1) > 0 ? call_args[0] : val_nil();
+            return nat->fn(this, call_args, nargs + 1) > 0 ? call_args[0] : val_nil();
         }
 
         if (is_closure(method))
         {
+            ObjClosure *cl = as_closure(method);
+            /* A generic dunder (def __add__<T>(...)) is reachable through plain
+            ** infix syntax (a + b), where no <...> opt-in is possible at all —
+            ** so this must always reject. */
+            if (cl->func->generic_arity > 0)
+            {
+                runtime_error("'%s' is a generic operator method and cannot be invoked this way",
+                              cl->func->name ? cl->func->name->chars : "?");
+                return val_nil();
+            }
             ObjFiber *fiber = current_fiber_;
             Value *base = fiber->stack_top;
             base[0] = instance;
             for (int i = 0; i < nargs; i++)
                 base[i + 1] = args[i];
 
-            ObjClosure *cl = as_closure(method);
             fiber->stack_top = base + cl->func->num_regs;
 
             CallFrame *frame = &fiber->frames[fiber->frame_count++];
@@ -1799,6 +1929,17 @@ namespace zen
 
     int VM::spawn_process(ObjClosure *closure, Value *args, int nargs)
     {
+        /* A generic body has no way to receive its type arguments once
+        ** spawned, and the arg copy below is clamped by `arity` — which
+        ** excludes the type-parameter registers — so the values would land in
+        ** the wrong slots with no diagnostic. */
+        if (closure->func->generic_arity > 0)
+        {
+            runtime_error("'%s' is generic and cannot be spawned as a process",
+                          closure->func->name ? closure->func->name->chars : "?");
+            return -1;
+        }
+
         /* Grow pool if needed */
         if (num_alive_ >= pool_capacity_)
             pool_grow(pool_, pool_capacity_);

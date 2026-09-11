@@ -25,6 +25,7 @@ namespace zen
           global_class_hints_(nullptr), global_class_hints_capacity_(0),
           global_struct_hints_(nullptr), global_struct_hints_capacity_(0),
           global_return_struct_(nullptr), global_return_class_(nullptr), global_return_hints_capacity_(0),
+          global_generic_arity_(nullptr), global_generic_arity_capacity_(0),
           global_uses_(nullptr), global_uses_capacity_(0), initial_global_count_(0),
           recursion_depth_(0),
           current_class_fields_(nullptr)
@@ -41,6 +42,7 @@ namespace zen
         free(global_struct_hints_);
         free(global_return_struct_);
         free(global_return_class_);
+        free(global_generic_arity_);
         free(global_uses_);
         for (int i = 0; i < include_count_; i++)
         {
@@ -131,6 +133,191 @@ namespace zen
         }
         global_return_struct_[gidx] = s;
         global_return_class_[gidx] = c;
+    }
+
+    int Compiler::global_generic_arity_raw(int gidx) const
+    {
+        if (gidx < 0 || gidx >= global_generic_arity_capacity_)
+            return 0;
+        return global_generic_arity_[gidx];
+    }
+
+    int Compiler::global_generic_arity(int gidx) const
+    {
+        int raw = global_generic_arity_raw(gidx);
+        return raw == kNonGenericDef ? 0 : raw;
+    }
+
+    void Compiler::set_global_generic_arity(int gidx, int arity)
+    {
+        if (gidx < 0)
+            return;
+        if (gidx >= global_generic_arity_capacity_)
+        {
+            int new_cap = global_generic_arity_capacity_ > 0 ? global_generic_arity_capacity_ : kInitGlobalCapacity;
+            while (new_cap <= gidx && new_cap < kMaxGlobalsHard)
+                new_cap *= 2;
+            if (new_cap <= gidx)
+                new_cap = kMaxGlobalsHard;
+            int *grown = (int *)realloc(global_generic_arity_, sizeof(int) * (size_t)new_cap);
+            if (!grown)
+            {
+                error("Out of memory growing global generic arities.");
+                return;
+            }
+            for (int i = global_generic_arity_capacity_; i < new_cap; i++)
+                grown[i] = 0;
+            global_generic_arity_ = grown;
+            global_generic_arity_capacity_ = new_cap;
+        }
+        global_generic_arity_[gidx] = arity;
+    }
+
+    /* Generic arity of a bare callee name. Only a global `def` can be generic —
+    ** a local or an upvalue holding a function value carries no compile-time
+    ** signature, so `<` after it stays a comparison. */
+    int Compiler::generic_arity_of_callee(const Token &name)
+    {
+        Token tok = name;
+        if (resolve_local(state_, &tok) != -1 || resolve_upvalue(state_, &tok) != -1)
+            return 0;
+        char buf[256];
+        int len = name.length < 255 ? name.length : 255;
+        memcpy(buf, name.start, len);
+        buf[len] = '\0';
+        int gidx = vm_->find_global(buf);
+        if (gidx < 0)
+            return 0;
+        return global_generic_arity(gidx);
+    }
+
+    /* A script `def` only fills its global slot at RUNTIME (OP_CLOSURE +
+    ** OP_SETGLOBAL), so at compile time the slot still holds nil — the value
+    ** can't answer "is this a function". global_generic_arity_ therefore marks
+    ** every global def with kNonGenericDef instead of leaving it 0, so a
+    ** non-generic def is still distinguishable from an unknown name. */
+    bool Compiler::callee_is_known_def(const Token &name)
+    {
+        Token tok = name;
+        if (resolve_local(state_, &tok) != -1 || resolve_upvalue(state_, &tok) != -1)
+            return false;
+        char buf[256];
+        int len = name.length < 255 ? name.length : 255;
+        memcpy(buf, name.start, len);
+        buf[len] = '\0';
+        int gidx = vm_->find_global(buf);
+        if (gidx < 0)
+            return false;
+        if (global_generic_arity_raw(gidx) != 0)
+            return true;
+        /* Natives (and anything else already resolved) can be read directly. */
+        Value gval = vm_->get_global(gidx);
+        return is_closure(gval) || is_func(gval) || is_native(gval);
+    }
+
+    /* Generic arity of `klass.method`, read straight off the flattened vtable.
+    ** Works uniformly for a script method (ObjFunc::generic_arity, set when the
+    ** class body was compiled) and for a native one registered through
+    ** ClassBuilder::generic_method() (ObjNative::generic_arity). */
+    int Compiler::generic_arity_of_method(ObjClass *klass, const Token &method)
+    {
+        if (!klass)
+            return 0;
+        int slot = vm_->find_selector(method.start, method.length);
+        if (slot < 0 || slot >= klass->vtable_size)
+            return 0;
+        Value mval = klass->vtable[slot];
+        if (is_closure(mval))
+            return as_closure(mval)->func->generic_arity;
+        if (is_native(mval))
+            return as_native(mval)->generic_arity;
+        return 0;
+    }
+
+    /* This compiler is genuinely single-pass, so `def later<T>(...)` only
+    ** becomes visible to callee_is_known_def()/global_generic_arity() once
+    ** fun_declaration() actually reaches it. A call site EARLIER in the file
+    ** — including two generics recursing on each other — would otherwise see
+    ** generic arity 0 and silently read `f<A>(x)` as the comparison chain
+    ** `(f < A) > (x)`, with no error. This pass runs before real compilation
+    ** starts and fixes exactly that: find every top-level `def NAME<...>`
+    ** and register its arity up front, using a throwaway Lexer so nothing
+    ** here touches lexer_/current_/previous_/had_error_.
+    **
+    ** Deliberately dumb: only tracks brace depth to skip over bodies (so a
+    ** nested/local def, or anything mentioning `def` in a string or inside a
+    ** class, is ignored — matching fun_declaration()'s own rule that only a
+    ** scope_depth==0 def is ever treated as generic) and bails out silently
+    ** on anything that doesn't look like `def IDENT < IDENT (, IDENT)* >` at
+    ** brace depth 0. Malformed input is not this pass's problem — the real
+    ** parser below will report the actual error when it gets there. */
+    void Compiler::prescan_generic_defs(const char *source)
+    {
+        Lexer scan;
+        scan.init(source);
+        int brace_depth = 0;
+        for (;;)
+        {
+            Token tok = scan.next_token();
+            if (tok.type == TOK_EOF)
+                break;
+            if (tok.type == TOK_LBRACE)
+            {
+                brace_depth++;
+                continue;
+            }
+            if (tok.type == TOK_RBRACE)
+            {
+                if (brace_depth > 0)
+                    brace_depth--;
+                continue;
+            }
+            if (tok.type != TOK_DEF || brace_depth != 0)
+                continue;
+
+            Token name = scan.next_token();
+            if (name.type != TOK_IDENTIFIER)
+                continue;
+            Token after_name = scan.next_token();
+            if (after_name.type != TOK_LT)
+                continue; /* `def f(...)`, not generic — fun_declaration() marks it kNonGenericDef in the real pass */
+
+            int count = 0;
+            bool ok = true;
+            for (;;)
+            {
+                Token p = scan.next_token();
+                if (p.type != TOK_IDENTIFIER)
+                {
+                    ok = false;
+                    break;
+                }
+                count++;
+                Token sep = scan.next_token();
+                if (sep.type == TOK_GT)
+                    break;
+                if (sep.type != TOK_COMMA)
+                {
+                    ok = false;
+                    break;
+                }
+            }
+            if (!ok || count == 0)
+                continue;
+
+            char gname[256];
+            int gnlen = name.length < 255 ? name.length : 255;
+            memcpy(gname, name.start, gnlen);
+            gname[gnlen] = '\0';
+            /* No `error()` on failure here — a slot that can't be allocated
+            ** during the prescan will fail again, loudly, during the real
+            ** pass moments later. */
+            int gidx = vm_->find_global(gname);
+            if (gidx < 0)
+                gidx = vm_->def_global(gname, val_nil());
+            if (gidx >= 0)
+                set_global_generic_arity(gidx, count > kMaxGenericParams ? kMaxGenericParams : count);
+        }
     }
 
     int Compiler::require_global_slot(const char *name, Token *token)
@@ -229,6 +416,14 @@ namespace zen
         initial_global_count_ = vm->num_globals();
         global_uses_capacity_ = 0;
         recursion_depth_ = 0;
+
+        /* Before the real single-pass compile starts: find every top-level
+           generic def so a call site earlier in the file (or mutual
+           recursion between two generics) sees it as generic too. Slots this
+           allocates are ordinary global defs as far as the rest of compile()
+           is concerned — fun_declaration() will find them already present
+           via require_global_slot() and just reuse them. */
+        prescan_generic_defs(source);
 
         lexer_.init(source);
 

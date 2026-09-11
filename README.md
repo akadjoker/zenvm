@@ -8,6 +8,7 @@ The project is tuned for game-style workloads: lightweight scripting, cooperativ
 
 - Cooperative processes with `process`, `frame`, `loop`, `father`, and `son`
 - Script structs, classes, methods, inheritance, and operator overloading
+- Reified generics: `f<T>(x)` and `obj.m<T>(x)` pass real class values on their own ABI channel, for script and native methods alike
 - Arrays, maps, sets, typed buffers, fibers, and bytecode dumping/loading
 - Optional type hints for struct/class parameters and return values to improve compile-time field resolution
 - Computed-goto VM dispatch, direct field opcodes, and fused superinstructions for hot paths
@@ -39,6 +40,7 @@ advance_process();
 
 ## What Changed Recently
 
+- Reified generics: `def f<T, U>(a, b)` and `def m<T>(...)` declare type parameters that are validated and passed separately from the value arguments, so `f<T>(x)` is no longer sugar for `f(T, x)`. `ClassBuilder::generic_method` exposes the same ABI to C++ (`entity.get_component<Transform>()`), and a generic function reached without `<...>` is rejected instead of silently binding a value into a type slot. See `syntax.md` → Generics. Bytecode minor version bumped to 2.2.
 - Function, method, lambda, and process parameters can now use optional struct/class type hints
 - Global functions and methods can now declare optional return type hints with `def foo(x: MyType) : MyType { ... }`
 - Type hints are used by the compiler to resolve field access to `GETFIELD_IDX` at compile time when possible
