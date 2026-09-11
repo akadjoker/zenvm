@@ -812,8 +812,15 @@ namespace zen
 
     void Compiler::free_reg(int reg)
     {
-        /* Only free if it's a temp register above all locals */
-        if (reg == state_->next_reg - 1 && reg >= state_->local_count)
+        /* Only free if it's the most recent allocation AND not a named local.
+           This used to test `reg >= local_count` — a register index against a
+           COUNT, which only holds while locals occupy 0..local_count-1 with no
+           gaps. `var (a, b, c) = f()` breaks that: the call's results are
+           allocated as temps first and the locals are declared ABOVE them, so
+           a local's register can exceed local_count and free_reg() then handed
+           a live local back to the allocator, letting the next `var` land on
+           top of it. Ask who owns the register instead of counting. */
+        if (reg == state_->next_reg - 1 && !is_local_reg(reg))
         {
             state_->next_reg--;
         }

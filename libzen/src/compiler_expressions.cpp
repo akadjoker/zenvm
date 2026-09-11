@@ -965,6 +965,15 @@ namespace zen
                        a temp register (if rhs was a temp) or accidentally free
                        a local (if rhs was a local). */
                     state_->next_reg = save_reg;
+                    /* An assignment is also an expression: `var z = (y = 7)`
+                    ** and `f(y = 7)` ask for the value in `dest`. Returning
+                    ** local_reg alone left dest holding whatever stale temp
+                    ** was there, so the caller read garbage. */
+                    if (dest >= 0 && dest != local_reg)
+                    {
+                        emit_move(dest, local_reg);
+                        return dest;
+                    }
                     return local_reg;
                 }
                 int val_reg = alloc_reg();
@@ -1088,9 +1097,18 @@ namespace zen
                         state_->emitter.emit_abx(OP_SETGLOBAL, cur_reg, gidx, token.line);
                         mark_global_defined(gidx);
                     }
-                    free_reg(cur_reg);
                 }
-                return dest >= 0 ? dest : (local_reg != -1 ? local_reg : alloc_reg());
+
+                /* The new value lives in cur_reg. `var b = (a += 5)` asks for
+                ** it in dest, so copy it there BEFORE cur_reg is released —
+                ** returning a bare dest (or a fresh alloc_reg()) handed the
+                ** caller a register nothing had written. */
+                int result = dest >= 0 ? dest : cur_reg;
+                if (result != cur_reg)
+                    emit_move(result, cur_reg);
+                if (local_reg == -1 && cur_reg != result)
+                    free_reg(cur_reg);
+                return result;
             }
         }
 
@@ -1860,7 +1878,12 @@ namespace zen
 
     int Compiler::and_expr(int left, int dest)
     {
-        int reg = dest >= 0 ? dest : left;
+        /* The right-hand side is compiled straight into the result register —
+        ** that is the whole point, one register ends up holding whichever side
+        ** won — so it must never be a named local. With dest = -1 (e.g. inside
+        ** `print(a and b)`) `left` is local a's OWN register, and compiling b
+        ** into it destroyed a. Reuse `left` only when it is a temporary. */
+        int reg = dest >= 0 ? dest : (is_local_reg(left) ? alloc_reg() : left);
         if (reg != left)
             emit_move(reg, left);
 
@@ -1883,7 +1906,9 @@ namespace zen
 
     int Compiler::or_expr(int left, int dest)
     {
-        int reg = dest >= 0 ? dest : left;
+        /* Same fresh-temp rule as and_expr: the right-hand side is compiled
+        ** into the result register, so it must not be a live local. */
+        int reg = dest >= 0 ? dest : (is_local_reg(left) ? alloc_reg() : left);
         if (reg != left)
             emit_move(reg, left);
 
@@ -2081,12 +2106,20 @@ namespace zen
             TokenType assign_op = current_.type;
             advance();
 
+            /* An assignment is also an expression (`var v = (m[k] = 9)`), so
+            ** the stored value has to reach the result register. Copy it there
+            ** from inside each branch, before that branch's temps are freed —
+            ** returning a bare `dest` handed the caller a register nothing had
+            ** written, and the alloc_reg() fallback was uninitialised too. */
+            int result_reg = dest >= 0 ? dest : alloc_reg();
+
             if (assign_op == TOK_EQ)
             {
                 /* a[i] = expr */
                 int val_reg = alloc_reg();
                 expression(val_reg);
                 state_->emitter.emit_abc(OP_SETINDEX, obj_reg, idx_reg, val_reg, previous_.line);
+                emit_move(result_reg, val_reg);
                 free_reg(val_reg);
             }
             else
@@ -2135,12 +2168,13 @@ namespace zen
                 state_->emitter.emit_abc(op, cur_reg, cur_reg, rhs_reg, previous_.line);
                 free_reg(rhs_reg);
                 state_->emitter.emit_abc(OP_SETINDEX, obj_reg, idx_reg, cur_reg, previous_.line);
+                emit_move(result_reg, cur_reg);
                 free_reg(cur_reg);
             }
             free_reg(idx_reg);
-            if (obj_reg != dest)
+            if (obj_reg != result_reg)
                 free_reg(obj_reg);
-            return dest >= 0 ? dest : alloc_reg();
+            return result_reg;
         }
 
         /* Not assignment — emit GETINDEX */
@@ -2245,6 +2279,14 @@ namespace zen
             TokenType assign_op = current_.type;
             advance();
 
+            /* An assignment is also an expression (`var w = (c.x = 4)`), so
+            ** the stored value has to reach the result register. Copy it there
+            ** from inside each branch, before that branch's temps are freed —
+            ** returning a bare `dest` handed the caller a register nothing had
+            ** written (it still held the receiver), and the alloc_reg()
+            ** fallback was uninitialised too. */
+            int result_reg = dest >= 0 ? dest : alloc_reg();
+
             if (assign_op == TOK_EQ)
             {
                 /* a.b = expr */
@@ -2255,6 +2297,7 @@ namespace zen
                     state_->emitter.emit_abc(OP_SETFIELD_IDX, obj_reg, field_idx, val_reg, previous_.line);
                 else
                     state_->emitter.emit_abc(OP_SETFIELD, obj_reg, name_ki, val_reg, previous_.line);
+                emit_move(result_reg, val_reg);
                 free_reg(val_reg);
             }
             else
@@ -2310,11 +2353,12 @@ namespace zen
                     state_->emitter.emit_abc(OP_SETFIELD_IDX, obj_reg, field_idx, cur_reg, previous_.line);
                 else
                     state_->emitter.emit_abc(OP_SETFIELD, obj_reg, name_ki, cur_reg, previous_.line);
+                emit_move(result_reg, cur_reg);
                 free_reg(cur_reg);
             }
-            if (obj_reg != dest)
+            if (obj_reg != result_reg)
                 free_reg(obj_reg);
-            return dest >= 0 ? dest : alloc_reg();
+            return result_reg;
         }
 
         /* Try vtable dispatch if we know the receiver's class at compile time.

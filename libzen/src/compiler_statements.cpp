@@ -1681,13 +1681,23 @@ namespace zen
            All must be declared as locals so inner scopes don't reclaim them. */
         int base_reg = state_->next_reg; /* R[A] = counter = loop var */
 
-        /* Declare loop var as local at base_reg */
+        /* Declare loop var as local at base_reg.
+           These three slots bypass add_local()/alloc_reg() because they must
+           land in three CONSECUTIVE registers (FORPREP/FORLOOP index R[A],
+           R[A+1], R[A+2] as a unit). Bypassing alloc_reg() means two things it
+           does have to be done by hand: clear the type fields (locals[] is
+           uninitialised stack memory, and dot_expr() dereferences
+           struct_type/class_type) and raise max_reg — without which the
+           function's declared register window is 3 short of what it writes,
+           so the VM sizes the frame (and its overflow check) too small. */
         declare_local(loop_var);
         Local &local_i = next_local();
         local_i.name = loop_var;
         local_i.depth = state_->scope_depth;
         local_i.reg = base_reg;
         local_i.captured = false;
+        local_i.struct_type = nullptr;
+        local_i.class_type = nullptr;
         state_->next_reg++; /* reserve R[A] */
 
         /* Hidden locals for limit and step (names can't collide with user code) */
@@ -1702,6 +1712,8 @@ namespace zen
         local_lim.depth = state_->scope_depth;
         local_lim.reg = limit_reg;
         local_lim.captured = false;
+        local_lim.struct_type = nullptr;
+        local_lim.class_type = nullptr;
         state_->next_reg++;
 
         int step_reg = state_->next_reg;
@@ -1710,7 +1722,18 @@ namespace zen
         local_stp.depth = state_->scope_depth;
         local_stp.reg = step_reg;
         local_stp.captured = false;
+        local_stp.struct_type = nullptr;
+        local_stp.class_type = nullptr;
         state_->next_reg++;
+
+        if (state_->next_reg > state_->max_reg)
+            state_->max_reg = state_->next_reg;
+        if (base_reg >= 0 && base_reg < 256)
+            state_->reg_class_hints[base_reg] = nullptr;
+        if (limit_reg >= 0 && limit_reg < 256)
+            state_->reg_class_hints[limit_reg] = nullptr;
+        if (step_reg >= 0 && step_reg < 256)
+            state_->reg_class_hints[step_reg] = nullptr;
 
         /* Emit init value into counter reg */
         state_->emitter.emit_asbx(OP_LOADI, base_reg, init_val, loop_var.line);
