@@ -41,17 +41,8 @@ if(ZEN_BUILD_CLI)
     add_subdirectory(cli)
 endif()
 
-# --- Test functions (ScriptComponent O(1) pattern) ---
-#add_subdirectory(test_functions)
-
 # --- Class API tests (C++ ↔ Script vtable) ---
-# CMAKE_CURRENT_SOURCE_DIR, not CMAKE_SOURCE_DIR: when this repo is a
-# subproject the latter is the parent's root and these paths would miss.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_class_api/CMakeLists.txt")
-    add_subdirectory(tests/test_class_api)
-elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test_class_api/CMakeLists.txt")
-    add_subdirectory(test_class_api)
-endif()
+add_subdirectory(tests/test_class_api)
 
 # --- Fuzzer (requires clang + -DZEN_BUILD_FUZZ=ON) ---
 option(ZEN_BUILD_FUZZ "Build libFuzzer harness" OFF)
