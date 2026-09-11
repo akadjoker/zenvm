@@ -63,7 +63,11 @@ namespace zen
         bool is_local; /* true = captures from immediate parent's locals */
     };
 
-    /* Loop context for break/continue */
+    /* Loop context for break/continue. A `switch` pushes one of these too
+       (is_switch = true) so 'break' inside a case exits the switch instead
+       of falling through to whatever loop happens to enclose it — but
+       'continue' must skip past switch entries and reach the nearest real
+       loop, since a switch doesn't iterate. */
     struct LoopCtx
     {
         int start;            /* offset of loop start (for back-jump) */
@@ -73,6 +77,7 @@ namespace zen
         int break_count;
         int continues[256];   /* continue jump offsets to patch (do-while) */
         int continue_count;
+        bool is_switch;       /* true = this entry is a switch, not a loop */
     };
 
     /* Compiler state — one per function being compiled */
@@ -142,6 +147,13 @@ namespace zen
         void loop_statement();
         void do_while_statement();
         void switch_statement();
+        /* Pushes a fresh LoopCtx (state_->loops[state_->loop_depth++]) after
+           checking the 16-entry cap; every while/for/foreach/loop/do-while
+           and switch push goes through this so the bounds check can't be
+           forgotten at a new call site. Returns nullptr (having already
+           called error()) when the stack is full — caller must bail out
+           without touching state_->loop_depth further. */
+        LoopCtx *push_loop_ctx();
         void return_statement();
         void break_statement();
         void continue_statement();
@@ -257,6 +269,11 @@ namespace zen
         /* Include file memory management */
         /* if/elif chain: one "jump to end" per branch. */
         static const int kMaxBranchJumps = 256;
+        /* Max live entries in CompilerState::loops[] (break/continue targets
+           for while/for/foreach/loop/do-while, plus switch — see
+           push_loop_ctx()). Derived from the array itself so the two can
+           never drift apart. */
+        static const int kMaxLoopNesting = sizeof(((CompilerState *)0)->loops) / sizeof(LoopCtx);
         static const int MAX_INCLUDES = 64;
         static const int MAX_INCLUDE_DEPTH = 16;
         char *include_sources_[MAX_INCLUDES];

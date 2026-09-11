@@ -1421,7 +1421,7 @@ namespace zen
 
             if (end_jump_count >= kMaxBranchJumps)
             {
-                error("Too many 'elif' branches in one chain (max 255).");
+                error("Too many 'elif' branches in one chain (max 256).");
                 return;
             }
             end_jumps[end_jump_count++] = state_->emitter.emit_jump(OP_JMP, 0, previous_.line);
@@ -1448,12 +1448,16 @@ namespace zen
         int loop_start = state_->emitter.current_offset();
 
         /* Push loop context */
-        LoopCtx &loop = state_->loops[state_->loop_depth++];
+        LoopCtx *loopp = push_loop_ctx();
+        if (!loopp)
+            return;
+        LoopCtx &loop = *loopp;
         loop.start = loop_start;
         loop.continue_target = loop_start;
         loop.scope_depth = state_->scope_depth;
         loop.break_count = 0;
         loop.continue_count = 0;
+        loop.is_switch = false;
 
         consume(TOK_LPAREN, "Expected '(' after 'while'.");
         int cond_reg = expression(-1);
@@ -1759,11 +1763,24 @@ namespace zen
         /* FORPREP: R[A] -= step; jump to FORLOOP */
         int forprep = state_->emitter.emit_jump(OP_FORPREP, base_reg, previous_.line);
 
-        /* Loop context for break/continue */
-        LoopCtx &loop = state_->loops[state_->loop_depth++];
+        /* Loop context for break/continue. No rollback() past this point —
+           OP_FORPREP is already emitted — so a full cap fails compilation
+           outright rather than falling back to the general for loop.
+           Return `true` (not `false`, which everywhere else in this function
+           means "pattern didn't match, try the general for loop"): the
+           lexer has already been advanced past this point and can't be
+           rolled back, so the caller must NOT re-parse it as a general for.
+           `true` here means "consumed; error already reported via
+           push_loop_ctx()'s error()", which is what for_statement() needs
+           to just stop instead of re-parsing orphaned bytecode. */
+        LoopCtx *loopp = push_loop_ctx();
+        if (!loopp)
+            return true;
+        LoopCtx &loop = *loopp;
         loop.scope_depth = state_->scope_depth;
         loop.break_count = 0;
         loop.continue_count = 0;
+        loop.is_switch = false;
         loop.continue_target = -1; /* patch later — FORLOOP not yet emitted */
 
         int body_start = state_->emitter.current_offset();
@@ -1829,12 +1846,16 @@ namespace zen
         int loop_start = state_->emitter.current_offset();
 
         /* Push loop context */
-        LoopCtx &loop = state_->loops[state_->loop_depth++];
+        LoopCtx *loopp = push_loop_ctx();
+        if (!loopp)
+            return;
+        LoopCtx &loop = *loopp;
         loop.start = loop_start;
         loop.continue_target = loop_start;
         loop.scope_depth = state_->scope_depth;
         loop.break_count = 0;
         loop.continue_count = 0;
+        loop.is_switch = false;
 
         /* Condition */
         int exit_jump = -1;
@@ -1947,12 +1968,16 @@ namespace zen
             state_->emitter.emit_abc(OP_MOVE, end_reg, end_expr, 0, previous_.line);
 
             int loop_start = state_->emitter.current_offset();
-            LoopCtx &loop = state_->loops[state_->loop_depth++];
+            LoopCtx *loopp = push_loop_ctx();
+            if (!loopp)
+                return;
+            LoopCtx &loop = *loopp;
             loop.start = loop_start;
             loop.continue_target = -1; /* continue jumps forward to the increment */
             loop.scope_depth = state_->scope_depth;
             loop.break_count = 0;
             loop.continue_count = 0;
+            loop.is_switch = false;
 
             /* Condition: i < end */
             int cond_reg = alloc_reg();
@@ -1998,12 +2023,16 @@ namespace zen
 
         int loop_start = state_->emitter.current_offset();
 
-        LoopCtx &loop = state_->loops[state_->loop_depth++];
+        LoopCtx *loopp = push_loop_ctx();
+        if (!loopp)
+            return;
+        LoopCtx &loop = *loopp;
         loop.start = loop_start;
         loop.continue_target = -1; /* continue jumps forward to the increment (below) */
         loop.scope_depth = state_->scope_depth;
         loop.break_count = 0;
         loop.continue_count = 0;
+        loop.is_switch = false;
 
         /* Condition: idx < len */
         int cond_reg = alloc_reg();
@@ -2052,12 +2081,16 @@ namespace zen
     {
         int loop_start = state_->emitter.current_offset();
 
-        LoopCtx &loop = state_->loops[state_->loop_depth++];
+        LoopCtx *loopp = push_loop_ctx();
+        if (!loopp)
+            return;
+        LoopCtx &loop = *loopp;
         loop.start = loop_start;
         loop.continue_target = loop_start;
         loop.scope_depth = state_->scope_depth;
         loop.break_count = 0;
         loop.continue_count = 0;
+        loop.is_switch = false;
 
         consume(TOK_LBRACE, "Expected '{' after 'loop'.");
         begin_scope();
@@ -2080,12 +2113,16 @@ namespace zen
     {
         int loop_start = state_->emitter.current_offset();
 
-        LoopCtx &loop = state_->loops[state_->loop_depth++];
+        LoopCtx *loopp = push_loop_ctx();
+        if (!loopp)
+            return;
+        LoopCtx &loop = *loopp;
         loop.start = loop_start;
         loop.continue_target = -1; /* patch later — condition comes after body */
         loop.scope_depth = state_->scope_depth;
         loop.break_count = 0;
         loop.continue_count = 0;
+        loop.is_switch = false;
 
         consume(TOK_LBRACE, "Expected '{' after 'do'.");
         begin_scope();
@@ -2113,6 +2150,22 @@ namespace zen
         state_->loop_depth--;
     }
 
+    /* Pushes a fresh LoopCtx, checking the kMaxLoopNesting cap first. Every
+       while/for/foreach/loop/do-while/switch push goes through this so the
+       bounds check lives in exactly one place — CompilerState::loops[] sits
+       at the end of a stack-allocated CompilerState (~2KB per entry), so an
+       unchecked push here is a stack smash, not a bounds error someone
+       will notice later. */
+    LoopCtx *Compiler::push_loop_ctx()
+    {
+        if (state_->loop_depth >= kMaxLoopNesting)
+        {
+            error("Loops/switches nested too deeply (max 16).");
+            return nullptr;
+        }
+        return &state_->loops[state_->loop_depth++];
+    }
+
     /* =========================================================
     ** switch (expr) { case val: { body } default: { body } }
     ** No fallthrough — each case is independent.
@@ -2137,6 +2190,20 @@ namespace zen
 
         int end_jumps[kMaxBranchJumps];
         int end_count = 0;
+
+        /* Push a switch context so 'break' inside a case exits the switch
+           instead of resolving against whatever loop happens to enclose it
+           (state_->loops[] is shared with while/for/foreach). 'continue'
+           must NOT stop here — a switch doesn't iterate — so it's the only
+           thing distinguishing this from a real loop entry. */
+        LoopCtx *swp = push_loop_ctx();
+        if (!swp)
+            return;
+        LoopCtx &sw = *swp;
+        sw.is_switch = true;
+        sw.break_count = 0;
+        sw.continue_count = 0;
+        sw.continue_target = -1; /* unused: continue_statement() skips switches */
 
         while (match(TOK_CASE))
         {
@@ -2164,7 +2231,8 @@ namespace zen
             /* Jump to end of switch */
             if (end_count >= kMaxBranchJumps)
             {
-                error("Too many 'case' branches in one switch (max 255).");
+                error("Too many 'case' branches in one switch (max 256).");
+                state_->loop_depth--; /* pop the switch context pushed above */
                 return;
             }
             end_jumps[end_count++] = state_->emitter.emit_jump(OP_JMP, 0, previous_.line);
@@ -2185,9 +2253,15 @@ namespace zen
 
         consume(TOK_RBRACE, "Expected '}' after switch body.");
 
-        /* Patch all end jumps */
+        /* Pop the switch context; an explicit 'break' inside a case lands
+           at the same place as the implicit end-of-case jump. */
+        LoopCtx &sw2 = state_->loops[--state_->loop_depth];
+
+        /* Patch all end jumps (implicit, one per case) and explicit breaks */
         for (int i = 0; i < end_count; i++)
             state_->emitter.patch_jump(end_jumps[i]);
+        for (int i = 0; i < sw2.break_count; i++)
+            state_->emitter.patch_jump(sw2.breaks[i]);
 
         /* Release the switch expression temp (back to the live-locals top). */
         state_->next_reg = saved_next;
@@ -2264,7 +2338,15 @@ namespace zen
 
     void Compiler::continue_statement()
     {
-        if (state_->loop_depth == 0)
+        /* A switch doesn't iterate, so 'continue' skips past any switch
+           entries on top of the loop stack and targets the nearest real
+           loop — unlike 'break', which stops at the first entry (switch or
+           loop) it finds. */
+        int depth = state_->loop_depth;
+        while (depth > 0 && state_->loops[depth - 1].is_switch)
+            depth--;
+
+        if (depth == 0)
         {
             error("'continue' outside of loop.");
             consume(TOK_SEMICOLON, "Expected ';' after 'continue'.");
@@ -2272,7 +2354,7 @@ namespace zen
         }
         consume(TOK_SEMICOLON, "Expected ';' after 'continue'.");
 
-        LoopCtx &loop = state_->loops[state_->loop_depth - 1];
+        LoopCtx &loop = state_->loops[depth - 1];
         if (loop.continue_target >= 0)
         {
             /* Target known (while, for) — emit backward jump */
