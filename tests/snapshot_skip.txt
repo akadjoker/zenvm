@@ -12,11 +12,9 @@ bench_num.zen
 bench_struct_nofuse.zen
 bench_struct_nofuse2.zen
 
-# Reason: needs something the plain `zen` CLI does not carry — the process
-# runner loop (zen_game, now in zenvm-modules) or a loadable plugin built
-# from plugins/. Run these against the matching binary, not the plain CLI.
+# Reason: needs the process runner loop (zen_game), which lives in
+# zenvm-modules, not the plain `zen` CLI.
 test_process.zen
-test_plugin.zen
 
 # Reason: these call Color(), a native struct that no host in this repo
 # registers — the scripts have never run. Kept as a reminder, not a gate.

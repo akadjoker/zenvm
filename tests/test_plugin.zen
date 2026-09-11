@@ -1,3 +1,0 @@
-import hello;
-print(hello.greet("Zen"));
-print(hello.add(17, 25));
